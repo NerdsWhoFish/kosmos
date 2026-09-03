@@ -78,7 +78,7 @@ resource "google_service_account_iam_member" "releaser" {
 }
 
 resource "google_secret_manager_secret_iam_member" "runtime" {
-  for_each = var.secret_names
+  for_each = toset(values(var.secret_environment))
 
   project   = var.project_id
   secret_id = each.value
@@ -128,9 +128,9 @@ resource "google_cloud_run_v2_service" "kosmos" {
       }
 
       dynamic "env" {
-        for_each = var.secret_names
+        for_each = var.secret_environment
         content {
-          name = upper(replace(env.value, "-", "_"))
+          name = env.key
           value_source {
             secret_key_ref {
               secret  = "projects/${var.project_id}/secrets/${env.value}"

@@ -77,10 +77,10 @@ variable "allow_unauthenticated" {
   default     = true
 }
 
-variable "secret_names" {
-  type        = set(string)
-  description = "Secret Manager secret names to grant to the runtime service account. Values are injected by configurations."
-  default     = []
+variable "secret_environment" {
+  type        = map(string)
+  description = "Map of container environment variable names to Secret Manager secret names."
+  default     = {}
 }
 
 variable "environment_variables" {
