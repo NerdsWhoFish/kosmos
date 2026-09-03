@@ -5,6 +5,7 @@ Kosmos is being built from the decisions and delivery slices in [plan.md](plan.m
 ## Working rules
 
 - Keep the product approachable for nontechnical small-business users.
+- Treat desktop and mobile as equal clients. Do not remove core actions at mobile widths; reflow the same workflows into the available space.
 - Preserve the Go backend and React frontend split.
 - Extend through module contracts, registries, typed events, provider ports, and versioned APIs.
 - Do not add Kosmos-managed passwords. Identity is Google OAuth/OIDC first, with organization roles enforced server-side.
@@ -16,4 +17,4 @@ Kosmos is being built from the decisions and delivery slices in [plan.md](plan.m
 
 ## Verification
 
-Run `GOWORK=off go test ./...`, `npm --prefix frontend test`, and `npm --prefix frontend run build` for code changes. Releases must use the Quill workflow in `.github/workflows/release.yml`. For infrastructure changes, run `tofu fmt -check` and `tofu validate` from the module directory when the provider is available.
+Run `GOWORK=off go test ./...`, `npm --prefix frontend test`, and `npm --prefix frontend run build` for code changes. Frontend tests must cover both representative desktop and mobile viewport widths. Releases must use the Quill workflow in `.github/workflows/release.yml`. For infrastructure changes, run `tofu fmt -check` and `tofu validate` from the module directory when the provider is available.

@@ -5,6 +5,7 @@ Kosmos is an MIT-licensed, API-first small business management platform for peop
 ## Product principles
 
 - Friendly first: the primary screen should answer "what needs my attention?" immediately.
+- Responsive by default: desktop and mobile expose the same capabilities, with layout reflow instead of mobile-only or desktop-only workflows.
 - API first: every user-visible capability has a versioned REST contract.
 - Extensible by composition: new capabilities are modules, not edits scattered through the core.
 - Cloud-native: stateless services on Cloud Run, scale-to-zero by default, durable state behind explicit adapters.
@@ -219,6 +220,8 @@ Grafana Cloud dashboards, alert rules, data source configuration, and Faro appli
 7. Hardening: audit history, rate limits, job retries, exports, backups, accessibility, and tenant isolation tests.
 
 Every delivery slice requires backend tests and frontend tests. A release cannot be tagged or published until both suites and the production frontend build pass.
+
+Frontend acceptance tests cover the primary workflows at representative desktop and mobile viewport sizes. Tests must verify that navigation, search, notifications, shortcuts, quick actions, account controls, and module links remain reachable at both sizes.
 
 Releases use Quill through `.github/workflows/release.yml`. Quill owns versioning, tagging, image publication, signing, and provenance. GitHub OIDC supplies short-lived Artifact Registry access through a release service account; no service-account key is stored in GitHub.
 
