@@ -14,6 +14,10 @@ The API runs on `http://localhost:8080`. The frontend development server runs on
 
 Google login requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a random `KOSMOS_SESSION_SECRET` of at least 32 bytes. Set `KOSMOS_GCP_PROJECT` to use Firestore. Without it, the same landing-zone API uses an in-memory store for local development.
 
+## Deployment
+
+`infra/modules/environment` is published to the Spacelift private registry as `kosmos-environment`. Environment roots consume `spacelift.stout.zone/nerdswhofish/kosmos-environment/google`, while keeping only project bootstrap, operator access, deployment inputs, and secret payloads outside the module.
+
 ## Observability
 
 The backend accepts standard `OTEL_EXPORTER_OTLP_*` environment variables and exports correlated logs and traces over OTLP HTTP when an endpoint is configured. Without an endpoint, telemetry remains local. Browser RUM and tracing use the public runtime configuration returned by `/api/v1/config` when `KOSMOS_FARO_URL` is present.

@@ -148,7 +148,7 @@ Core records are accounts, contacts, leads, opportunities, pipeline stages, acti
 
 All infrastructure is managed with OpenTofu. No production resource may require a click in a console after the initial provider and billing bootstrap.
 
-The reusable deployment module lives at `infra/tofu/modules/kosmos-cloud-run`. The `TheOutdoorProgrammer/configurations` repository will call this module from a Spacelift-managed stack, supply the project, environment, immutable image digest, secrets, and edge settings, and own environment composition. Kosmos does not embed credentials or assume a particular configurations repository layout.
+The cohesive deployment module lives at `infra/modules/environment`. Kosmos publishes it to Spacelift as `kosmos-environment`, and the `TheOutdoorProgrammer/configurations` repository consumes that registry module from a thin environment root. The consumer owns project bootstrap, operator access, environment-specific inputs, and secret payload population. The module owns the reusable application topology and its tested security, cost, and scale-to-zero defaults.
 
 ### GCP resources
 
@@ -167,7 +167,7 @@ The OpenTofu stack provisions, per environment:
 - Artifact deploy policy, revision labels, startup/readiness configuration, and rollback-safe traffic management
 - log-based metrics, uptime checks, alert policies, and notification channels
 
-The first reusable module intentionally provisions the Cloud Run application boundary, Artifact Registry, runtime identity, required APIs, secret access bindings, and public invocation policy. Firestore, storage, queue, Cloudflare, and Grafana resources remain separate modules so configurations can compose only what an environment needs and keep idle cost near zero.
+The environment module provisions the Cloud Run application boundary, Artifact Registry, runtime and release identities, required APIs, secret containers and access bindings, Firestore, private attachment storage, budget controls, and public invocation policy. Queue, Cloudflare, and Grafana resources join this same application boundary when those capabilities are implemented. Keeping one tested environment topology prevents deployment roots from rebuilding application-specific wiring or drifting away from the near-free defaults.
 
 Cloud Run is stateless. Background work uses a queue because scale-to-zero instances do not run continuously. The web service must not depend on local disk for user data.
 

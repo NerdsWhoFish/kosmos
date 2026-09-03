@@ -4,3 +4,5 @@ frontend/*.tsbuildinfo
 *.test
 .env
 .env.*
+bakes/
+fast.yaml
