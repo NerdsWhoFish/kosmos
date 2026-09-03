@@ -16,4 +16,4 @@ Kosmos is being built from the decisions and delivery slices in [plan.md](plan.m
 
 ## Verification
 
-Run `go test ./...` and `npm --prefix frontend run build` for code changes. For infrastructure changes, run `tofu fmt -check` and `tofu validate` from the module directory when the provider is available.
+Run `GOWORK=off go test ./...`, `npm --prefix frontend test`, and `npm --prefix frontend run build` for code changes. Releases must use the Quill workflow in `.github/workflows/release.yml`. For infrastructure changes, run `tofu fmt -check` and `tofu validate` from the module directory when the provider is available.

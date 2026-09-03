@@ -218,6 +218,10 @@ Grafana Cloud dashboards, alert rules, data source configuration, and Faro appli
 6. Money and integrations: costs, recurring costs, tax receipt records, Tiller import, deterministic customer matching with review queue.
 7. Hardening: audit history, rate limits, job retries, exports, backups, accessibility, and tenant isolation tests.
 
+Every delivery slice requires backend tests and frontend tests. A release cannot be tagged or published until both suites and the production frontend build pass.
+
+Releases use Quill through `.github/workflows/release.yml`. Quill owns versioning, tagging, image publication, signing, and provenance. GitHub OIDC supplies short-lived Artifact Registry access through a release service account; no service-account key is stored in GitHub.
+
 ## Deliberate non-goals for the first release
 
 - Full Gmail replacement or mailbox synchronization.

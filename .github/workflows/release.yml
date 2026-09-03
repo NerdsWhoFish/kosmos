@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: What to cut
+        type: choice
+        default: Release
+        options: [Release, Release Candidate]
+      bump:
+        description: Which part of the version to bump
+        type: choice
+        default: patch
+        options: [patch, minor, major]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Test backend
+        run: GOWORK=off go test ./...
+
+      - name: Test frontend
+        working-directory: frontend
+        run: npm ci && npm test
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - uses: google-github-actions/auth@v3
+        id: gcp-auth
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_RELEASER_SA }}
+
+      - uses: TheOutdoorProgrammer/quill@v1
+        with:
+          bump: ${{ inputs.bump }}
+          scope: ${{ inputs.scope }}
+          publish: docker
+          docker-registry: us-east1-docker.pkg.dev
+          docker-images: us-east1-docker.pkg.dev/nwf-kosmos-prod/kosmos/kosmos
+          docker-username: oauth2accesstoken
+          docker-password: ${{ steps.gcp-auth.outputs.access_token }}
+          docker-sign: "true"
+          docker-attest: "true"
