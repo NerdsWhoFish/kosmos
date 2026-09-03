@@ -32,6 +32,8 @@ infra/
 
 The backend is written in Go. The frontend is React with TypeScript. The public application is initially packaged as one stateless Cloud Run service so the browser shell and API share a deployment boundary, while the code remains split into independently testable frontend and backend modules.
 
+Kosmos does not own passwords. Users authenticate through Google OAuth/OIDC, then Kosmos maps the verified Google identity to organization membership and roles. Password reset, MFA, suspicious-login detection, and account recovery remain Google responsibilities.
+
 ## Product capabilities
 
 ### Landing Zone
@@ -145,6 +147,8 @@ Core records are accounts, contacts, leads, opportunities, pipeline stages, acti
 
 All infrastructure is managed with OpenTofu. No production resource may require a click in a console after the initial provider and billing bootstrap.
 
+The reusable deployment module lives at `infra/tofu/modules/kosmos-cloud-run`. The `TheOutdoorProgrammer/configurations` repository will call this module from a Spacelift-managed stack, supply the project, environment, immutable image digest, secrets, and edge settings, and own environment composition. Kosmos does not embed credentials or assume a particular configurations repository layout.
+
 ### GCP resources
 
 The OpenTofu stack provisions, per environment:
@@ -155,11 +159,14 @@ The OpenTofu stack provisions, per environment:
 - dedicated runtime service account with least-privilege roles
 - Secret Manager secrets and version references for OAuth, session signing, database, storage, Tiller, and telemetry credentials
 - Cloud Storage bucket for attachments and receipts, with uniform bucket-level access, retention, lifecycle rules, and public access prevention
-- durable Postgres-compatible database connection, migrations, backups, and private connectivity where the selected provider supports it
+- Firestore Native mode database, indexes, backup policy, and retention configuration for the near-free default
+- optional Postgres-compatible database module for deployments that need relational reporting beyond Firestore's model
 - Cloud Tasks or Pub/Sub for retries and work that cannot depend on a live request
 - Cloud Scheduler only for explicitly required periodic jobs
 - Artifact deploy policy, revision labels, startup/readiness configuration, and rollback-safe traffic management
 - log-based metrics, uptime checks, alert policies, and notification channels
+
+The first reusable module intentionally provisions the Cloud Run application boundary, Artifact Registry, runtime identity, required APIs, secret access bindings, and public invocation policy. Firestore, storage, queue, Cloudflare, and Grafana resources remain separate modules so configurations can compose only what an environment needs and keep idle cost near zero.
 
 Cloud Run is stateless. Background work uses a queue because scale-to-zero instances do not run continuously. The web service must not depend on local disk for user data.
 
@@ -203,8 +210,8 @@ Grafana Cloud dashboards, alert rules, data source configuration, and Faro appli
 
 ## Delivery slices
 
-1. Foundation: landing zone shell, API registry, health endpoint, OTel plumbing, local development, Cloud Run container.
-2. Identity and shell: Google sign-in, organizations, roles, module navigation, notification feed.
+1. Foundation: landing zone shell, API registry, health endpoint, OTel plumbing, local development, Cloud Run container, reusable OpenTofu module.
+2. Identity and shell: Google OAuth/OIDC sign-in, organizations, roles, module navigation, notification feed.
 3. Relationship management: contacts, leads, opportunities, pipeline stages, activities, notes, reminders, and account timeline.
 4. Documents and files: Markdown documents, stable internal links, rendering, attachment storage, receipt uploads.
 5. Google workspace: linked Gmail account, templates, explicit outbound cold-email action, inbound email notification metadata.
