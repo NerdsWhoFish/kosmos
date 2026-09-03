@@ -3,31 +3,33 @@ package landing
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
-type Module struct{}
+type OwnerFunc func(*http.Request) (string, error)
 
-func NewModule() Module { return Module{} }
+type Module struct {
+	store Store
+	owner OwnerFunc
+}
+
+func NewModule(store Store, owner OwnerFunc) Module {
+	return Module{store: store, owner: owner}
+}
 
 func (Module) Name() string { return "landing" }
 
-func (Module) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/landing", landing)
-	mux.HandleFunc("GET /api/v1/notifications", notifications)
+func (m Module) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/v1/landing", m.landing)
+	mux.HandleFunc("POST /api/v1/landing/buttons", m.createButton)
+	mux.HandleFunc("GET /api/v1/notifications", m.notifications)
 }
 
 type landingResponse struct {
-	Buttons       []landingButton `json:"buttons"`
-	Notifications []notification  `json:"notifications"`
-}
-
-type landingButton struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
-	Href        string `json:"href"`
-	Icon        string `json:"icon"`
+	Buttons       []Button       `json:"buttons"`
+	Notifications []notification `json:"notifications"`
 }
 
 type notification struct {
@@ -39,20 +41,81 @@ type notification struct {
 	Href      string    `json:"href"`
 }
 
-func landing(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, landingResponse{
-		Buttons: []landingButton{
-			{ID: "website", Label: "Open website", Description: "Jump straight to the public business site.", Href: "https://www.nerdswhofish.com", Icon: "globe"},
-			{ID: "bookings", Label: "Bookings", Description: "Manage meetings and availability.", Href: "https://book.nerdswhofish.com", Icon: "calendar"},
-			{ID: "contacts", Label: "Contacts", Description: "Keep every relationship in one place.", Href: "/contacts", Icon: "users"},
-		},
-		Notifications: sampleNotifications(),
-	})
+func (m Module) landing(w http.ResponseWriter, r *http.Request) {
+	owner, ok := m.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	buttons, err := m.store.ListButtons(r.Context(), owner)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load landing zone"})
+		return
+	}
+	writeJSON(w, http.StatusOK, landingResponse{Buttons: buttons, Notifications: sampleNotifications()})
 }
 
-func notifications(w http.ResponseWriter, _ *http.Request) {
+func (m Module) createButton(w http.ResponseWriter, r *http.Request) {
+	owner, ok := m.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	var button Button
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&button); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid shortcut"})
+		return
+	}
+	button.ID = ""
+	button.Label = strings.TrimSpace(button.Label)
+	button.Description = strings.TrimSpace(button.Description)
+	button.Href = strings.TrimSpace(button.Href)
+	button.Icon = "globe"
+	if err := validateButton(button); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	created, err := m.store.CreateButton(r.Context(), owner, button)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save shortcut"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (m Module) notifications(w http.ResponseWriter, r *http.Request) {
+	if _, ok := m.requireOwner(w, r); !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string][]notification{"notifications": sampleNotifications()})
 }
+
+func (m Module) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {
+	owner, err := m.owner(r)
+	if err != nil || owner == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return "", false
+	}
+	return owner, true
+}
+
+func validateButton(button Button) error {
+	if button.Label == "" || len(button.Label) > 80 {
+		return &validationError{"label must be between 1 and 80 characters"}
+	}
+	if len(button.Description) > 180 {
+		return &validationError{"description must be 180 characters or fewer"}
+	}
+	parsed, err := url.ParseRequestURI(button.Href)
+	if err != nil || (parsed.IsAbs() && ((parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "")) || (!parsed.IsAbs() && !strings.HasPrefix(button.Href, "/")) {
+		return &validationError{"link must be an HTTPS, HTTP, or workspace-relative URL"}
+	}
+	return nil
+}
+
+type validationError struct{ message string }
+
+func (e *validationError) Error() string { return e.message }
 
 func sampleNotifications() []notification {
 	return []notification{

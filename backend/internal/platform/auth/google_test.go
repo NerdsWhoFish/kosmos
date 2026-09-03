@@ -32,3 +32,14 @@ func TestSessionRoundTrip(t *testing.T) {
 		t.Fatalf("session = %#v, want %#v", got, want)
 	}
 }
+
+func TestSessionRejectsWeakSigningKey(t *testing.T) {
+	server := &Google{sessionKey: []byte("too-short")}
+	value := session{User: User{Subject: "google-subject"}, ExpiresAt: time.Now().Add(time.Hour)}
+	if _, err := server.signSession(value); err == nil {
+		t.Fatal("signSession accepted a weak key")
+	}
+	if err := server.verifySession("payload.signature", &session{}); err == nil {
+		t.Fatal("verifySession accepted a weak key")
+	}
+}

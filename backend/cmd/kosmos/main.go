@@ -17,28 +17,43 @@ import (
 )
 
 func main() {
-	shutdownTelemetry, err := observability.Setup(context.Background())
+	fallback := slog.NewJSONHandler(os.Stdout, nil)
+	logger, shutdownTelemetry, err := observability.Setup(context.Background(), fallback)
 	if err != nil {
 		slog.Error("telemetry setup failed", "error", err)
 		os.Exit(1)
 	}
-	defer shutdownTelemetry()
-
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	defer shutdownTelemetry(context.Background())
 	slog.SetDefault(logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", health)
+	mux.HandleFunc("GET /api/v1/config", publicConfig)
 	mux.HandleFunc("GET /api/", notFound)
 	mux.HandleFunc("/", spaFallback)
-	auth.NewGoogle().RegisterRoutes(mux)
-	modules.NewRegistry(landing.NewModule()).RegisterRoutes(mux)
+	googleAuth := auth.NewGoogle()
+	googleAuth.RegisterRoutes(mux)
+
+	var landingStore landing.Store = landing.NewMemoryStore()
+	if projectID := os.Getenv("KOSMOS_GCP_PROJECT"); projectID != "" {
+		firestoreStore, err := landing.NewFirestoreStore(context.Background(), projectID)
+		if err != nil {
+			logger.Error("landing store setup failed", "error", err)
+			os.Exit(1)
+		}
+		defer firestoreStore.Close()
+		landingStore = firestoreStore
+	}
+	modules.NewRegistry(landing.NewModule(landingStore, func(r *http.Request) (string, error) {
+		user, err := googleAuth.CurrentUser(r)
+		return user.Subject, err
+	})).RegisterRoutes(mux)
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	server := &http.Server{Addr: ":" + port, Handler: otelhttp.NewHandler(mux, "kosmos.http")}
+	server := &http.Server{Addr: ":" + port, Handler: otelhttp.NewHandler(observability.RequestLogger(logger, mux), "kosmos.http")}
 
 	logger.Info("kosmos listening", "port", port)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -49,6 +64,13 @@ func main() {
 
 func health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func publicConfig(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{
+		"faroURL":     os.Getenv("KOSMOS_FARO_URL"),
+		"faroAppName": "kosmos",
+	})
 }
 
 func notFound(w http.ResponseWriter, _ *http.Request) {

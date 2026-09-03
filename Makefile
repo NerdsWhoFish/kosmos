@@ -1,7 +1,14 @@
-.PHONY: dev test build
+.PHONY: dev dev-backend dev-frontend test build
 
 dev:
+	npm --prefix frontend ci
+	$(MAKE) -j2 dev-backend dev-frontend
+
+dev-backend:
 	go run ./backend/cmd/kosmos
+
+dev-frontend:
+	npm --prefix frontend run dev
 
 test:
 	GOWORK=off go test ./...

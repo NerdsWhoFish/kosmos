@@ -4,10 +4,22 @@ import { App } from './app/App'
 import { initializeTelemetry } from './telemetry'
 import './styles.css'
 
-initializeTelemetry()
+async function bootstrap() {
+  try {
+    const response = await fetch('/api/v1/config')
+    if (response.ok) {
+      const config = await response.json()
+      initializeTelemetry(config.faroURL, config.faroAppName)
+    }
+  } catch {
+    // Telemetry must never prevent the workspace from loading.
+  }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+}
+
+void bootstrap()

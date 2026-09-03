@@ -134,7 +134,7 @@ func (g *Google) logout(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (g *Google) me(w http.ResponseWriter, r *http.Request) {
-	current, err := g.currentUser(r)
+	current, err := g.CurrentUser(r)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return
@@ -142,7 +142,7 @@ func (g *Google) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, current)
 }
 
-func (g *Google) currentUser(r *http.Request) (User, error) {
+func (g *Google) CurrentUser(r *http.Request) (User, error) {
 	cookie, err := r.Cookie(sessionCookie)
 	if err != nil || cookie.Value == "" {
 		return User{}, errors.New("missing session")
@@ -180,6 +180,9 @@ func (g *Google) oauthConfig(ctx context.Context, r *http.Request) (*oauth2.Conf
 }
 
 func (g *Google) signSession(value session) (string, error) {
+	if len(g.sessionKey) < 32 {
+		return "", errors.New("session signing key is too short")
+	}
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return "", err
@@ -189,6 +192,9 @@ func (g *Google) signSession(value session) (string, error) {
 }
 
 func (g *Google) verifySession(value string, target *session) error {
+	if len(g.sessionKey) < 32 {
+		return errors.New("session signing key is too short")
+	}
 	parts := strings.Split(value, ".")
 	if len(parts) != 2 || !hmac.Equal([]byte(parts[1]), []byte(signature(g.sessionKey, parts[0]))) {
 		return errors.New("invalid session signature")
