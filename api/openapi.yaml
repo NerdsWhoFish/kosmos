@@ -1,0 +1,27 @@
+openapi: 3.1.0
+info:
+  title: Kosmos API
+  version: 0.1.0
+  license:
+    name: MIT
+servers:
+  - url: /api/v1
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+  /landing:
+    get:
+      operationId: getLanding
+      responses:
+        '200':
+          description: Landing zone configuration and notifications
+  /notifications:
+    get:
+      operationId: listNotifications
+      responses:
+        '200':
+          description: Notification feed
