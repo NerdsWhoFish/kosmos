@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/landing"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/auth"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/modules"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/observability"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -30,6 +31,7 @@ func main() {
 	mux.HandleFunc("GET /api/v1/health", health)
 	mux.HandleFunc("GET /api/", notFound)
 	mux.HandleFunc("/", spaFallback)
+	auth.NewGoogle().RegisterRoutes(mux)
 	modules.NewRegistry(landing.NewModule()).RegisterRoutes(mux)
 
 	port := os.Getenv("PORT")

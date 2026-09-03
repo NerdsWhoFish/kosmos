@@ -4,13 +4,16 @@ import { ArrowUpRight, Bell, BookOpen, CalendarDays, CheckCircle2, CircleDollarS
 type Button = { id: string; label: string; description: string; href: string; icon: string }
 type Notification = { id: string; title: string; summary: string; kind: string; createdAt: string; href: string }
 type Landing = { buttons: Button[]; notifications: Notification[] }
+type User = { email: string; name: string; picture?: string }
 
 const iconMap: Record<string, typeof Globe2> = { globe: Globe2, calendar: CalendarDays, users: Users }
 
 export function App() {
   const [landing, setLanding] = useState<Landing>({ buttons: [], notifications: [] })
+  const [user, setUser] = useState<User | null>(null)
 
   useEffect(() => {
+    fetch('/api/v1/me').then((response) => response.ok ? response.json() : null).then(setUser)
     fetch('/api/v1/landing')
       .then((response) => response.ok ? response.json() : Promise.reject(new Error('landing request failed')))
       .then(setLanding)
@@ -34,10 +37,10 @@ export function App() {
       </nav>
       <div className="sidebar-spacer" />
       <a className="nav-item" href="#settings"><Settings2 size={18} /> Settings</a>
-      <div className="user-chip"><span className="avatar">JS</span><span><strong>Joey Stout</strong><small>Owner</small></span><ArrowUpRight size={15} /></div>
+      <div className="user-chip"><span className="avatar">{user?.name?.split(' ').map((part) => part[0]).join('').slice(0, 2) ?? '??'}</span><span><strong>{user?.name ?? 'Not signed in'}</strong><small>{user?.email ?? 'Google account required'}</small></span><ArrowUpRight size={15} /></div>
     </aside>
     <main className="main-content">
-      <header className="topbar"><div className="search"><Search size={18} /><input aria-label="Search Kosmos" placeholder="Search anything..." /></div><div className="top-actions"><button className="icon-button" aria-label="Notifications"><Bell size={19} /><span className="notification-dot" /></button><button className="primary-button"><Plus size={17} /> Add something</button></div></header>
+      <header className="topbar"><div className="search"><Search size={18} /><input aria-label="Search Kosmos" placeholder="Search anything..." /></div><div className="top-actions"><button className="icon-button" aria-label="Notifications"><Bell size={19} /><span className="notification-dot" /></button>{user ? <button className="primary-button" onClick={() => { fetch('/auth/logout', { method: 'POST' }).then(() => setUser(null)) }}><CheckCircle2 size={17} /> Sign out</button> : <a className="primary-button" href="/auth/login"><Plus size={17} /> Sign in with Google</a>}</div></header>
       <div className="content-wrap">
         <section className="welcome-row"><div><p className="eyebrow">Wednesday, September 3</p><h1>Good morning, Joey.</h1><p className="subhead">Here’s the pulse of your business.</p></div><div className="weather-card"><span className="weather-icon">☀</span><span><strong>78°</strong><small>Reynoldsburg, OH</small></span></div></section>
         <section className="stats-row"><Stat label="Open opportunities" value="6" detail="$18,400 potential" tone="blue" /><Stat label="Follow-ups due" value="3" detail="2 need attention today" tone="gold" /><Stat label="This month’s costs" value="$842" detail="4 recurring expenses" tone="green" /></section>
