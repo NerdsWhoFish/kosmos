@@ -4,8 +4,10 @@ dev:
 	go run ./backend/cmd/kosmos
 
 test:
-	go test ./...
-	cd frontend && npm ci && npm run build
+	GOWORK=off go test ./...
+	npm --prefix frontend ci
+	npm --prefix frontend test
+	npm --prefix frontend run build
 
 build:
 	go build ./backend/cmd/kosmos
