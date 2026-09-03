@@ -3,6 +3,10 @@ provider "google" {
   region  = var.region
 }
 
+locals {
+  deploy_service = var.image != null
+}
+
 resource "google_project_service" "required" {
   for_each = toset([
     "artifactregistry.googleapis.com",
@@ -31,6 +35,48 @@ resource "google_service_account" "runtime" {
   display_name = "Kosmos Cloud Run runtime"
 }
 
+resource "google_iam_workload_identity_pool" "github" {
+  project                   = var.project_id
+  workload_identity_pool_id = "${var.service_name}-github"
+  display_name              = "Kosmos GitHub releases"
+  depends_on                = [google_project_service.required]
+}
+
+resource "google_iam_workload_identity_pool_provider" "github" {
+  project                            = var.project_id
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github.workload_identity_pool_id
+  workload_identity_pool_provider_id = "github-oidc"
+  display_name                       = "GitHub Actions OIDC"
+
+  oidc { issuer_uri = "https://token.actions.githubusercontent.com" }
+
+  attribute_mapping = {
+    "google.subject"       = "assertion.sub"
+    "attribute.repository" = "assertion.repository"
+  }
+  attribute_condition = "attribute.repository == \"${var.github_repository}\""
+}
+
+resource "google_service_account" "releaser" {
+  project      = var.project_id
+  account_id   = "${var.service_name}-releaser"
+  display_name = "Kosmos release publisher"
+}
+
+resource "google_artifact_registry_repository_iam_member" "releaser" {
+  project    = var.project_id
+  location   = var.region
+  repository = google_artifact_registry_repository.kosmos.repository_id
+  role       = "roles/artifactregistry.writer"
+  member     = google_service_account.releaser.member
+}
+
+resource "google_service_account_iam_member" "releaser" {
+  service_account_id = google_service_account.releaser.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_repository}"
+}
+
 resource "google_secret_manager_secret_iam_member" "runtime" {
   for_each = var.secret_names
 
@@ -41,6 +87,8 @@ resource "google_secret_manager_secret_iam_member" "runtime" {
 }
 
 resource "google_cloud_run_v2_service" "kosmos" {
+  count = local.deploy_service ? 1 : 0
+
   project  = var.project_id
   name     = var.service_name
   location = var.region
@@ -101,11 +149,11 @@ resource "google_cloud_run_v2_service" "kosmos" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "public" {
-  count = var.allow_unauthenticated ? 1 : 0
+  count = var.allow_unauthenticated && local.deploy_service ? 1 : 0
 
   project  = var.project_id
   location = var.region
-  name     = google_cloud_run_v2_service.kosmos.name
+  name     = google_cloud_run_v2_service.kosmos[0].name
   role     = "roles/run.invoker"
   member   = "allUsers"
 }

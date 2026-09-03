@@ -17,7 +17,15 @@ variable "service_name" {
 
 variable "image" {
   type        = string
-  description = "Immutable container image digest to deploy."
+  description = "Immutable container image digest to deploy. Null bootstraps infrastructure without creating Cloud Run."
+  default     = null
+  nullable    = true
+}
+
+variable "github_repository" {
+  type        = string
+  description = "GitHub owner/name allowed to publish release images through OIDC."
+  default     = "NerdsWhoFish/kosmos"
 }
 
 variable "runtime_service_account_id" {
