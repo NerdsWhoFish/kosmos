@@ -64,6 +64,13 @@ variable "environment" {
   default     = "production"
 }
 
+variable "public_url" {
+  type        = string
+  description = "Canonical public URL used by OAuth callbacks and externally visible links."
+  default     = null
+  nullable    = true
+}
+
 variable "allow_unauthenticated" {
   type        = bool
   description = "Whether Cloud Run receives public invocations. Put admin auth at the application and edge layers."
