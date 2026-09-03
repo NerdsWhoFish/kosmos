@@ -10,8 +10,11 @@ locals {
 resource "google_project_service" "required" {
   for_each = toset([
     "artifactregistry.googleapis.com",
+    "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
+    "sts.googleapis.com",
   ])
 
   project            = var.project_id
