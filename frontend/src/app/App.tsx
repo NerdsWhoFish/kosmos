@@ -67,8 +67,8 @@ export function App() {
 function Route({ location, user, navigate }: { location: LocationState; user: User; navigate: (path: string) => void }) {
   const path = basePath(location.path)
   if (path === '/') return <Overview firstName={user.name.split(' ')[0] || 'there'} navigate={navigate} />
-  if (path === '/contacts') return <Contacts openNew={new URLSearchParams(location.search).get('new') === '1'} clearNew={() => navigate('/contacts')} />
-  if (path === '/accounts') return <Accounts />
+  if (path === '/contacts') return <Contacts initialID={recordID(location.path, '/contacts')} openNew={new URLSearchParams(location.search).get('new') === '1'} navigate={navigate} />
+  if (path === '/accounts') return <Accounts initialID={recordID(location.path, '/accounts')} navigate={navigate} />
   if (path === '/opportunities') return <Opportunities />
   if (path === '/documents') return <Documents />
   if (path === '/costs') return <Costs />
@@ -86,5 +86,10 @@ function currentLocation(): LocationState {
 
 function basePath(path: string) {
   if (path.startsWith('/contacts/')) return '/contacts'
+  if (path.startsWith('/accounts/')) return '/accounts'
   return path
+}
+
+function recordID(path: string, base: string) {
+  return path.startsWith(`${base}/`) ? decodeURIComponent(path.slice(base.length + 1)) : ''
 }

@@ -5,13 +5,13 @@ import { Modal } from '../components/Modal'
 import { Page } from '../components/Page'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
 
-export function Contacts({ openNew, clearNew }: { openNew: boolean; clearNew: () => void }) {
+export function Contacts({ initialID, openNew, navigate }: { initialID: string; openNew: boolean; navigate: (path: string) => void }) {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [opportunities, setOpportunities] = useState<Opportunity[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
-  const [selectedID, setSelectedID] = useState('')
+  const [selectedID, setSelectedID] = useState(initialID)
   const [creating, setCreating] = useState(openNew)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -39,6 +39,7 @@ export function Contacts({ openNew, clearNew }: { openNew: boolean; clearNew: ()
 
   useEffect(load, [load])
   useEffect(() => { if (openNew) setCreating(true) }, [openNew])
+  useEffect(() => setSelectedID(initialID), [initialID])
 
   const selected = contacts.find((contact) => contact.id === selectedID)
 
@@ -52,7 +53,7 @@ export function Contacts({ openNew, clearNew }: { openNew: boolean; clearNew: ()
       setContacts((current) => [contact, ...current])
       setSelectedID(contact.id)
       setCreating(false)
-      clearNew()
+      navigate(`/contacts/${contact.id}`)
     } catch (reason) {
       setFormError(reason instanceof Error ? reason.message : 'Could not save contact')
     } finally {
@@ -102,13 +103,13 @@ export function Contacts({ openNew, clearNew }: { openNew: boolean; clearNew: ()
 
   if (loading) return <LoadingState label="Loading your people" />
   if (error) return <ErrorState message={error} retry={load} />
-  if (selected) return <ContactAccount contact={selected} activities={activities.filter((item) => item.contactId === selected.id)} reminders={reminders.filter((item) => item.contactId === selected.id)} opportunities={opportunities.filter((item) => item.contactId === selected.id)} actionError={actionError} onBack={() => setSelectedID('')} onStatus={updateStatus} onActivity={addActivity} onReminder={addReminder} />
+  if (selected) return <ContactAccount contact={selected} activities={activities.filter((item) => item.contactId === selected.id)} reminders={reminders.filter((item) => item.contactId === selected.id)} opportunities={opportunities.filter((item) => item.contactId === selected.id)} actionError={actionError} onBack={() => navigate('/contacts')} onStatus={updateStatus} onActivity={addActivity} onReminder={addReminder} />
 
   return <>
     <Page eyebrow="Relationships" title="Contacts" detail="Every lead, prospect, and customer in one human-friendly place." action={<button className="primary-button" onClick={() => setCreating(true)}><Plus size={17} /> Add contact</button>}>
-      {contacts.length ? <div className="record-grid">{contacts.map((contact) => <button className="record-card" key={contact.id} onClick={() => setSelectedID(contact.id)}><span className="record-avatar">{initials(contact.name)}</span><span className="record-main"><strong>{contact.name}</strong><small>{contact.company || contact.email || 'No company yet'}</small></span><span className={`status-badge ${contact.status}`}>{contact.status}</span></button>)}</div> : <EmptyState title="No people yet" detail="Add the first person you want to follow up with." action={<button className="primary-button" onClick={() => setCreating(true)}><Plus size={17} /> Add your first contact</button>} />}
+      {contacts.length ? <div className="record-grid">{contacts.map((contact) => <button className="record-card" key={contact.id} onClick={() => navigate(`/contacts/${contact.id}`)}><span className="record-avatar">{initials(contact.name)}</span><span className="record-main"><strong>{contact.name}</strong><small>{contact.company || contact.email || 'No company yet'}</small></span><span className={`status-badge ${contact.status}`}>{contact.status}</span></button>)}</div> : <EmptyState title="No people yet" detail="Add the first person you want to follow up with." action={<button className="primary-button" onClick={() => setCreating(true)}><Plus size={17} /> Add your first contact</button>} />}
     </Page>
-    {creating && <Modal eyebrow="Relationships" title="Add a contact" onClose={() => { setCreating(false); clearNew() }}><form onSubmit={createContact}><div className="field-grid"><label>Full name<input name="name" maxLength={160} required autoFocus /></label><label>Company<input name="company" maxLength={160} /></label><label>Email<input name="email" type="email" /></label><label>Phone<input name="phone" type="tel" /></label><label>Account<select name="accountId" defaultValue=""><option value="">No account yet</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label>Source<input name="source" maxLength={100} placeholder="Referral, website, event" /></label></div><label>Status<select name="status" defaultValue="lead"><option value="lead">Lead</option><option value="prospect">Prospect</option><option value="customer">Customer</option></select></label>{formError && <p className="form-error" role="alert">{formError}</p>}<div className="form-actions"><button type="button" className="secondary-button" onClick={() => { setCreating(false); clearNew() }}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving...' : 'Save contact'}</button></div></form></Modal>}
+    {creating && <Modal eyebrow="Relationships" title="Add a contact" onClose={() => { setCreating(false); navigate('/contacts') }}><form onSubmit={createContact}><div className="field-grid"><label>Full name<input name="name" maxLength={160} required autoFocus /></label><label>Company<input name="company" maxLength={160} /></label><label>Email<input name="email" type="email" /></label><label>Phone<input name="phone" type="tel" /></label><label>Account<select name="accountId" defaultValue=""><option value="">No account yet</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label>Source<input name="source" maxLength={100} placeholder="Referral, website, event" /></label></div><label>Status<select name="status" defaultValue="lead"><option value="lead">Lead</option><option value="prospect">Prospect</option><option value="customer">Customer</option></select></label>{formError && <p className="form-error" role="alert">{formError}</p>}<div className="form-actions"><button type="button" className="secondary-button" onClick={() => { setCreating(false); navigate('/contacts') }}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving...' : 'Save contact'}</button></div></form></Modal>}
   </>
 }
 

@@ -543,7 +543,7 @@ func (m Module) search(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range accounts {
 		if matches(query, item.Name, item.Website, item.BillingEmail, item.Notes) {
-			results = append(results, searchResult{ID: item.ID, Kind: "account", Title: item.Name, Subtitle: titleCase(item.Status), Href: "/accounts"})
+			results = append(results, searchResult{ID: item.ID, Kind: "account", Title: item.Name, Subtitle: titleCase(item.Status), Href: "/accounts/" + item.ID})
 		}
 	}
 	contacts, err := m.store.ListContacts(r.Context(), scope)
@@ -553,7 +553,7 @@ func (m Module) search(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range contacts {
 		if matches(query, item.Name, item.Company, item.Email, item.Phone) {
-			results = append(results, searchResult{ID: item.ID, Kind: "contact", Title: item.Name, Subtitle: firstNonEmpty(item.Company, item.Email), Href: "/contacts"})
+			results = append(results, searchResult{ID: item.ID, Kind: "contact", Title: item.Name, Subtitle: firstNonEmpty(item.Company, item.Email), Href: "/contacts/" + item.ID})
 		}
 	}
 	opportunities, err := m.store.ListOpportunities(r.Context(), scope)

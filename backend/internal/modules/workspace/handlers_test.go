@@ -92,7 +92,7 @@ func TestWorkspaceSearchesRecords(t *testing.T) {
 	response := performJSON[struct {
 		Results []searchResult `json:"results"`
 	}](t, mux, http.MethodGet, "/api/v1/search?q=compiler", "", http.StatusOK)
-	if len(response.Results) != 1 || response.Results[0].Title != "Grace Hopper" {
+	if len(response.Results) != 1 || response.Results[0].Title != "Grace Hopper" || response.Results[0].Href != "/contacts/"+response.Results[0].ID {
 		t.Fatalf("unexpected search results: %#v", response.Results)
 	}
 }

@@ -3,18 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 
 const user = { email: 'joey@nerdswhofish.com', name: 'Joey Stout' }
-const contact = { id: 'contact-1', name: 'Ada Angler', company: 'River Labs', email: 'ada@example.com', phone: '', status: 'lead', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }
+const account = { id: 'account-1', name: 'River Labs', website: '', billingEmail: '', status: 'prospect', notes: '', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }
+const contact = { id: 'contact-1', accountId: account.id, name: 'Ada Angler', company: 'River Labs', email: 'ada@example.com', phone: '', status: 'lead', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }
 const responses: Record<string, unknown> = {
   '/api/v1/summary': { contacts: 1, openOpportunities: 1, pipelineAmountCents: 125000, followUpsDue: 1, currentMonthCostCents: 1800, recentActivities: [] },
   '/api/v1/landing': { buttons: [{ id: 'docs', label: 'Field notes', description: 'Open the handbook.', href: '/documents', icon: 'globe' }], notifications: [] },
   '/api/v1/contacts': { contacts: [contact] },
-  '/api/v1/accounts': { accounts: [] },
+  '/api/v1/accounts': { accounts: [account] },
+  '/api/v1/accounts/account-1': { account, contacts: [contact], opportunities: [] },
   '/api/v1/opportunities': { opportunities: [{ id: 'opportunity-1', name: 'Website refresh', contactId: contact.id, amountCents: 125000, stage: 'qualified', nextStep: 'Send proposal', closeDate: '', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
   '/api/v1/activities': { activities: [] },
   '/api/v1/reminders': { reminders: [{ id: 'reminder-1', contactId: contact.id, title: 'Send proposal', dueAt: '2026-09-03T12:00:00Z', completed: false, createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
   '/api/v1/documents': { documents: [{ id: 'document-1', title: 'Client kickoff', body: '# Agenda', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
   '/api/v1/costs': { costs: [{ id: 'cost-1', vendor: 'Google', description: 'Workspace', amountCents: 1800, category: 'Software', incurredOn: '2026-09-03', recurring: true, recurrence: 'monthly', taxDeductible: true, notes: '', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
-  '/api/v1/search?q=river': { results: [{ id: contact.id, kind: 'contact', title: contact.name, subtitle: contact.company, href: '/contacts' }] },
+  '/api/v1/search?q=river': { results: [{ id: contact.id, kind: 'contact', title: contact.name, subtitle: contact.company, href: `/contacts/${contact.id}` }] },
   '/api/v1/members': { members: [{ id: 'member-1', email: user.email, name: user.name, role: 'owner', status: 'active', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
   '/api/v1/pipeline-stages': { stages: [{ id: 'new', name: 'New', position: 0, probability: 10, closed: false, won: false, createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
   '/api/v1/audit': { entries: [] },
@@ -175,7 +177,9 @@ describe('Kosmos application', () => {
     fireEvent.change(search, { target: { value: 'river' } })
     fireEvent.submit(search.closest('form')!)
     expect(await screen.findByRole('heading', { name: /results for “river”/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /ada angler/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /ada angler/i }))
+    expect(await screen.findByRole('heading', { name: 'Ada Angler' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe(`/contacts/${contact.id}`)
   })
 
   it('creates a landing-zone shortcut with CSRF protection', async () => {
