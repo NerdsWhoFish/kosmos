@@ -69,6 +69,7 @@ export function Shell({
       <aside className="sidebar">
         <a
           className="brand"
+          aria-label="Kosmos"
           href="/"
           onClick={(event) => {
             event.preventDefault();

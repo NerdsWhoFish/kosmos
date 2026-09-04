@@ -2625,7 +2625,17 @@ select {
 }
 
 .document-upload label {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
   flex: 1;
+}
+
+.document-upload input[type="file"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--theme-muted);
 }
 
 .document-files,
@@ -2776,6 +2786,36 @@ select {
   border-radius: 16px;
   padding: clamp(18px, 4vw, 34px);
   background: var(--theme-surface);
+}
+
+.lead-intake-form label {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  color: var(--theme-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lead-intake-form input:not([type="hidden"]),
+.lead-intake-form select,
+.lead-intake-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--theme-border);
+  border-radius: 8px;
+  padding: 11px 12px;
+  color: var(--theme-text);
+  background: var(--theme-surface-dark);
+  outline: 0;
+  font-size: 16px;
+}
+
+.lead-intake-form input:focus,
+.lead-intake-form select:focus,
+.lead-intake-form textarea:focus {
+  border-color: var(--theme-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accent) 20%, transparent);
 }
 
 .lead-field-grid {

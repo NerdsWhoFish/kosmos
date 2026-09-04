@@ -8,7 +8,9 @@ import {
 } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { markdown } from "@codemirror/lang-markdown";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
 import {
   Download,
   Edit3,
@@ -40,26 +42,42 @@ import { EmptyState, ErrorState, LoadingState } from "../components/States";
 type LinkOption = RecordLink & { label: string };
 type Draft = { title: string; body: string; links: RecordLink[] };
 
-const editorTheme = EditorView.theme({
-  "&": { backgroundColor: "var(--theme-surface)", color: "var(--theme-text)" },
-  ".cm-content": {
-    caretColor: "var(--theme-accent)",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+const editorTheme = EditorView.theme(
+  {
+    "&": {
+      backgroundColor: "var(--theme-surface)",
+      color: "var(--theme-text)",
+    },
+    ".cm-content": {
+      caretColor: "var(--theme-accent)",
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    },
+    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--theme-accent)" },
+    ".cm-gutters": {
+      backgroundColor: "var(--theme-surface-raised)",
+      color: "var(--theme-muted)",
+      border: "0",
+    },
+    ".cm-activeLine, .cm-activeLineGutter": {
+      backgroundColor:
+        "color-mix(in srgb, var(--theme-accent) 10%, transparent)",
+    },
+    ".cm-selectionBackground, ::selection": {
+      backgroundColor:
+        "color-mix(in srgb, var(--theme-accent) 32%, transparent) !important",
+    },
   },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--theme-accent)" },
-  ".cm-gutters": {
-    backgroundColor: "var(--theme-surface-raised)",
-    color: "var(--theme-muted)",
-    border: "0",
-  },
-  ".cm-activeLine, .cm-activeLineGutter": {
-    backgroundColor: "color-mix(in srgb, var(--theme-accent) 10%, transparent)",
-  },
-  ".cm-selectionBackground, ::selection": {
-    backgroundColor:
-      "color-mix(in srgb, var(--theme-accent) 32%, transparent) !important",
-  },
-});
+  { dark: true },
+);
+
+const markdownHighlight = HighlightStyle.define([
+  { tag: tags.heading, color: "var(--theme-link)", fontWeight: "700" },
+  { tag: [tags.link, tags.url], color: "var(--theme-link)" },
+  { tag: tags.strong, color: "var(--theme-success)", fontWeight: "700" },
+  { tag: tags.emphasis, color: "var(--theme-warning)", fontStyle: "italic" },
+  { tag: tags.monospace, color: "var(--theme-success)" },
+  { tag: [tags.meta, tags.punctuation], color: "var(--theme-muted)" },
+]);
 
 export function Documents({ initialID = "" }: { initialID?: string }) {
   const [items, setItems] = useState<Document[]>([]);
@@ -498,9 +516,10 @@ function DocumentEditor({
             value={draft.body}
             height="100%"
             minHeight="320px"
+            theme={editorTheme}
             extensions={[
               markdown(),
-              editorTheme,
+              syntaxHighlighting(markdownHighlight),
               EditorView.lineWrapping,
               EditorView.contentAttributes.of({
                 "aria-label": "Markdown editor",
