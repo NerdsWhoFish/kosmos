@@ -105,6 +105,15 @@ const responses: Record<string, unknown> = {
         createdAt: "2026-09-03T12:00:00Z",
         updatedAt: "2026-09-03T12:00:00Z",
       },
+      {
+        id: "reminder-2",
+        contactId: contact.id,
+        title: "affordable-drainage-solutions.com renews in 30 days",
+        dueAt: "2027-01-30T12:00:00Z",
+        completed: false,
+        createdAt: "2026-09-03T12:00:00Z",
+        updatedAt: "2026-09-03T12:00:00Z",
+      },
     ],
   },
   "/api/v1/documents": {
@@ -972,6 +981,32 @@ describe("Kosmos application", () => {
     expect(
       screen.queryByRole("button", { name: /edit quick lead/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps distant reminders in the future-reminders review", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /notifications and follow-ups/i }),
+    );
+    await screen.findByRole("heading", { name: "Activity and follow-ups" });
+    expect(
+      screen.queryByText(
+        "affordable-drainage-solutions.com renews in 30 days",
+      ),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /future reminders 1/i }),
+    );
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        "affordable-drainage-solutions.com renews in 30 days",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("lets an administrator edit and confirm deletion of a shortcut", async () => {

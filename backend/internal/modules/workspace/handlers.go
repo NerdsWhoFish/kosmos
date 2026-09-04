@@ -805,6 +805,7 @@ func (m Module) summary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
+	reminderCutoff := now.Add(7 * 24 * time.Hour)
 	if activities == nil {
 		activities = []Activity{}
 	}
@@ -826,7 +827,7 @@ func (m Module) summary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, reminder := range reminders {
-		if !reminder.Completed && !reminder.DueAt.After(now) {
+		if !reminder.Completed && !reminder.DueAt.After(reminderCutoff) {
 			response.FollowUpsDue++
 		}
 	}

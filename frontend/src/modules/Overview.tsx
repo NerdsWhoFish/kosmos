@@ -201,7 +201,7 @@ export function Overview({
           onClick={() => navigate("/opportunities?view=lost")}
         />
         <Stat
-          label="Follow-ups due"
+          label="Follow-ups coming up"
           value={String(summary.followUpsDue)}
           detail="Keep the next conversation moving"
           tone="gold"

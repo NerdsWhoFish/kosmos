@@ -2130,8 +2130,22 @@ select {
   gap: 18px;
   align-items: start;
 }
+.activity-page-grid > * {
+  min-width: 0;
+}
 .reminder-list {
   display: grid;
+}
+.activity-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.activity-header-actions .text-button {
+  white-space: nowrap;
+}
+.activity-header-actions .text-button .count-chip {
+  margin-left: 3px;
 }
 .reminder-list article {
   display: flex;
@@ -2144,8 +2158,12 @@ select {
 }
 .reminder-list article > span:nth-child(2) {
   display: grid;
+  min-width: 0;
   gap: 4px;
   flex: 1;
+}
+.reminder-list strong {
+  overflow-wrap: anywhere;
 }
 .reminder-list small {
   color: var(--theme-muted);
@@ -2154,6 +2172,7 @@ select {
 .reminder-list article > button {
   display: grid;
   place-items: center;
+  flex: 0 0 38px;
   width: 38px;
   height: 38px;
   border: 1px solid var(--theme-border);

@@ -110,6 +110,24 @@ func TestWorkspaceCoreFlow(t *testing.T) {
 	performJSON[map[string]any](t, mux, http.MethodDelete, "/api/v1/contacts/"+contact.ID, "", http.StatusNotFound)
 }
 
+func TestSummaryCountsRemindersOneWeekBeforeDue(t *testing.T) {
+	store := NewMemoryStore()
+	now := time.Now().UTC()
+	if _, err := store.CreateReminder(context.Background(), "nerds-who-fish", Reminder{Title: "Soon", DueAt: now.Add(6 * 24 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateReminder(context.Background(), "nerds-who-fish", Reminder{Title: "Later", DueAt: now.Add(8 * 24 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	NewModule(store, func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
+
+	summary := performJSON[summaryResponse](t, mux, http.MethodGet, "/api/v1/summary", "", http.StatusOK)
+	if summary.FollowUpsDue != 1 {
+		t.Fatalf("follow-ups coming up = %d, want 1", summary.FollowUpsDue)
+	}
+}
+
 func TestContactMutationsPublishGoogleSyncEvents(t *testing.T) {
 	type mutation struct {
 		contact Contact
