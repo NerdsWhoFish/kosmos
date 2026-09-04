@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,17 @@ func (s *MemoryStore) ListAccounts(_ context.Context, scope string) ([]Account, 
 	return append([]Account(nil), s.workspace(scope).accounts...), nil
 }
 
+func (s *MemoryStore) GetAccount(_ context.Context, scope, id string) (Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, item := range s.workspace(scope).accounts {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return Account{}, errNotFound
+}
+
 func (s *MemoryStore) CreateAccount(_ context.Context, scope string, item Account) (Account, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -41,6 +53,98 @@ func (s *MemoryStore) CreateAccount(_ context.Context, scope string, item Accoun
 	workspace := s.workspace(scope)
 	workspace.accounts = append([]Account{item}, workspace.accounts...)
 	return item, nil
+}
+
+func (s *MemoryStore) CreateAccountWithContact(_ context.Context, scope string, account Account, contact Contact) (Account, Contact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	accountID, err := newID()
+	if err != nil {
+		return Account{}, Contact{}, err
+	}
+	contactID, err := newID()
+	if err != nil {
+		return Account{}, Contact{}, err
+	}
+	account.ID, account.CreatedAt, account.UpdatedAt = accountID, now, now
+	contact.ID, contact.AccountID, contact.CreatedAt, contact.UpdatedAt = contactID, accountID, now, now
+	workspace := s.workspace(scope)
+	workspace.accounts = append([]Account{account}, workspace.accounts...)
+	workspace.contacts = append([]Contact{contact}, workspace.contacts...)
+	return account, contact, nil
+}
+
+func (s *MemoryStore) UpdateAccount(_ context.Context, scope, id string, patch AccountPatch) (Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspace(scope)
+	for index := range workspace.accounts {
+		if workspace.accounts[index].ID != id {
+			continue
+		}
+		if patch.Websites != nil {
+			websites := preserveManagedWebsiteMetadata(accountWebsites(workspace.accounts[index]), *patch.Websites)
+			patch.Websites = &websites
+		}
+		applyAccountPatch(&workspace.accounts[index], patch)
+		workspace.accounts[index].UpdatedAt = time.Now().UTC()
+		return workspace.accounts[index], nil
+	}
+	return Account{}, errNotFound
+}
+
+func (s *MemoryStore) LinkWebsiteRenewal(_ context.Context, scope, id string, website Website, reminders []Reminder) (Account, []Reminder, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspace(scope)
+	accountIndex := -1
+	for index := range workspace.accounts {
+		if workspace.accounts[index].ID == id {
+			accountIndex = index
+			break
+		}
+	}
+	if accountIndex < 0 {
+		return Account{}, nil, errNotFound
+	}
+	account := &workspace.accounts[accountIndex]
+	account.Websites = mergeWebsite(accountWebsites(*account), website)
+	account.Website = account.Websites[0].URL
+	account.UpdatedAt = time.Now().UTC()
+	prefix := "cloudflare:" + website.Domain + ":"
+	desired := make(map[string]struct{}, len(reminders))
+	for _, reminder := range reminders {
+		desired[reminder.ID] = struct{}{}
+	}
+	kept := workspace.reminders[:0]
+	for _, reminder := range workspace.reminders {
+		_, current := desired[reminder.ID]
+		if reminder.AccountID == id && strings.HasPrefix(reminder.SourceKey, prefix) && !current {
+			continue
+		}
+		kept = append(kept, reminder)
+	}
+	workspace.reminders = kept
+	created := make([]Reminder, 0, len(reminders))
+	for _, reminder := range reminders {
+		found := false
+		for _, existing := range workspace.reminders {
+			if existing.ID == reminder.ID {
+				created = append(created, existing)
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		now := time.Now().UTC()
+		reminder.CreatedAt, reminder.UpdatedAt = now, now
+		workspace.reminders = append(workspace.reminders, reminder)
+		created = append(created, reminder)
+	}
+	return *account, created, nil
 }
 
 type MemoryStore struct {
@@ -150,6 +254,17 @@ func (s *MemoryStore) ListOpportunities(_ context.Context, scope string) ([]Oppo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]Opportunity(nil), s.workspace(scope).opportunities...), nil
+}
+
+func (s *MemoryStore) GetOpportunity(_ context.Context, scope, id string) (Opportunity, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, item := range s.workspace(scope).opportunities {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return Opportunity{}, errNotFound
 }
 
 func (s *MemoryStore) CreateOpportunity(_ context.Context, scope string, item Opportunity) (Opportunity, error) {
@@ -354,17 +469,14 @@ func applyContactPatch(item *Contact, patch ContactPatch) {
 	if patch.Name != nil {
 		item.Name = *patch.Name
 	}
-	if patch.Company != nil {
-		item.Company = *patch.Company
-	}
 	if patch.Email != nil {
 		item.Email = *patch.Email
 	}
 	if patch.Phone != nil {
 		item.Phone = *patch.Phone
 	}
-	if patch.Status != nil {
-		item.Status = *patch.Status
+	if patch.LinkedInURL != nil {
+		item.LinkedInURL = *patch.LinkedInURL
 	}
 	if patch.Source != nil {
 		item.Source = *patch.Source
@@ -374,6 +486,9 @@ func applyContactPatch(item *Contact, patch ContactPatch) {
 func applyOpportunityPatch(item *Opportunity, patch OpportunityPatch) {
 	if patch.Name != nil {
 		item.Name = *patch.Name
+	}
+	if patch.AccountID != nil {
+		item.AccountID = *patch.AccountID
 	}
 	if patch.ContactID != nil {
 		item.ContactID = *patch.ContactID

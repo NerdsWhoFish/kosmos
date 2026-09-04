@@ -1,11 +1,13 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +23,7 @@ func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/accounts", m.listAccounts)
 	mux.HandleFunc("POST /api/v1/accounts", m.createAccount)
 	mux.HandleFunc("GET /api/v1/accounts/{id}", m.getAccount)
+	mux.HandleFunc("PATCH /api/v1/accounts/{id}", m.updateAccount)
 	mux.HandleFunc("GET /api/v1/leads", m.listLeads)
 	mux.HandleFunc("GET /api/v1/contacts", m.listContacts)
 	mux.HandleFunc("POST /api/v1/contacts", m.createContact)
@@ -56,20 +59,33 @@ func (m Module) createAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var item Account
-	if !decodeJSON(w, r, &item) {
+	var request struct {
+		Account
+		PrimaryContact *Contact `json:"primaryContact"`
+	}
+	if !decodeJSON(w, r, &request) {
 		return
 	}
-	item.Name, item.Website, item.BillingEmail, item.Status, item.Notes = strings.TrimSpace(item.Name), strings.TrimSpace(item.Website), strings.ToLower(strings.TrimSpace(item.BillingEmail)), strings.ToLower(strings.TrimSpace(item.Status)), strings.TrimSpace(item.Notes)
-	if item.Status == "" {
-		item.Status = "prospect"
-	}
-	if item.Name == "" || len(item.Name) > 160 || !contains([]string{"prospect", "customer", "inactive"}, item.Status) {
-		writeError(w, http.StatusBadRequest, "invalid_account", "Account needs a name and a valid status")
+	if err := normalizeAccount(&request.Account); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_account", err.Error())
 		return
 	}
-	created, err := m.store.CreateAccount(r.Context(), scope, item)
-	respondCreated(w, created, err, "account_save_failed", "Could not save account")
+	if message := validateAccount(request.Account); message != "" {
+		writeError(w, http.StatusBadRequest, "invalid_account", message)
+		return
+	}
+	if request.PrimaryContact == nil {
+		created, err := m.store.CreateAccount(r.Context(), scope, request.Account)
+		respondCreated(w, map[string]any{"account": created, "contact": nil}, err, "account_save_failed", "Could not save account")
+		return
+	}
+	normalizeContact(request.PrimaryContact)
+	if message := validateContact(*request.PrimaryContact); message != "" {
+		writeError(w, http.StatusBadRequest, "invalid_contact", message)
+		return
+	}
+	account, contact, err := m.store.CreateAccountWithContact(r.Context(), scope, request.Account, *request.PrimaryContact)
+	respondCreated(w, map[string]any{"account": account, "contact": contact}, err, "account_save_failed", "Could not save account and contact")
 }
 
 func (m Module) getAccount(w http.ResponseWriter, r *http.Request) {
@@ -77,20 +93,13 @@ func (m Module) getAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	accounts, err := m.store.ListAccounts(r.Context(), scope)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "account_load_failed", "Could not load account")
+	selected, err := m.store.GetAccount(r.Context(), scope, r.PathValue("id"))
+	if errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "account_not_found", "Account not found")
 		return
 	}
-	var selected Account
-	for _, account := range accounts {
-		if account.ID == r.PathValue("id") {
-			selected = account
-			break
-		}
-	}
-	if selected.ID == "" {
-		writeError(w, http.StatusNotFound, "account_not_found", "Account not found")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "account_load_failed", "Could not load account")
 		return
 	}
 	contacts, err := m.store.ListContacts(r.Context(), scope)
@@ -113,11 +122,48 @@ func (m Module) getAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	linkedOpportunities := make([]Opportunity, 0)
 	for _, opportunity := range opportunities {
-		if _, linked := contactIDs[opportunity.ContactID]; linked {
+		_, legacyContactLink := contactIDs[opportunity.ContactID]
+		if opportunity.AccountID == selected.ID || (opportunity.AccountID == "" && legacyContactLink) {
 			linkedOpportunities = append(linkedOpportunities, opportunity)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"account": selected, "contacts": linkedContacts, "opportunities": linkedOpportunities})
+	documents, err := m.store.ListDocuments(r.Context(), scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "account_load_failed", "Could not load account")
+		return
+	}
+	linkedDocuments := make([]Document, 0)
+	for _, document := range documents {
+		for _, link := range document.Links {
+			if link.Type == "account" && link.ID == selected.ID {
+				linkedDocuments = append(linkedDocuments, document)
+				break
+			}
+		}
+	}
+	sort.Slice(linkedDocuments, func(i, j int) bool { return linkedDocuments[i].CreatedAt.After(linkedDocuments[j].CreatedAt) })
+	writeJSON(w, http.StatusOK, map[string]any{"account": selected, "contacts": linkedContacts, "opportunities": linkedOpportunities, "documents": linkedDocuments})
+}
+
+func (m Module) updateAccount(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	var patch AccountPatch
+	if !decodeJSON(w, r, &patch) {
+		return
+	}
+	if err := normalizeAccountPatch(&patch); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_account", err.Error())
+		return
+	}
+	if message := validateAccountPatch(patch); message != "" {
+		writeError(w, http.StatusBadRequest, "invalid_account", message)
+		return
+	}
+	updated, err := m.store.UpdateAccount(r.Context(), scope, r.PathValue("id"), patch)
+	respondUpdated(w, updated, err, "account_not_found", "Account not found", "account_save_failed", "Could not save account")
 }
 
 func (m Module) listLeads(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +171,7 @@ func (m Module) listLeads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	respondStoreList[Contact](w, r, m.store, scope, "contacts", "leads", pagination.Spec{Key: "workspace.leads", OrderBy: "updatedAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue, Filters: []pagination.Filter{{Field: "status", Value: "lead"}}})
+	respondStoreList[Contact](w, r, m.store, scope, "contacts", "leads", pagination.Spec{Key: "workspace.leads", OrderBy: "updatedAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue, Filters: []pagination.Filter{{Field: "accountId", Value: ""}}})
 }
 
 func (m Module) listContacts(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +213,12 @@ func (m Module) createContact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_contact", message)
 		return
 	}
+	if contact.AccountID != "" {
+		if _, err := m.store.GetAccount(r.Context(), scope, contact.AccountID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_contact", "Choose an existing account")
+			return
+		}
+	}
 	created, err := m.store.CreateContact(r.Context(), scope, contact)
 	respondCreated(w, created, err, "contact_save_failed", "Could not save contact")
 }
@@ -184,6 +236,12 @@ func (m Module) updateContact(w http.ResponseWriter, r *http.Request) {
 	if message := validateContactPatch(patch); message != "" {
 		writeError(w, http.StatusBadRequest, "invalid_contact", message)
 		return
+	}
+	if patch.AccountID != nil && *patch.AccountID != "" {
+		if _, err := m.store.GetAccount(r.Context(), scope, *patch.AccountID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_contact", "Choose an existing account")
+			return
+		}
 	}
 	updated, err := m.store.UpdateContact(r.Context(), scope, r.PathValue("id"), patch)
 	respondUpdated(w, updated, err, "contact_not_found", "Contact not found", "contact_save_failed", "Could not save contact")
@@ -211,6 +269,14 @@ func (m Module) createOpportunity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_opportunity", message)
 		return
 	}
+	if message := m.resolveOpportunityLinks(r.Context(), scope, &item); message != "" {
+		writeError(w, http.StatusBadRequest, "invalid_opportunity", message)
+		return
+	}
+	if item.AccountID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_opportunity", "Choose an account for this opportunity")
+		return
+	}
 	created, err := m.store.CreateOpportunity(r.Context(), scope, item)
 	respondCreated(w, created, err, "opportunity_save_failed", "Could not save opportunity")
 }
@@ -229,8 +295,55 @@ func (m Module) updateOpportunity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_opportunity", message)
 		return
 	}
+	existing, err := m.store.GetOpportunity(r.Context(), scope, r.PathValue("id"))
+	if errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "opportunity_not_found", "Opportunity not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "opportunity_save_failed", "Could not save opportunity")
+		return
+	}
+	candidate := existing
+	applyOpportunityPatch(&candidate, patch)
+	if message := m.resolveOpportunityLinks(r.Context(), scope, &candidate); message != "" {
+		writeError(w, http.StatusBadRequest, "invalid_opportunity", message)
+		return
+	}
+	if candidate.AccountID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_opportunity", "Choose an account for this opportunity")
+		return
+	}
+	if patch.AccountID != nil {
+		patch.AccountID = &candidate.AccountID
+	} else if candidate.AccountID != existing.AccountID {
+		patch.AccountID = &candidate.AccountID
+	}
 	updated, err := m.store.UpdateOpportunity(r.Context(), scope, r.PathValue("id"), patch)
 	respondUpdated(w, updated, err, "opportunity_not_found", "Opportunity not found", "opportunity_save_failed", "Could not save opportunity")
+}
+
+func (m Module) resolveOpportunityLinks(ctx context.Context, scope string, item *Opportunity) string {
+	if item.AccountID != "" {
+		if _, err := m.store.GetAccount(ctx, scope, item.AccountID); err != nil {
+			return "Choose an existing account"
+		}
+	}
+	if item.ContactID == "" {
+		return ""
+	}
+	contact, err := m.store.GetContact(ctx, scope, item.ContactID)
+	if err != nil {
+		return "Choose an existing contact"
+	}
+	if item.AccountID == "" {
+		item.AccountID = contact.AccountID
+		return ""
+	}
+	if contact.AccountID != item.AccountID {
+		return "Choose a contact from the selected account"
+	}
+	return ""
 }
 
 func (m Module) listActivities(w http.ResponseWriter, r *http.Request) {
@@ -288,6 +401,9 @@ func (m Module) createReminder(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &item) {
 		return
 	}
+	item.AccountID = strings.TrimSpace(item.AccountID)
+	item.ContactID = strings.TrimSpace(item.ContactID)
+	item.SourceKey = strings.TrimSpace(item.SourceKey)
 	item.Title = strings.TrimSpace(item.Title)
 	item.OwnerEmail = strings.ToLower(strings.TrimSpace(item.OwnerEmail))
 	if item.Title == "" || len(item.Title) > 160 || item.DueAt.IsZero() {
@@ -439,6 +555,10 @@ type summaryResponse struct {
 	Contacts              int        `json:"contacts"`
 	OpenOpportunities     int        `json:"openOpportunities"`
 	PipelineAmountCents   int64      `json:"pipelineAmountCents"`
+	WonOpportunities      int        `json:"wonOpportunities"`
+	WonAmountCents        int64      `json:"wonAmountCents"`
+	LostOpportunities     int        `json:"lostOpportunities"`
+	LostAmountCents       int64      `json:"lostAmountCents"`
 	FollowUpsDue          int        `json:"followUpsDue"`
 	CurrentMonthCostCents int64      `json:"currentMonthCostCents"`
 	RecentActivities      []Activity `json:"recentActivities"`
@@ -484,7 +604,14 @@ func (m Module) summary(w http.ResponseWriter, r *http.Request) {
 		response.RecentActivities = response.RecentActivities[:5]
 	}
 	for _, opportunity := range opportunities {
-		if opportunity.Stage != "won" && opportunity.Stage != "lost" {
+		switch opportunity.Stage {
+		case "won":
+			response.WonOpportunities++
+			response.WonAmountCents += opportunity.AmountCents
+		case "lost":
+			response.LostOpportunities++
+			response.LostAmountCents += opportunity.AmountCents
+		default:
 			response.OpenOpportunities++
 			response.PipelineAmountCents += opportunity.AmountCents
 		}
@@ -527,8 +654,14 @@ func (m Module) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "search_failed", "Could not search workspace")
 		return
 	}
+	accountNames := make(map[string]string, len(accounts))
 	for _, item := range accounts {
-		if matches(query, item.Name, item.Website, item.BillingEmail, item.Notes) {
+		accountNames[item.ID] = item.Name
+		websiteValues := make([]string, 0, len(item.Websites)*2)
+		for _, website := range accountWebsites(item) {
+			websiteValues = append(websiteValues, website.URL, website.Domain)
+		}
+		if matches(query, append([]string{item.Name, item.BillingEmail, item.Notes}, websiteValues...)...) {
 			results = append(results, searchResult{ID: item.ID, Kind: "account", Title: item.Name, Subtitle: titleCase(item.Status), Href: "/accounts/" + item.ID})
 		}
 	}
@@ -538,8 +671,9 @@ func (m Module) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, item := range contacts {
-		if matches(query, item.Name, item.Company, item.Email, item.Phone) {
-			results = append(results, searchResult{ID: item.ID, Kind: "contact", Title: item.Name, Subtitle: firstNonEmpty(item.Company, item.Email), Href: "/contacts/" + item.ID})
+		accountName := accountNames[item.AccountID]
+		if matches(query, item.Name, accountName, item.Email, item.Phone) {
+			results = append(results, searchResult{ID: item.ID, Kind: "contact", Title: item.Name, Subtitle: firstNonEmpty(accountName, item.Email), Href: "/contacts/" + item.ID})
 		}
 	}
 	opportunities, err := m.store.ListOpportunities(r.Context(), scope)
@@ -660,23 +794,20 @@ func respondUpdated[T any](w http.ResponseWriter, item T, err error, notFoundCod
 func normalizeContact(contact *Contact) {
 	contact.AccountID = strings.TrimSpace(contact.AccountID)
 	contact.Name = strings.TrimSpace(contact.Name)
-	contact.Company = strings.TrimSpace(contact.Company)
 	contact.Email = strings.ToLower(strings.TrimSpace(contact.Email))
 	contact.Phone = strings.TrimSpace(contact.Phone)
-	contact.Status = strings.ToLower(strings.TrimSpace(contact.Status))
+	contact.LinkedInURL = normalizeLinkedInURL(contact.LinkedInURL)
 	contact.Source = strings.TrimSpace(contact.Source)
-	if contact.Status == "" {
-		contact.Status = "lead"
-	}
 }
 
 func normalizeContactPatch(patch *ContactPatch) {
 	trimPointer(patch.AccountID, false)
 	trimPointer(patch.Name, false)
-	trimPointer(patch.Company, false)
 	trimPointer(patch.Email, true)
 	trimPointer(patch.Phone, false)
-	trimPointer(patch.Status, true)
+	if patch.LinkedInURL != nil {
+		*patch.LinkedInURL = normalizeLinkedInURL(*patch.LinkedInURL)
+	}
 	trimPointer(patch.Source, false)
 }
 
@@ -690,28 +821,43 @@ func validateContact(contact Contact) string {
 			return "Enter a valid email address"
 		}
 	}
-	if !contains([]string{"lead", "prospect", "customer"}, contact.Status) {
-		return "Contact status must be lead, prospect, or customer"
+	if contact.LinkedInURL != "" {
+		parsed, err := url.Parse(contact.LinkedInURL)
+		if err != nil || parsed.Scheme != "https" || (parsed.Hostname() != "linkedin.com" && !strings.HasSuffix(parsed.Hostname(), ".linkedin.com")) || parsed.User != nil || parsed.Path == "" || parsed.Path == "/" {
+			return "Enter a valid LinkedIn profile URL"
+		}
 	}
 	return ""
 }
 
 func validateContactPatch(patch ContactPatch) string {
-	contact := Contact{Name: "Valid", Status: "lead"}
+	contact := Contact{Name: "Valid"}
 	if patch.Name != nil {
 		contact.Name = *patch.Name
 	}
 	if patch.Email != nil {
 		contact.Email = *patch.Email
 	}
-	if patch.Status != nil {
-		contact.Status = *patch.Status
+	if patch.LinkedInURL != nil {
+		contact.LinkedInURL = *patch.LinkedInURL
 	}
 	return validateContact(contact)
 }
 
+func normalizeLinkedInURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if !strings.Contains(value, "://") {
+		value = "https://" + value
+	}
+	return value
+}
+
 func normalizeOpportunity(item *Opportunity) {
 	item.Name = strings.TrimSpace(item.Name)
+	item.AccountID = strings.TrimSpace(item.AccountID)
 	item.ContactID = strings.TrimSpace(item.ContactID)
 	item.Stage = strings.ToLower(strings.TrimSpace(item.Stage))
 	item.NextStep = strings.TrimSpace(item.NextStep)
@@ -724,6 +870,7 @@ func normalizeOpportunity(item *Opportunity) {
 
 func normalizeOpportunityPatch(patch *OpportunityPatch) {
 	trimPointer(patch.Name, false)
+	trimPointer(patch.AccountID, false)
 	trimPointer(patch.ContactID, false)
 	trimPointer(patch.Stage, true)
 	trimPointer(patch.NextStep, false)

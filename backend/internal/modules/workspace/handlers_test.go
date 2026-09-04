@@ -17,14 +17,25 @@ func TestWorkspaceCoreFlow(t *testing.T) {
 	mux := http.NewServeMux()
 	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
 
-	account := performJSON[Account](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","status":"prospect"}`, http.StatusCreated)
-	contact := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Ada Angler","accountId":"`+account.ID+`","company":"River Labs","email":"ada@example.com","status":"lead","source":"referral"}`, http.StatusCreated)
-	if contact.ID == "" || contact.Name != "Ada Angler" {
+	createdAccount := performJSON[struct {
+		Account Account `json:"account"`
+		Contact Contact `json:"contact"`
+	}](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","status":"prospect","websites":[{"url":"river.example"},{"url":"shop.river.example"}],"primaryContact":{"name":"Ada Angler","email":"ada@example.com","linkedinUrl":"www.linkedin.com/in/ada-angler","source":"referral"}}`, http.StatusCreated)
+	account := createdAccount.Account
+	contact := createdAccount.Contact
+	if len(account.Websites) != 2 || account.Websites[0].Domain != "river.example" || account.Websites[1].Domain != "shop.river.example" {
+		t.Fatalf("unexpected account websites: %#v", account.Websites)
+	}
+	if contact.ID == "" || contact.Name != "Ada Angler" || contact.AccountID != account.ID || contact.LinkedInURL != "https://www.linkedin.com/in/ada-angler" {
 		t.Fatalf("unexpected contact: %#v", contact)
 	}
+	contact = performJSON[Contact](t, mux, http.MethodPatch, "/api/v1/contacts/"+contact.ID, `{"linkedinUrl":"https://linkedin.com/in/ada-updated"}`, http.StatusOK)
+	if contact.LinkedInURL != "https://linkedin.com/in/ada-updated" {
+		t.Fatalf("contact LinkedIn URL = %q", contact.LinkedInURL)
+	}
 
-	opportunity := performJSON[Opportunity](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","contactId":"`+contact.ID+`","amountCents":125000,"stage":"qualified","nextStep":"Send proposal"}`, http.StatusCreated)
-	if opportunity.Stage != "qualified" {
+	opportunity := performJSON[Opportunity](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","accountId":"`+account.ID+`","contactId":"`+contact.ID+`","amountCents":125000,"stage":"qualified","nextStep":"Send proposal"}`, http.StatusCreated)
+	if opportunity.Stage != "qualified" || opportunity.AccountID != account.ID {
 		t.Fatalf("opportunity stage = %q", opportunity.Stage)
 	}
 
@@ -56,13 +67,15 @@ func TestWorkspaceCoreFlow(t *testing.T) {
 	leads := performJSON[struct {
 		Leads []Contact `json:"leads"`
 	}](t, mux, http.MethodGet, "/api/v1/leads", "", http.StatusOK)
-	if len(leads.Leads) != 1 || leads.Leads[0].Source != "referral" {
+	if len(leads.Leads) != 0 {
 		t.Fatalf("unexpected leads: %#v", leads.Leads)
 	}
 	accountDetail := performJSON[struct {
-		Contacts []Contact `json:"contacts"`
+		Contacts      []Contact     `json:"contacts"`
+		Opportunities []Opportunity `json:"opportunities"`
+		Documents     []Document    `json:"documents"`
 	}](t, mux, http.MethodGet, "/api/v1/accounts/"+account.ID, "", http.StatusOK)
-	if len(accountDetail.Contacts) != 1 {
+	if len(accountDetail.Contacts) != 1 || len(accountDetail.Opportunities) != 1 || accountDetail.Opportunities[0].ID != opportunity.ID || len(accountDetail.Documents) != 1 || accountDetail.Documents[0].ID != document.ID {
 		t.Fatalf("unexpected account detail: %#v", accountDetail)
 	}
 
@@ -81,6 +94,10 @@ func TestWorkspaceCoreFlow(t *testing.T) {
 	if updated.Stage != "won" {
 		t.Fatalf("updated stage = %q", updated.Stage)
 	}
+	closedSummary := performJSON[summaryResponse](t, mux, http.MethodGet, "/api/v1/summary", "", http.StatusOK)
+	if closedSummary.OpenOpportunities != 0 || closedSummary.PipelineAmountCents != 0 || closedSummary.WonOpportunities != 1 || closedSummary.WonAmountCents != 125000 || closedSummary.LostOpportunities != 0 || closedSummary.LostAmountCents != 0 {
+		t.Fatalf("unexpected closed summary: %#v", closedSummary)
+	}
 	completed := performJSON[Reminder](t, mux, http.MethodPatch, "/api/v1/reminders/"+reminder.ID, `{"completed":true}`, http.StatusOK)
 	if !completed.Completed {
 		t.Fatal("reminder was not completed")
@@ -90,7 +107,7 @@ func TestWorkspaceCoreFlow(t *testing.T) {
 func TestWorkspaceSearchesRecords(t *testing.T) {
 	mux := http.NewServeMux()
 	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
-	performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Grace Hopper","company":"Compiler Co","status":"customer"}`, http.StatusCreated)
+	performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Grace Hopper","email":"grace@compiler.example"}`, http.StatusCreated)
 	performJSON[Cost](t, mux, http.MethodPost, "/api/v1/costs", `{"vendor":"Google","description":"Workspace","amountCents":1800,"incurredOn":"2026-09-04"}`, http.StatusCreated)
 
 	response := performJSON[struct {
@@ -156,9 +173,9 @@ func TestWorkspaceEmptySummaryUsesArray(t *testing.T) {
 func TestWorkspaceListsUseCursorPagination(t *testing.T) {
 	mux := http.NewServeMux()
 	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
-	firstCreated := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"First","status":"lead"}`, http.StatusCreated)
-	secondCreated := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Second","status":"lead"}`, http.StatusCreated)
-	thirdCreated := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Third","status":"lead"}`, http.StatusCreated)
+	firstCreated := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"First"}`, http.StatusCreated)
+	secondCreated := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Second"}`, http.StatusCreated)
+	thirdCreated := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Third"}`, http.StatusCreated)
 
 	type listResponse struct {
 		Contacts []Contact `json:"contacts"`
@@ -198,7 +215,7 @@ func TestWorkspaceListsRejectMalformedPagination(t *testing.T) {
 
 func TestWorkspaceListHandlersUsePagedStore(t *testing.T) {
 	base := NewMemoryStore()
-	if _, err := base.CreateContact(context.Background(), "nerds-who-fish", Contact{Name: "Paged", Status: "lead"}); err != nil {
+	if _, err := base.CreateContact(context.Background(), "nerds-who-fish", Contact{Name: "Paged"}); err != nil {
 		t.Fatal(err)
 	}
 	store := &workspacePageSpy{Store: base}
@@ -227,9 +244,26 @@ func (s *workspacePageSpy) ListPage(ctx context.Context, scope, collection strin
 func TestWorkspaceRejectsInvalidRecords(t *testing.T) {
 	mux := http.NewServeMux()
 	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
-	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"","status":"stranger"}`, http.StatusBadRequest)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":""}`, http.StatusBadRequest)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Ada","status":"prospect"}`, http.StatusBadRequest)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Ada","linkedinUrl":"https://example.com/ada"}`, http.StatusBadRequest)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","websites":[{"url":"not a website"}]}`, http.StatusBadRequest)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/costs", `{"description":"Hosting","amountCents":-1,"incurredOn":"not-a-date"}`, http.StatusBadRequest)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","stage":"qualified","ownerEmail":"not-an-email"}`, http.StatusBadRequest)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","accountId":"missing","stage":"qualified"}`, http.StatusBadRequest)
+}
+
+func TestOpportunityUsesTheContactsAccount(t *testing.T) {
+	mux := http.NewServeMux()
+	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
+	created := performJSON[struct {
+		Account Account `json:"account"`
+		Contact Contact `json:"contact"`
+	}](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","primaryContact":{"name":"Ada"}}`, http.StatusCreated)
+	opportunity := performJSON[Opportunity](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","contactId":"`+created.Contact.ID+`","stage":"new"}`, http.StatusCreated)
+	if opportunity.AccountID != created.Account.ID {
+		t.Fatalf("opportunity account = %q, want %q", opportunity.AccountID, created.Account.ID)
+	}
 }
 
 func TestCostCanBeReviewedAndUpdated(t *testing.T) {
@@ -241,6 +275,28 @@ func TestCostCanBeReviewedAndUpdated(t *testing.T) {
 		t.Fatalf("unexpected updated cost: %#v", updated)
 	}
 	performJSON[map[string]any](t, mux, http.MethodPatch, "/api/v1/costs/"+created.ID, `{"recurrence":"sometimes"}`, http.StatusBadRequest)
+}
+
+func TestAccountUpdatePreservesManagedWebsiteMetadata(t *testing.T) {
+	store := NewMemoryStore()
+	account, _, err := store.CreateAccountWithContact(context.Background(), "workspace", Account{
+		Name:   "River Labs",
+		Status: "prospect",
+		Websites: []Website{{
+			URL: "https://river.example", Domain: "river.example", Provider: "cloudflare", ExternalID: "zone-1", RenewalDate: "2027-10-01", AutoRenew: true, Status: "active",
+		}},
+	}, Contact{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	websites := []Website{{URL: "https://www.river.example", Domain: "river.example"}}
+	updated, err := store.UpdateAccount(context.Background(), "workspace", account.ID, AccountPatch{Websites: &websites})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Websites) != 1 || updated.Websites[0].Provider != "cloudflare" || updated.Websites[0].ExternalID != "zone-1" || updated.Websites[0].RenewalDate != "2027-10-01" || !updated.Websites[0].AutoRenew {
+		t.Fatalf("managed website metadata was lost: %#v", updated.Websites)
+	}
 }
 
 func performJSON[T any](t *testing.T, handler http.Handler, method, target, body string, wantStatus int) T {

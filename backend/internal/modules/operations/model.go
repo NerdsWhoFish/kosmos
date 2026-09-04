@@ -67,6 +67,16 @@ type GoogleConnection struct {
 	UpdatedAt      time.Time       `json:"updatedAt" firestore:"updatedAt"`
 }
 
+type SendAsMapping struct {
+	ID          string    `json:"id" firestore:"id"`
+	MemberID    string    `json:"memberId" firestore:"memberId"`
+	MemberEmail string    `json:"memberEmail" firestore:"memberEmail"`
+	Email       string    `json:"email" firestore:"email"`
+	UpdatedBy   string    `json:"updatedBy" firestore:"updatedBy"`
+	CreatedAt   time.Time `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt" firestore:"updatedAt"`
+}
+
 type JobExecution struct {
 	ID          string    `json:"id" firestore:"id"`
 	Type        string    `json:"type" firestore:"type"`
@@ -77,6 +87,42 @@ type JobExecution struct {
 type TillerSettings struct {
 	SpreadsheetID string `json:"spreadsheetId" firestore:"spreadsheetId"`
 	Range         string `json:"range" firestore:"range"`
+}
+
+type TillerWebhookConnection struct {
+	ID              string    `json:"id" firestore:"id"`
+	EncryptedSecret string    `json:"-" firestore:"encryptedSecret"`
+	CreatedBy       string    `json:"createdBy" firestore:"createdBy"`
+	CreatedAt       time.Time `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt" firestore:"updatedAt"`
+}
+
+type TillerProductMapping struct {
+	ID          string    `json:"id" firestore:"id"`
+	ProductID   string    `json:"productId" firestore:"productId"`
+	ProductName string    `json:"productName,omitempty" firestore:"productName,omitempty"`
+	AccountID   string    `json:"accountId" firestore:"accountId"`
+	CreatedBy   string    `json:"createdBy" firestore:"createdBy"`
+	CreatedAt   time.Time `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt" firestore:"updatedAt"`
+}
+
+type CloudflareConnection struct {
+	ID             string    `json:"id" firestore:"id"`
+	AccountID      string    `json:"accountId" firestore:"accountId"`
+	EncryptedToken string    `json:"-" firestore:"encryptedToken"`
+	CreatedBy      string    `json:"createdBy" firestore:"createdBy"`
+	CreatedAt      time.Time `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt" firestore:"updatedAt"`
+}
+
+type CloudflareDomain struct {
+	DomainName  string `json:"domainName"`
+	ZoneID      string `json:"zoneId,omitempty"`
+	Registered  bool   `json:"registered"`
+	RenewalDate string `json:"renewalDate,omitempty"`
+	AutoRenew   bool   `json:"autoRenew"`
+	Status      string `json:"status,omitempty"`
 }
 
 type MailMetadata struct {
@@ -99,6 +145,7 @@ type Transaction struct {
 	AmountCents int64     `json:"amountCents" firestore:"amountCents"`
 	Source      string    `json:"source" firestore:"source"`
 	MatchStatus string    `json:"matchStatus" firestore:"matchStatus"`
+	AccountID   string    `json:"accountId,omitempty" firestore:"accountId,omitempty"`
 	ContactID   string    `json:"contactId,omitempty" firestore:"contactId,omitempty"`
 	CostID      string    `json:"costId,omitempty" firestore:"costId,omitempty"`
 	CreatedAt   time.Time `json:"createdAt" firestore:"createdAt"`

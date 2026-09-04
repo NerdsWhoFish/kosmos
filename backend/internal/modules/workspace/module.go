@@ -27,22 +27,32 @@ func (Module) Manifest() platformmodules.Manifest {
 }
 
 type Contact struct {
-	ID        string    `json:"id" firestore:"-"`
-	AccountID string    `json:"accountId" firestore:"accountId"`
-	Name      string    `json:"name" firestore:"name"`
-	Company   string    `json:"company" firestore:"company"`
-	Email     string    `json:"email" firestore:"email"`
-	Phone     string    `json:"phone" firestore:"phone"`
-	Status    string    `json:"status" firestore:"status"`
-	Source    string    `json:"source" firestore:"source"`
-	CreatedAt time.Time `json:"createdAt" firestore:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt" firestore:"updatedAt"`
+	ID          string    `json:"id" firestore:"-"`
+	AccountID   string    `json:"accountId" firestore:"accountId"`
+	Name        string    `json:"name" firestore:"name"`
+	Email       string    `json:"email" firestore:"email"`
+	Phone       string    `json:"phone" firestore:"phone"`
+	LinkedInURL string    `json:"linkedinUrl" firestore:"linkedinUrl"`
+	Source      string    `json:"source" firestore:"source"`
+	CreatedAt   time.Time `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt" firestore:"updatedAt"`
+}
+
+type Website struct {
+	URL         string `json:"url" firestore:"url"`
+	Domain      string `json:"domain" firestore:"domain"`
+	Provider    string `json:"provider,omitempty" firestore:"provider,omitempty"`
+	ExternalID  string `json:"externalId,omitempty" firestore:"externalId,omitempty"`
+	RenewalDate string `json:"renewalDate,omitempty" firestore:"renewalDate,omitempty"`
+	AutoRenew   bool   `json:"autoRenew" firestore:"autoRenew"`
+	Status      string `json:"status,omitempty" firestore:"status,omitempty"`
 }
 
 type Account struct {
 	ID           string    `json:"id" firestore:"-"`
 	Name         string    `json:"name" firestore:"name"`
-	Website      string    `json:"website" firestore:"website"`
+	Website      string    `json:"website,omitempty" firestore:"website,omitempty"`
+	Websites     []Website `json:"websites" firestore:"websites"`
 	BillingEmail string    `json:"billingEmail" firestore:"billingEmail"`
 	Status       string    `json:"status" firestore:"status"`
 	Notes        string    `json:"notes" firestore:"notes"`
@@ -53,6 +63,7 @@ type Account struct {
 type Opportunity struct {
 	ID          string    `json:"id" firestore:"-"`
 	Name        string    `json:"name" firestore:"name"`
+	AccountID   string    `json:"accountId" firestore:"accountId"`
 	ContactID   string    `json:"contactId" firestore:"contactId"`
 	AmountCents int64     `json:"amountCents" firestore:"amountCents"`
 	Stage       string    `json:"stage" firestore:"stage"`
@@ -75,7 +86,9 @@ type Activity struct {
 
 type Reminder struct {
 	ID         string    `json:"id" firestore:"-"`
+	AccountID  string    `json:"accountId,omitempty" firestore:"accountId,omitempty"`
 	ContactID  string    `json:"contactId" firestore:"contactId"`
+	SourceKey  string    `json:"sourceKey,omitempty" firestore:"sourceKey,omitempty"`
 	Title      string    `json:"title" firestore:"title"`
 	DueAt      time.Time `json:"dueAt" firestore:"dueAt"`
 	Completed  bool      `json:"completed" firestore:"completed"`
@@ -128,17 +141,25 @@ type Cost struct {
 }
 
 type ContactPatch struct {
-	AccountID *string `json:"accountId"`
-	Name      *string `json:"name"`
-	Company   *string `json:"company"`
-	Email     *string `json:"email"`
-	Phone     *string `json:"phone"`
-	Status    *string `json:"status"`
-	Source    *string `json:"source"`
+	AccountID   *string `json:"accountId"`
+	Name        *string `json:"name"`
+	Email       *string `json:"email"`
+	Phone       *string `json:"phone"`
+	LinkedInURL *string `json:"linkedinUrl"`
+	Source      *string `json:"source"`
+}
+
+type AccountPatch struct {
+	Name         *string    `json:"name"`
+	Websites     *[]Website `json:"websites"`
+	BillingEmail *string    `json:"billingEmail"`
+	Status       *string    `json:"status"`
+	Notes        *string    `json:"notes"`
 }
 
 type OpportunityPatch struct {
 	Name        *string `json:"name"`
+	AccountID   *string `json:"accountId"`
 	ContactID   *string `json:"contactId"`
 	AmountCents *int64  `json:"amountCents"`
 	Stage       *string `json:"stage"`
@@ -176,12 +197,17 @@ type CostPatch struct {
 type Store interface {
 	ListPage(context.Context, string, string, pagination.Request, pagination.Spec, any) (pagination.Metadata, error)
 	ListAccounts(context.Context, string) ([]Account, error)
+	GetAccount(context.Context, string, string) (Account, error)
 	CreateAccount(context.Context, string, Account) (Account, error)
+	CreateAccountWithContact(context.Context, string, Account, Contact) (Account, Contact, error)
+	UpdateAccount(context.Context, string, string, AccountPatch) (Account, error)
+	LinkWebsiteRenewal(context.Context, string, string, Website, []Reminder) (Account, []Reminder, error)
 	ListContacts(context.Context, string) ([]Contact, error)
 	GetContact(context.Context, string, string) (Contact, error)
 	CreateContact(context.Context, string, Contact) (Contact, error)
 	UpdateContact(context.Context, string, string, ContactPatch) (Contact, error)
 	ListOpportunities(context.Context, string) ([]Opportunity, error)
+	GetOpportunity(context.Context, string, string) (Opportunity, error)
 	CreateOpportunity(context.Context, string, Opportunity) (Opportunity, error)
 	UpdateOpportunity(context.Context, string, string, OpportunityPatch) (Opportunity, error)
 	ListActivities(context.Context, string) ([]Activity, error)

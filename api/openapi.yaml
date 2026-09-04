@@ -221,11 +221,11 @@ paths:
               $ref: '#/components/schemas/AccountInput'
       responses:
         '201':
-          description: Account created
+          description: Account and optional primary contact created atomically
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Account'
+                $ref: '#/components/schemas/AccountCreation'
   /accounts/{id}:
     get:
       operationId: getAccount
@@ -233,7 +233,25 @@ paths:
         - $ref: '#/components/parameters/RecordID'
       responses:
         '200':
-          description: Account with linked contacts and opportunities
+          description: Account with linked contacts, opportunities, and newest-first documents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDetail'
+    patch:
+      operationId: updateAccount
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountPatch'
+      responses:
+        '200':
+          description: Account updated
   /intake/contact:
     post:
       operationId: ingestContactForm
@@ -598,6 +616,54 @@ paths:
           description: Membership role or status updated
         '403':
           description: Owner or administrator role required
+  /members/{id}/send-as:
+    put:
+      operationId: configureMemberSendAs
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Verified Gmail send-as alias mapped to this member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendAsMapping'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Owner or administrator role required
+        '409':
+          description: Member has not connected Google Workspace
+  /email/send-as:
+    get:
+      operationId: listSendAsMappings
+      responses:
+        '200':
+          description: Organization Gmail sender mappings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mappings]
+                properties:
+                  mappings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SendAsMapping'
+        '403':
+          description: Owner or administrator role required
   /pipeline-stages:
     get:
       operationId: listPipelineStages
@@ -703,6 +769,78 @@ paths:
       responses:
         '200':
           description: Current user's Google Workspace connection status
+  /integrations/cloudflare:
+    get:
+      operationId: getCloudflareConnection
+      responses:
+        '200':
+          description: Organization Cloudflare connection status
+    put:
+      operationId: configureCloudflare
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloudflareConnectionInput'
+      responses:
+        '200':
+          description: Cloudflare credential validated, encrypted, and saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudflareStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Owner or administrator role required
+        '502':
+          description: Cloudflare could not validate the credential
+    delete:
+      operationId: disconnectCloudflare
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Cloudflare disconnected
+        '403':
+          description: Owner or administrator role required
+  /integrations/cloudflare/domains:
+    get:
+      operationId: listCloudflareDomains
+      responses:
+        '200':
+          description: Cloudflare zones merged with Registrar renewal metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [domains]
+                properties:
+                  domains:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CloudflareDomain'
+  /integrations/cloudflare/link:
+    post:
+      operationId: linkCloudflareDomain
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloudflareDomainLink'
+      responses:
+        '200':
+          description: Domain linked to account and renewal reminders ensured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloudflareDomainLinkResult'
   /integrations/tiller:
     put:
       operationId: configureTiller
@@ -724,6 +862,123 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AcceptedJob'
+  /integrations/tiller/webhook:
+    get:
+      operationId: getTillerWebhookStatus
+      responses:
+        '200':
+          description: Tiller purchase webhook status and destination path
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TillerWebhookStatus'
+        '403':
+          description: Owner or administrator role required
+    put:
+      operationId: configureTillerWebhook
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signingSecret]
+              properties:
+                signingSecret:
+                  type: string
+                  writeOnly: true
+                  pattern: '^whsec_[a-fA-F0-9]{64}$'
+      responses:
+        '200':
+          description: Tiller webhook signing secret encrypted and saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TillerWebhookStatus'
+    delete:
+      operationId: disconnectTillerWebhook
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Tiller purchase webhook disconnected
+  /integrations/tiller/product-mappings:
+    get:
+      operationId: listTillerProductMappings
+      responses:
+        '200':
+          description: Tiller product to Kosmos account mappings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [mappings]
+                properties:
+                  mappings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TillerProductMapping'
+  /integrations/tiller/product-mappings/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      operationId: configureTillerProductMapping
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accountId]
+              properties:
+                accountId:
+                  type: string
+                productName:
+                  type: string
+                  maxLength: 160
+      responses:
+        '200':
+          description: Tiller product mapped to a Kosmos account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TillerProductMapping'
+    delete:
+      operationId: deleteTillerProductMapping
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Product mapping removed
+  /webhooks/tiller:
+    post:
+      operationId: receiveTillerWebhook
+      security: []
+      parameters:
+        - name: Tiller-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TillerEvent'
+      responses:
+        '204':
+          description: Event authenticated and idempotently processed or ignored
+        '401':
+          description: Signature invalid or stale
   /transactions:
     get:
       operationId: listTransactions
@@ -1341,19 +1596,16 @@ components:
         name:
           type: string
           maxLength: 160
-        company:
-          type: string
-          maxLength: 160
         email:
           type: string
           format: email
         phone:
           type: string
           maxLength: 40
-        status:
+        linkedinUrl:
           type: string
-          enum: [lead, prospect, customer]
-          default: lead
+          format: uri
+          description: HTTPS URL for the person's LinkedIn profile.
         source:
           type: string
           maxLength: 100
@@ -1386,9 +1638,11 @@ components:
         name:
           type: string
           maxLength: 160
-        website:
-          type: string
-          format: uri
+        websites:
+          type: array
+          maxItems: 25
+          items:
+            $ref: '#/components/schemas/WebsiteInput'
         billingEmail:
           type: string
           format: email
@@ -1397,17 +1651,92 @@ components:
           enum: [prospect, customer, inactive]
         notes:
           type: string
+        primaryContact:
+          $ref: '#/components/schemas/ContactInput'
     Account:
       allOf:
         - $ref: '#/components/schemas/AccountInput'
         - $ref: '#/components/schemas/AuditedRecord'
-    ContactPatch:
+    AccountPatch:
       type: object
       properties:
         name:
           type: string
           maxLength: 160
-        company:
+        websites:
+          type: array
+          maxItems: 25
+          items:
+            $ref: '#/components/schemas/WebsiteInput'
+        billingEmail:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [prospect, customer, inactive]
+        notes:
+          type: string
+    AccountCreation:
+      type: object
+      required: [account]
+      properties:
+        account:
+          $ref: '#/components/schemas/Account'
+        contact:
+          oneOf:
+            - $ref: '#/components/schemas/Contact'
+            - type: 'null'
+    AccountDetail:
+      type: object
+      required: [account, contacts, opportunities, documents]
+      properties:
+        account:
+          $ref: '#/components/schemas/Account'
+        contacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Contact'
+        opportunities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Opportunity'
+        documents:
+          type: array
+          description: Documents linked to this account, sorted from newest to oldest by creation time.
+          items:
+            $ref: '#/components/schemas/Document'
+    Website:
+      type: object
+      required: [url, domain]
+      properties:
+        url:
+          type: string
+          format: uri
+        domain:
+          type: string
+        provider:
+          type: string
+        externalId:
+          type: string
+        renewalDate:
+          type: string
+          format: date
+        autoRenew:
+          type: boolean
+        status:
+          type: string
+    WebsiteInput:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+    ContactPatch:
+      type: object
+      properties:
+        accountId:
+          type: string
+        name:
           type: string
           maxLength: 160
         email:
@@ -1416,9 +1745,13 @@ components:
         phone:
           type: string
           maxLength: 40
-        status:
+        linkedinUrl:
           type: string
-          enum: [lead, prospect, customer]
+          format: uri
+          description: HTTPS URL for the person's LinkedIn profile.
+        source:
+          type: string
+          maxLength: 100
     Contact:
       allOf:
         - $ref: '#/components/schemas/ContactInput'
@@ -1430,6 +1763,8 @@ components:
         name:
           type: string
           maxLength: 160
+        accountId:
+          type: string
         contactId:
           type: string
         amountCents:
@@ -1454,6 +1789,8 @@ components:
         name:
           type: string
           maxLength: 160
+        accountId:
+          type: string
         contactId:
           type: string
         amountCents:
@@ -1508,7 +1845,11 @@ components:
       type: object
       required: [title, dueAt]
       properties:
+        accountId:
+          type: string
         contactId:
+          type: string
+        sourceKey:
           type: string
         title:
           type: string
@@ -1528,6 +1869,70 @@ components:
           properties:
             completed:
               type: boolean
+    CloudflareConnectionInput:
+      type: object
+      required: [accountId, apiToken]
+      properties:
+        accountId:
+          type: string
+          minLength: 32
+          maxLength: 32
+        apiToken:
+          type: string
+          writeOnly: true
+          minLength: 20
+          maxLength: 4096
+    CloudflareStatus:
+      type: object
+      required: [connected]
+      properties:
+        connected:
+          type: boolean
+        accountId:
+          type: string
+        domainCount:
+          type: integer
+          minimum: 0
+    CloudflareDomain:
+      type: object
+      required: [domainName, registered, autoRenew]
+      properties:
+        domainName:
+          type: string
+        zoneId:
+          type: string
+        registered:
+          type: boolean
+        renewalDate:
+          type: string
+          format: date
+        autoRenew:
+          type: boolean
+        status:
+          type: string
+    CloudflareDomainLink:
+      type: object
+      required: [accountId, domainName]
+      properties:
+        accountId:
+          type: string
+        domainName:
+          type: string
+        renewalDate:
+          type: string
+          format: date
+    CloudflareDomainLinkResult:
+      type: object
+      required: [account, domain, reminders]
+      properties:
+        account:
+          $ref: '#/components/schemas/Account'
+        domain:
+          $ref: '#/components/schemas/Website'
+        reminders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reminder'
     DocumentInput:
       type: object
       required: [title]
@@ -1689,6 +2094,29 @@ components:
         updatedAt:
           type: string
           format: date-time
+    SendAsMapping:
+      type: object
+      required: [id, memberId, memberEmail, email, updatedBy, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        memberId:
+          type: string
+        memberEmail:
+          type: string
+          format: email
+        email:
+          type: string
+          format: email
+        updatedBy:
+          type: string
+          format: email
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     PipelineStage:
       type: object
       required: [id, name, position, probability, closed, won, createdAt, updatedAt]
@@ -1779,6 +2207,8 @@ components:
         matchStatus:
           type: string
           enum: [matched, review, ignored]
+        accountId:
+          type: string
         contactId:
           type: string
         costId:
@@ -1789,6 +2219,82 @@ components:
         updatedAt:
           type: string
           format: date-time
+    TillerWebhookStatus:
+      type: object
+      required: [connected, endpoint]
+      properties:
+        connected:
+          type: boolean
+        endpoint:
+          type: string
+    TillerProductMapping:
+      type: object
+      required: [id, productId, accountId, createdBy, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+        productName:
+          type: string
+        accountId:
+          type: string
+        createdBy:
+          type: string
+          format: email
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TillerEvent:
+      type: object
+      required: [id, schema_version, type, created_at, app_id, data]
+      properties:
+        id:
+          type: string
+        schema_version:
+          type: integer
+          enum: [1]
+        type:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        app_id:
+          type: string
+        data:
+          type: object
+          properties:
+            order_id:
+              type: string
+            lines:
+              type: array
+              items:
+                type: object
+                required: [product_id, price_id, name, quantity, amount]
+                properties:
+                  item_id:
+                    type: string
+                  product_id:
+                    type: string
+                  price_id:
+                    type: string
+                  name:
+                    type: string
+                  quantity:
+                    type: integer
+                    format: int64
+                  amount:
+                    type: object
+                    required: [amount, currency]
+                    properties:
+                      amount:
+                        type: integer
+                        format: int64
+                      currency:
+                        type: string
     Attachment:
       type: object
       required: [id, fileName, contentType, size, kind, recordType, recordId, createdBy, createdAt]

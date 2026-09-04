@@ -24,15 +24,24 @@ type fakeGoogle struct {
 	sent        *int
 	mailCalls   *int
 	tillerCalls *int
+	aliases     []string
+	sentFrom    *string
 	mailErr     error
 	tillerErr   error
 }
 
-func (f fakeGoogle) Send(context.Context, *oauth2.Token, string, string, string) (string, error) {
+func (f fakeGoogle) Send(_ context.Context, _ *oauth2.Token, from, _, _, _ string) (string, error) {
 	if f.sent != nil {
 		(*f.sent)++
 	}
+	if f.sentFrom != nil {
+		*f.sentFrom = from
+	}
 	return "sent-1", nil
+}
+
+func (f fakeGoogle) SendAsAliases(context.Context, *oauth2.Token) ([]string, error) {
+	return f.aliases, nil
 }
 
 func (f fakeGoogle) RecentMail(context.Context, *oauth2.Token, time.Time) ([]MailMetadata, error) {
@@ -55,8 +64,9 @@ func newTestModule(t *testing.T) (*Module, *http.ServeMux, *workspace.MemoryStor
 	module := NewModule(NewMemoryStore(), NewMemoryBlobStore(), workspaceStore, func(*http.Request) (string, Identity, error) {
 		return "nerds-who-fish", Identity{Subject: "google-1", Email: "owner@nerdswhofish.com", Name: "Owner"}, nil
 	}, "nerds-who-fish", []byte("0123456789abcdef0123456789abcdef"), fakeGoogle{
-		mail: []MailMetadata{{ID: "mail-1", From: "Ada <ada@example.com>", Subject: "Ready", ReceivedAt: time.Now().UTC()}},
-		rows: [][]any{{"Date", "Description", "Amount", "Merchant", "Transaction ID"}, {"2026-09-03", "River Labs deposit", "250.00", "River Labs", "row-1"}},
+		mail:    []MailMetadata{{ID: "mail-1", From: "Ada <ada@example.com>", Subject: "Ready", ReceivedAt: time.Now().UTC()}},
+		rows:    [][]any{{"Date", "Description", "Amount", "Merchant", "Transaction ID"}, {"2026-09-03", "River Labs deposit", "250.00", "River Labs", "row-1"}},
+		aliases: []string{"hello@nerdswhofish.com"},
 	}, WithJobQueue(NewMemoryJobQueue()))
 	mux := http.NewServeMux()
 	module.RegisterRoutes(mux)
@@ -104,7 +114,7 @@ func TestEmailTemplateRequiresBody(t *testing.T) {
 
 func TestGoogleMailAndTillerFlow(t *testing.T) {
 	module, mux, workspaceStore := newTestModule(t)
-	_, err := workspaceStore.CreateContact(context.Background(), "nerds-who-fish", workspace.Contact{Name: "Ada", Company: "River Labs", Email: "ada@example.com", Status: "lead"})
+	account, _, err := workspaceStore.CreateAccountWithContact(context.Background(), "nerds-who-fish", workspace.Account{Name: "River Labs", Status: "prospect"}, workspace.Contact{Name: "Ada", Email: "ada@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +138,7 @@ func TestGoogleMailAndTillerFlow(t *testing.T) {
 	transactions := performJSON[struct {
 		Transactions []Transaction `json:"transactions"`
 	}](t, mux, http.MethodGet, "/api/v1/transactions", "", http.StatusOK)
-	if len(transactions.Transactions) != 1 || transactions.Transactions[0].MatchStatus != "matched" {
+	if len(transactions.Transactions) != 1 || transactions.Transactions[0].MatchStatus != "matched" || transactions.Transactions[0].AccountID != account.ID {
 		t.Fatalf("unexpected transactions: %#v", transactions.Transactions)
 	}
 	notifications := performJSON[struct {
@@ -172,7 +182,7 @@ func TestGoogleConnectionSecretMigration(t *testing.T) {
 func TestOverlappingIntegrationJobsCreateBusinessEffectsOnce(t *testing.T) {
 	module, _, workspaceStore := newTestModule(t)
 	ctx := context.Background()
-	if _, err := workspaceStore.CreateContact(ctx, "nerds-who-fish", workspace.Contact{Name: "Ada", Company: "River Labs", Email: "ada@example.com", Status: "lead"}); err != nil {
+	if _, err := workspaceStore.CreateContact(ctx, "nerds-who-fish", workspace.Contact{Name: "Ada", Email: "ada@example.com"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := module.SaveGoogleGrant(ctx, Identity{Email: "owner@nerdswhofish.com"}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}); err != nil {
@@ -309,7 +319,7 @@ func TestWorkerExecutionIsIdempotent(t *testing.T) {
 	module, mux, workspaceStore := newTestModule(t)
 	mailCalls := 0
 	module.google = fakeGoogle{mailCalls: &mailCalls, mail: []MailMetadata{{ID: "mail-1", From: "Ada <ada@example.com>", Subject: "Ready", ReceivedAt: time.Now().UTC()}}}
-	if _, err := workspaceStore.CreateContact(context.Background(), "nerds-who-fish", workspace.Contact{Name: "Ada", Email: "ada@example.com", Status: "lead"}); err != nil {
+	if _, err := workspaceStore.CreateContact(context.Background(), "nerds-who-fish", workspace.Contact{Name: "Ada", Email: "ada@example.com"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := module.SaveGoogleGrant(context.Background(), Identity{Email: "owner@nerdswhofish.com"}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}); err != nil {
@@ -359,6 +369,33 @@ func TestEmailSendIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestAdminMapsVerifiedGmailSendAsAlias(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	from := ""
+	module.google = fakeGoogle{aliases: []string{"hello@nerdswhofish.com"}, sentFrom: &from}
+	members := performJSON[struct {
+		Members []Member `json:"members"`
+	}](t, mux, http.MethodGet, "/api/v1/members", "", http.StatusOK)
+	if err := module.SaveGoogleGrant(context.Background(), Identity{Email: "owner@nerdswhofish.com"}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	mapping := performJSON[SendAsMapping](t, mux, http.MethodPut, "/api/v1/members/"+members.Members[0].ID+"/send-as", `{"email":"hello@nerdswhofish.com"}`, http.StatusOK)
+	if mapping.Email != "hello@nerdswhofish.com" {
+		t.Fatalf("send-as mapping = %#v", mapping)
+	}
+	performJSON[map[string]any](t, mux, http.MethodPut, "/api/v1/members/"+members.Members[0].ID+"/send-as", `{"email":"spoof@example.com"}`, http.StatusBadRequest)
+	performJSON[map[string]string](t, mux, http.MethodPost, "/api/v1/email/send", `{"to":"ada@example.com","subject":"Hello","body":"Ready to fish?"}`, http.StatusCreated)
+	if from != mapping.Email {
+		t.Fatalf("email sent from %q, want %q", from, mapping.Email)
+	}
+	listed := performJSON[struct {
+		Mappings []SendAsMapping `json:"mappings"`
+	}](t, mux, http.MethodGet, "/api/v1/email/send-as", "", http.StatusOK)
+	if len(listed.Mappings) != 1 || listed.Mappings[0].MemberID != members.Members[0].ID {
+		t.Fatalf("send-as mappings = %#v", listed.Mappings)
+	}
+}
+
 func TestContactIntakeDeduplicatesAndNotifies(t *testing.T) {
 	_, mux, workspaceStore := newTestModule(t)
 	body := `{"name":"Ada Angler","email":"ada@example.com","message":"Need a website","source":"website"}`
@@ -369,7 +406,7 @@ func TestContactIntakeDeduplicatesAndNotifies(t *testing.T) {
 		t.Fatalf("duplicate status = %d", record.Code)
 	}
 	contacts, _ := workspaceStore.ListContacts(context.Background(), "nerds-who-fish")
-	if len(contacts) != 1 || contacts[0].Status != "lead" {
+	if len(contacts) != 1 || contacts[0].Source != "website" {
 		t.Fatalf("unexpected contacts: %#v", contacts)
 	}
 	notifications := performJSON[struct {
@@ -377,6 +414,20 @@ func TestContactIntakeDeduplicatesAndNotifies(t *testing.T) {
 	}](t, mux, http.MethodGet, "/api/v1/notifications", "", http.StatusOK)
 	if len(notifications.Notifications) != 1 || notifications.Notifications[0].Kind != "lead" {
 		t.Fatalf("unexpected notifications: %#v", notifications.Notifications)
+	}
+}
+
+func TestContactIntakeReusesAnExistingAccount(t *testing.T) {
+	_, mux, workspaceStore := newTestModule(t)
+	performJSON[map[string]string](t, mux, http.MethodPost, "/api/v1/intake/contact", `{"name":"Ada","email":"ada@example.com","company":"River Labs","website":""}`, http.StatusCreated)
+	performJSON[map[string]string](t, mux, http.MethodPost, "/api/v1/intake/contact", `{"name":"Grace","email":"grace@example.com","company":"river labs","website":""}`, http.StatusCreated)
+	contacts, err := workspaceStore.ListContacts(context.Background(), "nerds-who-fish")
+	if err != nil || len(contacts) != 2 || contacts[0].AccountID == "" || contacts[0].AccountID != contacts[1].AccountID {
+		t.Fatalf("contacts = %#v, %v", contacts, err)
+	}
+	accounts, err := workspaceStore.ListAccounts(context.Background(), "nerds-who-fish")
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("accounts = %#v, %v", accounts, err)
 	}
 }
 

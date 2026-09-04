@@ -4,7 +4,9 @@
 
 Kosmos owns no passwords. Google authenticates users, and production admits only verified identities from the configured domains. The first approved user atomically becomes the organization owner. Later approved users start as members. Owners and administrators can assign owner, admin, member, or read-only viewer roles and can disable access.
 
-Google Workspace access is a separate incremental grant for Gmail compose, Gmail metadata, and read-only Google Sheets. Refresh tokens are encrypted at rest with `KOSMOS_INTEGRATION_SECRET`, which is distinct from the web-only `KOSMOS_SESSION_SECRET`. The first split-key deployment migrates existing provider tokens from the session key before the web service accepts traffic. Later integration-key rotation intentionally invalidates saved provider tokens and attachment links, so users reconnect Google afterward. Register one OAuth redirect URI at `https://<host>/auth/callback`.
+Google Workspace access is a separate incremental grant for Gmail compose, Gmail metadata, Gmail send-as settings, and read-only Google Sheets. Refresh tokens are encrypted at rest with `KOSMOS_INTEGRATION_SECRET`, which is distinct from the web-only `KOSMOS_SESSION_SECRET`. The first split-key deployment migrates existing provider tokens from the session key before the web service accepts traffic. Later integration-key rotation intentionally invalidates saved provider tokens and attachment links, so users reconnect Google afterward. Register one OAuth redirect URI at `https://<host>/auth/callback`.
+
+Owners and administrators can map each member to the primary address or an accepted Gmail send-as alias reported by Google. Kosmos rejects arbitrary or unverified addresses and enforces the saved mapping when sending. Existing Google connections must reconnect once to grant the send-as settings scope before aliases can be verified.
 
 ## Public contact form
 
@@ -15,6 +17,12 @@ Submit JSON to `POST /api/v1/intake/contact` with `name`, `email`, and optional 
 Outbound email always requires an explicit user action and an `Idempotency-Key` header. Retries with the same key return the saved delivery instead of sending twice. Inbox sync stores sender, subject, snippet, time, and thread identifiers only for known contacts. It does not store message bodies or replace Gmail.
 
 Tiller import expects a header row with `Date`, `Description`, and `Amount`. `Merchant` and `Transaction ID` are optional. The default range is `Transactions!A:Z`. Stable transaction IDs make imports replay-safe. One deterministic contact match is accepted; zero or multiple matches enter the review queue.
+
+Direct Tiller purchases are optional and independent of spreadsheet import. Create a Tiller application webhook for `https://<host>/api/v1/webhooks/tiller`, subscribe it to `order.paid`, and save the one-time `whsec_` signing secret in Kosmos Settings. Map immutable Tiller product IDs to Kosmos accounts there. Kosmos verifies the timestamped HMAC signature, ignores unmapped products, and derives transaction IDs from the event and order-line identity so Tiller retries cannot duplicate revenue.
+
+## Cloudflare domains
+
+Connect a dedicated user API token with Zone Read and Registrar Read access plus the 32-character Cloudflare account ID. Account-owned Cloudflare tokens do not currently support Registrar permissions. Kosmos encrypts the token, reads zones and registrations, and never calls a Cloudflare mutation endpoint. Linking a Cloudflare Registrar domain creates replay-safe reminders 30, 14, and 7 days before its expiry date. A zone registered elsewhere has no registrar expiry in Cloudflare, so the person linking it supplies that date.
 
 Manual Gmail and Tiller synchronization requests return HTTP 202 after creating an idempotent Cloud Task. They never wait for Google APIs in the browser request. Cloud Scheduler queues a synchronization pass at the top of every hour from 9 AM through 5 PM, Monday through Friday, in `America/New_York`. The private `kosmos-jobs` Cloud Run service executes tasks with a dedicated worker identity and a separate OIDC invoker identity. Transactional record creation and effect-derived notification keys make overlapping manual and scheduled work replay-safe. Both web and worker services scale to zero. Investigate failed work in the Cloud Tasks queue first; provider failures return a retryable 5xx response and use bounded exponential backoff.
 

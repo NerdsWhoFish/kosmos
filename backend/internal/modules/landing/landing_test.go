@@ -58,6 +58,42 @@ func TestModuleCreatesPersistentShortcut(t *testing.T) {
 	}
 }
 
+func TestOrganizationSharesShortcutsAndRestrictsManagement(t *testing.T) {
+	store := NewMemoryStore()
+	manager := func(request *http.Request) error {
+		if request.Header.Get("X-Test-Role") != "admin" {
+			return errors.New("not an administrator")
+		}
+		return nil
+	}
+	mux := http.NewServeMux()
+	NewModule(store, func(*http.Request) (string, error) { return "organization-1", nil }, manager).RegisterRoutes(mux)
+
+	denied := httptest.NewRecorder()
+	mux.ServeHTTP(denied, httptest.NewRequest(http.MethodPost, "/api/v1/landing/buttons", bytes.NewBufferString(`{"label":"Denied","href":"/documents"}`)))
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("member create status = %d, want %d", denied.Code, http.StatusForbidden)
+	}
+
+	created := httptest.NewRequest(http.MethodPost, "/api/v1/landing/buttons", bytes.NewBufferString(`{"label":"Shared docs","href":"/documents"}`))
+	created.Header.Set("X-Test-Role", "admin")
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, created)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("admin create status = %d, want %d: %s", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	listing := httptest.NewRecorder()
+	mux.ServeHTTP(listing, httptest.NewRequest(http.MethodGet, "/api/v1/landing", nil))
+	var response landingResponse
+	if err := json.NewDecoder(listing.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Buttons[len(response.Buttons)-1].Label != "Shared docs" {
+		t.Fatalf("organization shortcut missing: %#v", response.Buttons)
+	}
+}
+
 func TestModuleRequiresAuthentication(t *testing.T) {
 	mux := http.NewServeMux()
 	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "", errors.New("missing session") }).RegisterRoutes(mux)

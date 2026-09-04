@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -114,10 +115,149 @@ func (s *FirestoreStore) ListAccounts(ctx context.Context, scope string) ([]Acco
 	return listRecords(ctx, s, scope, "accounts", "updatedAt", firestore.Desc, func(item *Account, id string) { item.ID = id })
 }
 
+func (s *FirestoreStore) GetAccount(ctx context.Context, scope, id string) (Account, error) {
+	return getRecord(ctx, s, scope, "accounts", id, func(item *Account, id string) { item.ID = id })
+}
+
 func (s *FirestoreStore) CreateAccount(ctx context.Context, scope string, item Account) (Account, error) {
 	return createRecord(ctx, s, scope, "accounts", item, func(item *Account, id string, now time.Time) {
 		item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
 	})
+}
+
+func (s *FirestoreStore) CreateAccountWithContact(ctx context.Context, scope string, account Account, contact Contact) (Account, Contact, error) {
+	accountID, err := newID()
+	if err != nil {
+		return Account{}, Contact{}, err
+	}
+	contactID, err := newID()
+	if err != nil {
+		return Account{}, Contact{}, err
+	}
+	now := time.Now().UTC()
+	account.ID, account.CreatedAt, account.UpdatedAt = accountID, now, now
+	contact.ID, contact.AccountID, contact.CreatedAt, contact.UpdatedAt = contactID, accountID, now, now
+	err = s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		if err := tx.Create(s.collection(scope, "accounts").Doc(accountID), account); err != nil {
+			return err
+		}
+		return tx.Create(s.collection(scope, "contacts").Doc(contactID), contact)
+	})
+	if err != nil {
+		return Account{}, Contact{}, err
+	}
+	return account, contact, nil
+}
+
+func (s *FirestoreStore) UpdateAccount(ctx context.Context, scope, id string, patch AccountPatch) (Account, error) {
+	updates := make([]firestore.Update, 0, 6)
+	if patch.Name != nil {
+		updates = append(updates, firestore.Update{Path: "name", Value: *patch.Name})
+	}
+	if patch.Websites != nil {
+		existing, err := s.GetAccount(ctx, scope, id)
+		if err != nil {
+			return Account{}, err
+		}
+		websites := preserveManagedWebsiteMetadata(accountWebsites(existing), *patch.Websites)
+		legacyWebsite := ""
+		if len(websites) > 0 {
+			legacyWebsite = websites[0].URL
+		}
+		updates = append(updates, firestore.Update{Path: "websites", Value: websites}, firestore.Update{Path: "website", Value: legacyWebsite})
+	}
+	if patch.BillingEmail != nil {
+		updates = append(updates, firestore.Update{Path: "billingEmail", Value: *patch.BillingEmail})
+	}
+	if patch.Status != nil {
+		updates = append(updates, firestore.Update{Path: "status", Value: *patch.Status})
+	}
+	if patch.Notes != nil {
+		updates = append(updates, firestore.Update{Path: "notes", Value: *patch.Notes})
+	}
+	return updateRecord(ctx, s, scope, "accounts", id, updates, func(item *Account, id string) { item.ID = id })
+}
+
+func (s *FirestoreStore) LinkWebsiteRenewal(ctx context.Context, scope, id string, website Website, reminders []Reminder) (Account, []Reminder, error) {
+	accountRef := s.collection(scope, "accounts").Doc(id)
+	reminderCollection := s.collection(scope, "reminders")
+	reminderRefs := make([]*firestore.DocumentRef, len(reminders))
+	for index := range reminders {
+		reminderRefs[index] = reminderCollection.Doc(reminders[index].ID)
+	}
+	var account Account
+	result := make([]Reminder, len(reminders))
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		document, err := tx.Get(accountRef)
+		if status.Code(err) == codes.NotFound {
+			return errNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if err := document.DataTo(&account); err != nil {
+			return err
+		}
+		existingReminders, err := tx.Documents(reminderCollection.Where("accountId", "==", id)).GetAll()
+		if err != nil {
+			return err
+		}
+		exists := make([]bool, len(reminders))
+		for index, ref := range reminderRefs {
+			document, err := tx.Get(ref)
+			if status.Code(err) == codes.NotFound {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err := document.DataTo(&result[index]); err != nil {
+				return err
+			}
+			result[index].ID = reminders[index].ID
+			exists[index] = true
+		}
+		now := time.Now().UTC()
+		account.ID = id
+		account.Websites = mergeWebsite(accountWebsites(account), website)
+		account.Website = account.Websites[0].URL
+		account.UpdatedAt = now
+		if err := tx.Update(accountRef, []firestore.Update{{Path: "websites", Value: account.Websites}, {Path: "website", Value: account.Website}, {Path: "updatedAt", Value: now}}); err != nil {
+			return err
+		}
+		desired := make(map[string]struct{}, len(reminders))
+		for _, reminder := range reminders {
+			desired[reminder.ID] = struct{}{}
+		}
+		prefix := "cloudflare:" + website.Domain + ":"
+		for _, document := range existingReminders {
+			var reminder Reminder
+			if err := document.DataTo(&reminder); err != nil {
+				return err
+			}
+			_, current := desired[document.Ref.ID]
+			if strings.HasPrefix(reminder.SourceKey, prefix) && !current {
+				if err := tx.Delete(document.Ref); err != nil {
+					return err
+				}
+			}
+		}
+		for index, reminder := range reminders {
+			if exists[index] {
+				continue
+			}
+			reminder.CreatedAt, reminder.UpdatedAt = now, now
+			if err := tx.Create(reminderRefs[index], reminder); err != nil {
+				return err
+			}
+			result[index] = reminder
+		}
+		return nil
+	})
+	if err != nil {
+		return Account{}, nil, err
+	}
+	return account, result, nil
 }
 
 func (s *FirestoreStore) ListContacts(ctx context.Context, scope string) ([]Contact, error) {
@@ -135,7 +275,7 @@ func (s *FirestoreStore) CreateContact(ctx context.Context, scope string, item C
 }
 
 func (s *FirestoreStore) UpdateContact(ctx context.Context, scope, id string, patch ContactPatch) (Contact, error) {
-	updates := make([]firestore.Update, 0, 7)
+	updates := make([]firestore.Update, 0, 6)
 	appendStringUpdate := func(path string, value *string) {
 		if value != nil {
 			updates = append(updates, firestore.Update{Path: path, Value: *value})
@@ -143,16 +283,19 @@ func (s *FirestoreStore) UpdateContact(ctx context.Context, scope, id string, pa
 	}
 	appendStringUpdate("accountId", patch.AccountID)
 	appendStringUpdate("name", patch.Name)
-	appendStringUpdate("company", patch.Company)
 	appendStringUpdate("email", patch.Email)
 	appendStringUpdate("phone", patch.Phone)
-	appendStringUpdate("status", patch.Status)
+	appendStringUpdate("linkedinUrl", patch.LinkedInURL)
 	appendStringUpdate("source", patch.Source)
 	return updateRecord(ctx, s, scope, "contacts", id, updates, func(item *Contact, id string) { item.ID = id })
 }
 
 func (s *FirestoreStore) ListOpportunities(ctx context.Context, scope string) ([]Opportunity, error) {
 	return listRecords(ctx, s, scope, "opportunities", "updatedAt", firestore.Desc, func(item *Opportunity, id string) { item.ID = id })
+}
+
+func (s *FirestoreStore) GetOpportunity(ctx context.Context, scope, id string) (Opportunity, error) {
+	return getRecord(ctx, s, scope, "opportunities", id, func(item *Opportunity, id string) { item.ID = id })
 }
 
 func (s *FirestoreStore) CreateOpportunity(ctx context.Context, scope string, item Opportunity) (Opportunity, error) {
@@ -162,13 +305,14 @@ func (s *FirestoreStore) CreateOpportunity(ctx context.Context, scope string, it
 }
 
 func (s *FirestoreStore) UpdateOpportunity(ctx context.Context, scope, id string, patch OpportunityPatch) (Opportunity, error) {
-	updates := make([]firestore.Update, 0, 6)
+	updates := make([]firestore.Update, 0, 7)
 	appendStringUpdate := func(path string, value *string) {
 		if value != nil {
 			updates = append(updates, firestore.Update{Path: path, Value: *value})
 		}
 	}
 	appendStringUpdate("name", patch.Name)
+	appendStringUpdate("accountId", patch.AccountID)
 	appendStringUpdate("contactId", patch.ContactID)
 	if patch.AmountCents != nil {
 		updates = append(updates, firestore.Update{Path: "amountCents", Value: *patch.AmountCents})

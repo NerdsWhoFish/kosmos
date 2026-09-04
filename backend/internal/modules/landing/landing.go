@@ -11,14 +11,20 @@ import (
 )
 
 type OwnerFunc func(*http.Request) (string, error)
+type ManagerFunc func(*http.Request) error
 
 type Module struct {
-	store Store
-	owner OwnerFunc
+	store   Store
+	owner   OwnerFunc
+	manager ManagerFunc
 }
 
-func NewModule(store Store, owner OwnerFunc) Module {
-	return Module{store: store, owner: owner}
+func NewModule(store Store, owner OwnerFunc, managers ...ManagerFunc) Module {
+	module := Module{store: store, owner: owner}
+	if len(managers) > 0 {
+		module.manager = managers[0]
+	}
+	return module
 }
 
 func (Module) Name() string { return "landing" }
@@ -62,6 +68,10 @@ func (m Module) landing(w http.ResponseWriter, r *http.Request) {
 func (m Module) createButton(w http.ResponseWriter, r *http.Request) {
 	owner, ok := m.requireOwner(w, r)
 	if !ok {
+		return
+	}
+	if m.manager != nil && m.manager(r) != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "owner or administrator access required"})
 		return
 	}
 	var button Button

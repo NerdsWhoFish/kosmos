@@ -103,6 +103,13 @@ func main() {
 		}
 		return organizationID, nil
 	}
+	manageLanding := func(r *http.Request) error {
+		_, actor, err := identity(r)
+		if err != nil {
+			return err
+		}
+		return operationsModule.CheckRole(r.Context(), organizationID, actor, "owner", "admin")
+	}
 	if role == "jobs" {
 		operationsModule.RegisterJobRoutes(mux)
 	} else {
@@ -114,7 +121,7 @@ func main() {
 			return operationsModule.SaveGoogleGrant(ctx, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, token)
 		})
 		registry := modules.NewRegistry(
-			landing.NewModule(landingStore, scope),
+			landing.NewModule(landingStore, scope, manageLanding),
 			workspace.NewModule(workspaceStore, scope),
 			operationsModule,
 		)

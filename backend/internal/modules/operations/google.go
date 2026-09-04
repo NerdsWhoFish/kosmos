@@ -19,7 +19,8 @@ import (
 )
 
 type GoogleProvider interface {
-	Send(context.Context, *oauth2.Token, string, string, string) (string, error)
+	Send(context.Context, *oauth2.Token, string, string, string, string) (string, error)
+	SendAsAliases(context.Context, *oauth2.Token) ([]string, error)
 	RecentMail(context.Context, *oauth2.Token, time.Time) ([]MailMetadata, error)
 	TillerRows(context.Context, *oauth2.Token, TillerSettings) ([][]any, error)
 }
@@ -34,17 +35,35 @@ func (p LiveGoogleProvider) tokenSource(ctx context.Context, token *oauth2.Token
 	return p.config.TokenSource(ctx, token)
 }
 
-func (p LiveGoogleProvider) Send(ctx context.Context, token *oauth2.Token, to, subject, body string) (string, error) {
+func (p LiveGoogleProvider) Send(ctx context.Context, token *oauth2.Token, from, to, subject, body string) (string, error) {
 	service, err := gmail.NewService(ctx, option.WithTokenSource(p.tokenSource(ctx, token)))
 	if err != nil {
 		return "", err
 	}
-	message := "To: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + body
+	message := "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + body
 	result, err := service.Users.Messages.Send("me", &gmail.Message{Raw: base64.RawURLEncoding.EncodeToString([]byte(message))}).Do()
 	if err != nil {
 		return "", err
 	}
 	return result.Id, nil
+}
+
+func (p LiveGoogleProvider) SendAsAliases(ctx context.Context, token *oauth2.Token) ([]string, error) {
+	service, err := gmail.NewService(ctx, option.WithTokenSource(p.tokenSource(ctx, token)))
+	if err != nil {
+		return nil, err
+	}
+	result, err := service.Users.Settings.SendAs.List("me").Do()
+	if err != nil {
+		return nil, err
+	}
+	aliases := make([]string, 0, len(result.SendAs))
+	for _, alias := range result.SendAs {
+		if alias.VerificationStatus == "accepted" {
+			aliases = append(aliases, strings.ToLower(alias.SendAsEmail))
+		}
+	}
+	return aliases, nil
 }
 
 func (p LiveGoogleProvider) RecentMail(ctx context.Context, token *oauth2.Token, since time.Time) ([]MailMetadata, error) {

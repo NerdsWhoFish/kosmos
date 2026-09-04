@@ -33,12 +33,17 @@ const maxUploadSize = 10 << 20
 var GoogleScopes = []string{
 	"https://www.googleapis.com/auth/gmail.compose",
 	"https://www.googleapis.com/auth/gmail.metadata",
+	"https://www.googleapis.com/auth/gmail.settings.basic",
 	"https://www.googleapis.com/auth/spreadsheets.readonly",
 }
 
 type IdentityFunc func(*http.Request) (string, Identity, error)
 
 type Workspace interface {
+	ListAccounts(context.Context, string) ([]workspace.Account, error)
+	GetAccount(context.Context, string, string) (workspace.Account, error)
+	CreateAccountWithContact(context.Context, string, workspace.Account, workspace.Contact) (workspace.Account, workspace.Contact, error)
+	LinkWebsiteRenewal(context.Context, string, string, workspace.Website, []workspace.Reminder) (workspace.Account, []workspace.Reminder, error)
 	ListContacts(context.Context, string) ([]workspace.Contact, error)
 	CreateContact(context.Context, string, workspace.Contact) (workspace.Contact, error)
 	ListCosts(context.Context, string) ([]workspace.Cost, error)
@@ -52,12 +57,13 @@ type Module struct {
 	publicScope string
 	key         []byte
 	google      GoogleProvider
+	cloudflare  CloudflareProvider
 	jobs        JobQueue
 	limiter     *ipLimiter
 }
 
 func NewModule(store Store, blobs BlobStore, workspaceStore Workspace, identity IdentityFunc, publicScope string, key []byte, google GoogleProvider, options ...ModuleOption) *Module {
-	module := &Module{store: store, blobs: blobs, workspace: workspaceStore, identity: identity, publicScope: publicScope, key: append([]byte(nil), key...), google: google, limiter: newIPLimiter()}
+	module := &Module{store: store, blobs: blobs, workspace: workspaceStore, identity: identity, publicScope: publicScope, key: append([]byte(nil), key...), google: google, cloudflare: NewLiveCloudflareProvider(nil), limiter: newIPLimiter()}
 	for _, option := range options {
 		option(module)
 	}
@@ -102,13 +108,15 @@ func (m *Module) MigrateGoogleConnectionSecrets(ctx context.Context, legacyKey [
 func (*Module) Name() string { return "operations" }
 
 func (*Module) Manifest() platformmodules.Manifest {
-	return platformmodules.Manifest{Name: "operations", Navigation: []platformmodules.Navigation{{Path: "/communications", Label: "Inbox", Icon: "inbox"}, {Path: "/operations", Label: "Operations", Icon: "operations"}, {Path: "/settings", Label: "Settings", Icon: "settings"}}, Permissions: []string{"communications.send", "integrations.manage", "members.manage", "records.export"}, Resources: []string{"members", "pipelineStages", "notifications", "emailTemplates", "mailMetadata", "transactions", "attachments", "audit"}, EventTypes: []string{"lead.created", "email.received", "email.sent", "transaction.imported"}, BackgroundJobs: []string{"gmail.sync", "tiller.sync"}, SearchProviders: []string{"mail", "transactions"}, DocumentLinkTargets: []string{"attachment"}}
+	return platformmodules.Manifest{Name: "operations", Navigation: []platformmodules.Navigation{{Path: "/communications", Label: "Inbox", Icon: "inbox"}, {Path: "/operations", Label: "Operations", Icon: "operations"}, {Path: "/settings", Label: "Settings", Icon: "settings"}}, Permissions: []string{"communications.send", "integrations.manage", "members.manage", "records.export"}, Resources: []string{"members", "pipelineStages", "notifications", "emailTemplates", "mailMetadata", "transactions", "attachments", "audit", "cloudflareConnections", "sendAsMappings", "tillerWebhookConnections", "tillerProductMappings"}, EventTypes: []string{"lead.created", "email.received", "email.sent", "transaction.imported", "cloudflare.domain_linked", "tiller.purchase_imported"}, BackgroundJobs: []string{"gmail.sync", "tiller.sync"}, SearchProviders: []string{"mail", "transactions"}, DocumentLinkTargets: []string{"attachment"}}
 }
 
 func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/intake/contact", m.intakeContact)
 	mux.HandleFunc("GET /api/v1/members", m.members)
 	mux.HandleFunc("PATCH /api/v1/members/{id}", m.updateMember)
+	mux.HandleFunc("GET /api/v1/email/send-as", m.sendAsMappings)
+	mux.HandleFunc("PUT /api/v1/members/{id}/send-as", m.configureSendAs)
 	mux.HandleFunc("GET /api/v1/pipeline-stages", m.pipelineStages)
 	mux.HandleFunc("POST /api/v1/pipeline-stages", m.createPipelineStage)
 	mux.HandleFunc("GET /api/v1/notifications", m.notifications)
@@ -122,6 +130,18 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/email/messages", m.mailMessages)
 	mux.HandleFunc("PUT /api/v1/integrations/tiller", m.configureTiller)
 	mux.HandleFunc("POST /api/v1/integrations/tiller/sync", m.syncTiller)
+	mux.HandleFunc("GET /api/v1/integrations/tiller/webhook", m.tillerWebhookStatus)
+	mux.HandleFunc("PUT /api/v1/integrations/tiller/webhook", m.configureTillerWebhook)
+	mux.HandleFunc("DELETE /api/v1/integrations/tiller/webhook", m.disconnectTillerWebhook)
+	mux.HandleFunc("GET /api/v1/integrations/tiller/product-mappings", m.tillerProductMappings)
+	mux.HandleFunc("PUT /api/v1/integrations/tiller/product-mappings/{id}", m.configureTillerProductMapping)
+	mux.HandleFunc("DELETE /api/v1/integrations/tiller/product-mappings/{id}", m.deleteTillerProductMapping)
+	mux.HandleFunc("POST /api/v1/webhooks/tiller", m.receiveTillerWebhook)
+	mux.HandleFunc("GET /api/v1/integrations/cloudflare", m.cloudflareStatus)
+	mux.HandleFunc("PUT /api/v1/integrations/cloudflare", m.configureCloudflare)
+	mux.HandleFunc("DELETE /api/v1/integrations/cloudflare", m.disconnectCloudflare)
+	mux.HandleFunc("GET /api/v1/integrations/cloudflare/domains", m.cloudflareDomains)
+	mux.HandleFunc("POST /api/v1/integrations/cloudflare/link", m.linkCloudflareDomain)
 	mux.HandleFunc("GET /api/v1/transactions", m.transactions)
 	mux.HandleFunc("PATCH /api/v1/transactions/{id}", m.updateTransaction)
 	mux.HandleFunc("POST /api/v1/attachments", m.uploadAttachment)
@@ -197,6 +217,17 @@ func (m *Module) CheckAccess(ctx context.Context, scope string, actor Identity, 
 	return nil
 }
 
+func (m *Module) CheckRole(ctx context.Context, scope string, actor Identity, roles ...string) error {
+	member, err := m.ensureMember(ctx, scope, actor)
+	if err != nil {
+		return err
+	}
+	if member.Status != "active" || !oneOf(member.Role, roles...) {
+		return errors.New("role is not allowed")
+	}
+	return nil
+}
+
 func (m *Module) members(w http.ResponseWriter, r *http.Request) {
 	scope, _, ok := m.authorize(w, r)
 	if !ok {
@@ -253,6 +284,81 @@ func (m *Module) updateMember(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = m.audit(r.Context(), scope, actor.Email, "member.updated", "member", member.ID, "Changed "+member.Email+" to "+member.Role)
 	writeJSON(w, http.StatusOK, member)
+}
+
+func (m *Module) sendAsMappings(w http.ResponseWriter, r *http.Request) {
+	scope, actor, ok := m.authorize(w, r)
+	if !ok || !m.requireRole(w, r.Context(), scope, actor, "owner", "admin") {
+		return
+	}
+	var mappings []SendAsMapping
+	if err := m.store.List(r.Context(), scope, "sendAsMappings", &mappings); err != nil {
+		writeError(w, http.StatusInternalServerError, "send_as_load_failed", "Could not load Gmail sender mappings")
+		return
+	}
+	sort.Slice(mappings, func(i, j int) bool { return mappings[i].MemberEmail < mappings[j].MemberEmail })
+	writeJSON(w, http.StatusOK, map[string]any{"mappings": mappings})
+}
+
+func (m *Module) configureSendAs(w http.ResponseWriter, r *http.Request) {
+	scope, actor, ok := m.authorize(w, r)
+	if !ok || !m.requireRole(w, r.Context(), scope, actor, "owner", "admin") {
+		return
+	}
+	var request struct{ Email string }
+	if !decodeJSON(w, r, &request, 8<<10) {
+		return
+	}
+	request.Email = strings.ToLower(strings.TrimSpace(request.Email))
+	address, err := mail.ParseAddress(request.Email)
+	if err != nil || address.Address != request.Email {
+		writeError(w, http.StatusBadRequest, "invalid_send_as", "Enter a valid Gmail send-as address")
+		return
+	}
+	var member Member
+	if err := m.store.Get(r.Context(), scope, "members", r.PathValue("id"), &member); err != nil {
+		writeError(w, http.StatusNotFound, "member_not_found", "Team member was not found")
+		return
+	}
+	token, connection, err := m.connectionTokenByID(r.Context(), scope, member.ID)
+	if errors.Is(err, errNotFound) {
+		writeError(w, http.StatusConflict, "google_not_connected", "This member must connect Google Workspace before assigning a sender address")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "google_connection_failed", "Could not open this member's Google connection")
+		return
+	}
+	verified := strings.EqualFold(request.Email, connection.GoogleEmail)
+	if !verified {
+		aliases, aliasErr := m.google.SendAsAliases(r.Context(), token)
+		if aliasErr != nil {
+			writeError(w, http.StatusBadGateway, "send_as_check_failed", "Google could not verify this sender address. Reconnect Google Workspace and try again")
+			return
+		}
+		for _, alias := range aliases {
+			if strings.EqualFold(alias, request.Email) {
+				verified = true
+				break
+			}
+		}
+	}
+	if !verified {
+		writeError(w, http.StatusBadRequest, "send_as_not_verified", "That address is not a verified Gmail send-as alias for this member")
+		return
+	}
+	now := time.Now().UTC()
+	mapping := SendAsMapping{ID: member.ID, MemberID: member.ID, MemberEmail: member.Email, Email: request.Email, UpdatedBy: actor.Email, CreatedAt: now, UpdatedAt: now}
+	var existing SendAsMapping
+	if m.store.Get(r.Context(), scope, "sendAsMappings", member.ID, &existing) == nil {
+		mapping.CreatedAt = existing.CreatedAt
+	}
+	if err := m.store.Put(r.Context(), scope, "sendAsMappings", member.ID, mapping); err != nil {
+		writeError(w, http.StatusInternalServerError, "send_as_save_failed", "Could not save Gmail sender mapping")
+		return
+	}
+	_ = m.audit(r.Context(), scope, actor.Email, "gmail.send_as_mapped", "member", member.ID, "Mapped "+member.Email+" to "+request.Email)
+	writeJSON(w, http.StatusOK, mapping)
 }
 
 func (m *Module) pipelineStages(w http.ResponseWriter, r *http.Request) {
@@ -379,11 +485,11 @@ func (m *Module) sendEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	request.To, request.Subject = strings.TrimSpace(request.To), strings.TrimSpace(request.Subject)
 	address, err := mail.ParseAddress(request.To)
-	if err != nil || address.Address != request.To || request.Subject == "" || request.Body == "" {
+	if err != nil || address.Address != request.To || request.Subject == "" || strings.ContainsAny(request.Subject, "\r\n") || request.Body == "" {
 		writeError(w, http.StatusBadRequest, "invalid_email", "Recipient, subject, and message are required")
 		return
 	}
-	token, _, err := m.connectionToken(r.Context(), scope, actor.Email)
+	token, connection, err := m.connectionToken(r.Context(), scope, actor.Email)
 	if errors.Is(err, errNotFound) {
 		writeError(w, http.StatusConflict, "google_not_connected", "Connect Google Workspace in Settings before sending email")
 		return
@@ -415,7 +521,15 @@ func (m *Module) sendEmail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "email_send_failed", "Could not reserve this email delivery")
 		return
 	}
-	messageID, err := m.google.Send(r.Context(), token, request.To, request.Subject, request.Body)
+	from := connection.GoogleEmail
+	if from == "" {
+		from = strings.ToLower(actor.Email)
+	}
+	var mapping SendAsMapping
+	if m.store.Get(r.Context(), scope, "sendAsMappings", memberID(actor.Email), &mapping) == nil {
+		from = mapping.Email
+	}
+	messageID, err := m.google.Send(r.Context(), token, from, request.To, request.Subject, request.Body)
 	if err != nil {
 		_ = m.store.Delete(r.Context(), scope, "emailDeliveries", deliveryID)
 		writeError(w, http.StatusBadGateway, "email_send_failed", "Google could not send this email")
@@ -664,9 +778,9 @@ func (m *Module) exportRecords(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "export_failed", "Could not export contacts")
 			return
 		}
-		_ = writer.Write([]string{"name", "company", "email", "phone", "status", "created_at"})
+		_ = writer.Write([]string{"name", "account_id", "email", "phone", "source", "created_at"})
 		for _, item := range items {
-			_ = writer.Write([]string{item.Name, item.Company, item.Email, item.Phone, item.Status, item.CreatedAt.Format(time.RFC3339)})
+			_ = writer.Write([]string{item.Name, item.AccountID, item.Email, item.Phone, item.Source, item.CreatedAt.Format(time.RFC3339)})
 		}
 	case "costs":
 		items, err := m.workspace.ListCosts(r.Context(), scope)
@@ -737,7 +851,28 @@ func (m *Module) intakeContact(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	source := normalizedOr(request.Source, "contact-form")
-	contact, err := m.workspace.CreateContact(r.Context(), m.publicScope, workspace.Contact{Name: request.Name, Company: strings.TrimSpace(request.Company), Email: request.Email, Phone: strings.TrimSpace(request.Phone), Status: "lead", Source: source})
+	contactInput := workspace.Contact{Name: request.Name, Email: request.Email, Phone: strings.TrimSpace(request.Phone), Source: source}
+	var contact workspace.Contact
+	if company := strings.TrimSpace(request.Company); company != "" {
+		accounts, listErr := m.workspace.ListAccounts(r.Context(), m.publicScope)
+		if listErr != nil {
+			writeError(w, http.StatusInternalServerError, "lead_create_failed", "Could not save this request")
+			return
+		}
+		for _, account := range accounts {
+			if strings.EqualFold(account.Name, company) {
+				contactInput.AccountID = account.ID
+				break
+			}
+		}
+		if contactInput.AccountID != "" {
+			contact, err = m.workspace.CreateContact(r.Context(), m.publicScope, contactInput)
+		} else {
+			_, contact, err = m.workspace.CreateAccountWithContact(r.Context(), m.publicScope, workspace.Account{Name: company, Status: "prospect"}, contactInput)
+		}
+	} else {
+		contact, err = m.workspace.CreateContact(r.Context(), m.publicScope, contactInput)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "lead_create_failed", "Could not save this request")
 		return
@@ -927,7 +1062,11 @@ func (m *Module) syncTillerConnection(ctx context.Context, scope, connectionID, 
 	if err != nil {
 		return 0, 0, err
 	}
-	transactions := parseTillerRows(rows, contacts)
+	accounts, err := m.workspace.ListAccounts(ctx, scope)
+	if err != nil {
+		return 0, 0, err
+	}
+	transactions := parseTillerRows(rows, contacts, accounts)
 	createdIDs := make([]string, 0, len(transactions))
 	for _, item := range transactions {
 		if err := m.store.Create(ctx, scope, "transactions", item.ID, item); errors.Is(err, errAlreadyExists) {
@@ -991,7 +1130,7 @@ func (m *Module) validDownload(scope, id, expires, signature string) bool {
 	return err == nil && time.Now().Before(time.Unix(unix, 0)) && hmac.Equal([]byte(signature), []byte(sign(m.key, scope+"|"+id+"|"+expires)))
 }
 
-func parseTillerRows(rows [][]any, contacts []workspace.Contact) []Transaction {
+func parseTillerRows(rows [][]any, contacts []workspace.Contact, accounts []workspace.Account) []Transaction {
 	if len(rows) < 2 {
 		return []Transaction{}
 	}
@@ -1019,8 +1158,17 @@ func parseTillerRows(rows [][]any, contacts []workspace.Contact) []Transaction {
 			external = date + "|" + description + "|" + fmt.Sprintf("%.2f", amount)
 		}
 		item := Transaction{ID: deterministicID("tiller:" + external), ExternalID: external, Date: date, Description: description, Merchant: value(row, "merchant"), AmountCents: int64(amount * 100), Source: "tiller", MatchStatus: "review", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
-		matches := matchContacts(item.Merchant+" "+item.Description, contacts)
-		if len(matches) == 1 {
+		value := item.Merchant + " " + item.Description
+		accountMatches := matchAccounts(value, accounts)
+		if len(accountMatches) == 1 {
+			item.AccountID, item.MatchStatus = accountMatches[0], "matched"
+			for _, contact := range contacts {
+				if contact.AccountID == item.AccountID {
+					item.ContactID = contact.ID
+					break
+				}
+			}
+		} else if matches := matchContacts(value, contacts); len(matches) == 1 {
 			item.ContactID, item.MatchStatus = matches[0], "matched"
 		}
 		items = append(items, item)
@@ -1028,11 +1176,30 @@ func parseTillerRows(rows [][]any, contacts []workspace.Contact) []Transaction {
 	return items
 }
 
+func matchAccounts(value string, accounts []workspace.Account) []string {
+	normalized := strings.ToLower(value)
+	matches := make([]string, 0)
+	for _, account := range accounts {
+		candidates := []string{account.Name}
+		for _, website := range account.Websites {
+			candidates = append(candidates, website.Domain)
+		}
+		for _, candidate := range candidates {
+			candidate = strings.ToLower(strings.TrimSpace(candidate))
+			if len(candidate) >= 4 && strings.Contains(normalized, candidate) {
+				matches = append(matches, account.ID)
+				break
+			}
+		}
+	}
+	return matches
+}
+
 func matchContacts(value string, contacts []workspace.Contact) []string {
 	normalized := strings.ToLower(value)
 	matches := make([]string, 0)
 	for _, contact := range contacts {
-		for _, candidate := range []string{contact.Name, contact.Company, contact.Email} {
+		for _, candidate := range []string{contact.Name, contact.Email} {
 			candidate = strings.ToLower(strings.TrimSpace(candidate))
 			if len(candidate) >= 4 && strings.Contains(normalized, candidate) {
 				matches = append(matches, contact.ID)
