@@ -1876,6 +1876,11 @@ components:
           maxItems: 25
           items:
             $ref: '#/components/schemas/WebsiteInput'
+        links:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/AccountLink'
         billingEmail:
           type: string
           format: email
@@ -1901,6 +1906,11 @@ components:
           maxItems: 25
           items:
             $ref: '#/components/schemas/WebsiteInput'
+        links:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/AccountLink'
         billingEmail:
           type: string
           format: email
@@ -1964,6 +1974,17 @@ components:
       properties:
         url:
           type: string
+    AccountLink:
+      type: object
+      required: [label, url]
+      properties:
+        label:
+          type: string
+          maxLength: 120
+        url:
+          type: string
+          format: uri
+          pattern: '^https?://'
     ContactPatch:
       type: object
       properties:

@@ -168,7 +168,7 @@ func (s *FirestoreStore) CreateAccountWithContact(ctx context.Context, scope str
 }
 
 func (s *FirestoreStore) UpdateAccount(ctx context.Context, scope, id string, patch AccountPatch) (Account, error) {
-	updates := make([]firestore.Update, 0, 6)
+	updates := make([]firestore.Update, 0, 7)
 	if patch.Name != nil {
 		updates = append(updates, firestore.Update{Path: "name", Value: *patch.Name})
 	}
@@ -183,6 +183,9 @@ func (s *FirestoreStore) UpdateAccount(ctx context.Context, scope, id string, pa
 			legacyWebsite = websites[0].URL
 		}
 		updates = append(updates, firestore.Update{Path: "websites", Value: websites}, firestore.Update{Path: "website", Value: legacyWebsite})
+	}
+	if patch.Links != nil {
+		updates = append(updates, firestore.Update{Path: "links", Value: *patch.Links})
 	}
 	if patch.BillingEmail != nil {
 		updates = append(updates, firestore.Update{Path: "billingEmail", Value: *patch.BillingEmail})

@@ -6,7 +6,10 @@ import (
 	"strings"
 )
 
-const maxAccountWebsites = 25
+const (
+	maxAccountWebsites = 25
+	maxAccountLinks    = 50
+)
 
 func normalizeAccount(account *Account) error {
 	account.Name = strings.TrimSpace(account.Name)
@@ -26,6 +29,11 @@ func normalizeAccount(account *Account) error {
 	} else {
 		account.Website = ""
 	}
+	links, err := normalizeAccountLinks(account.Links)
+	if err != nil {
+		return err
+	}
+	account.Links = links
 	return nil
 }
 
@@ -45,6 +53,9 @@ func validateAccount(account Account) string {
 	if len(account.Websites) > maxAccountWebsites {
 		return "An account can have up to 25 websites"
 	}
+	if len(account.Links) > maxAccountLinks {
+		return "An account can have up to 50 links"
+	}
 	return ""
 }
 
@@ -59,6 +70,13 @@ func normalizeAccountPatch(patch *AccountPatch) error {
 			return err
 		}
 		patch.Websites = &websites
+	}
+	if patch.Links != nil {
+		links, err := normalizeAccountLinks(*patch.Links)
+		if err != nil {
+			return err
+		}
+		patch.Links = &links
 	}
 	return nil
 }
@@ -77,7 +95,39 @@ func validateAccountPatch(patch AccountPatch) string {
 	if patch.Websites != nil {
 		account.Websites = *patch.Websites
 	}
+	if patch.Links != nil {
+		account.Links = *patch.Links
+	}
 	return validateAccount(account)
+}
+
+func normalizeAccountLinks(links []AccountLink) ([]AccountLink, error) {
+	if len(links) > maxAccountLinks {
+		return nil, &validationError{"An account can have up to 50 links"}
+	}
+	result := make([]AccountLink, 0, len(links))
+	seen := make(map[string]struct{}, len(links))
+	for _, link := range links {
+		link.Label = strings.TrimSpace(link.Label)
+		link.URL = strings.TrimSpace(link.URL)
+		if link.Label == "" && link.URL == "" {
+			continue
+		}
+		if link.Label == "" || len(link.Label) > 120 {
+			return nil, &validationError{"Link names must be between 1 and 120 characters"}
+		}
+		parsed, err := url.Parse(link.URL)
+		if err != nil || parsed.Hostname() == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return nil, &validationError{"Enter a valid link beginning with http:// or https://"}
+		}
+		key := strings.ToLower(link.URL)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, link)
+	}
+	return result, nil
 }
 
 func accountWebsites(account Account) []Website {
@@ -168,6 +218,9 @@ func applyAccountPatch(account *Account, patch AccountPatch) {
 		} else {
 			account.Website = ""
 		}
+	}
+	if patch.Links != nil {
+		account.Links = append([]AccountLink(nil), (*patch.Links)...)
 	}
 	if patch.BillingEmail != nil {
 		account.BillingEmail = *patch.BillingEmail

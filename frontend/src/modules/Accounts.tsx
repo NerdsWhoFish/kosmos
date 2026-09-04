@@ -6,12 +6,14 @@ import {
   FilePlus2,
   FileText,
   Globe2,
+  Link2,
   Pencil,
   Plus,
   Trash2,
 } from "lucide-react";
 import {
   Account,
+  AccountLink,
   api,
   CloudflareDomain,
   CloudflareStatus,
@@ -48,10 +50,14 @@ export function Accounts({
   const [domains, setDomains] = useState<CloudflareDomain[]>([]);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [managingLinks, setManagingLinks] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [linking, setLinking] = useState(false);
   const [websiteFields, setWebsiteFields] = useState([""]);
   const [editWebsiteFields, setEditWebsiteFields] = useState([""]);
+  const [editLinkFields, setEditLinkFields] = useState<AccountLink[]>([
+    { label: "", url: "" },
+  ]);
   const [includeContact, setIncludeContact] = useState(true);
   const [selectedDomain, setSelectedDomain] = useState("");
   const [loading, setLoading] = useState(true);
@@ -228,6 +234,48 @@ export function Accounts({
     setEditing(true);
   }
 
+  function openLinks() {
+    if (!selected) return;
+    setEditLinkFields(
+      selected.account.links?.length
+        ? selected.account.links.map((link) => ({ ...link }))
+        : [{ label: "", url: "" }],
+    );
+    setFormError("");
+    setManagingLinks(true);
+  }
+
+  async function updateLinks(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setSaving(true);
+    setFormError("");
+    try {
+      const account = await api<Account>(
+        `/api/v1/accounts/${selected.account.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            links: editLinkFields.filter(
+              (link) => link.label.trim() || link.url.trim(),
+            ),
+          }),
+        },
+      );
+      setSelected((current) => (current ? { ...current, account } : current));
+      setItems((current) =>
+        current.map((item) => (item.id === account.id ? account : item)),
+      );
+      setManagingLinks(false);
+    } catch (reason) {
+      setFormError(
+        reason instanceof Error ? reason.message : "Could not update links",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function updateAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
@@ -314,6 +362,7 @@ export function Accounts({
           onSubmitDomain={linkDomain}
           onCloseDomain={() => setLinking(false)}
           onEdit={openEdit}
+          onManageLinks={openLinks}
           onDelete={() => setDeleting(true)}
         />
         {editing && (
@@ -420,6 +469,107 @@ export function Accounts({
                 </button>
                 <button className="primary-button" disabled={saving}>
                   {saving ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        )}
+        {managingLinks && (
+          <Modal
+            eyebrow="Account resources"
+            title={`Links for ${selected.account.name}`}
+            onClose={() => setManagingLinks(false)}
+          >
+            <form onSubmit={updateLinks}>
+              <p className="field-help">
+                Keep Sheets, Google Docs, proposals, and other shared resources
+                with this account.
+              </p>
+              {editLinkFields.map((link, index) => (
+                <fieldset
+                  className="form-section account-link-field"
+                  key={index}
+                >
+                  <legend>Link {index + 1}</legend>
+                  <label>
+                    Name
+                    <input
+                      aria-label={`Link ${index + 1} name`}
+                      value={link.label}
+                      maxLength={120}
+                      required
+                      onChange={(event) =>
+                        setEditLinkFields((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, label: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                      placeholder="Project spreadsheet"
+                    />
+                  </label>
+                  <label>
+                    URL
+                    <input
+                      aria-label={`Link ${index + 1} URL`}
+                      value={link.url}
+                      type="url"
+                      inputMode="url"
+                      required
+                      onChange={(event) =>
+                        setEditLinkFields((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, url: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                      placeholder="https://docs.google.com/..."
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="text-button danger-text"
+                    onClick={() =>
+                      setEditLinkFields((current) =>
+                        current.filter((_, itemIndex) => itemIndex !== index),
+                      )
+                    }
+                  >
+                    <Trash2 size={15} /> Remove link
+                  </button>
+                </fieldset>
+              ))}
+              <button
+                type="button"
+                className="text-button"
+                onClick={() =>
+                  setEditLinkFields((current) => [
+                    ...current,
+                    { label: "", url: "" },
+                  ])
+                }
+              >
+                <Plus size={15} /> Add another link
+              </button>
+              {formError && (
+                <p className="form-error" role="alert">
+                  {formError}
+                </p>
+              )}
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setManagingLinks(false)}
+                >
+                  Cancel
+                </button>
+                <button className="primary-button" disabled={saving}>
+                  {saving ? "Saving..." : "Save links"}
                 </button>
               </div>
             </form>
@@ -674,6 +824,7 @@ function AccountView({
   onSubmitDomain,
   onCloseDomain,
   onEdit,
+  onManageLinks,
   onDelete,
 }: {
   detail: AccountDetail;
@@ -691,6 +842,7 @@ function AccountView({
   onSubmitDomain: (event: FormEvent<HTMLFormElement>) => void;
   onCloseDomain: () => void;
   onEdit: () => void;
+  onManageLinks: () => void;
   onDelete: () => void;
 }) {
   const websites = accountWebsites(detail.account);
@@ -858,6 +1010,42 @@ function AccountView({
           </div>
         ) : (
           <p className="muted-copy">No websites linked yet.</p>
+        )}
+      </section>
+      <section className="panel account-links">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Resources</p>
+            <h2>Links</h2>
+          </div>
+          <button className="secondary-button" onClick={onManageLinks}>
+            <Link2 size={16} /> Manage links
+          </button>
+        </div>
+        {detail.account.links?.length ? (
+          <div className="account-link-list">
+            {detail.account.links.map((link) => (
+              <a
+                href={link.url}
+                target="_blank"
+                rel="noreferrer"
+                key={`${link.label}-${link.url}`}
+              >
+                <span className="setting-icon">
+                  <Link2 size={18} />
+                </span>
+                <span>
+                  <strong>{link.label}</strong>
+                  <small>{link.url}</small>
+                </span>
+                <ExternalLink size={15} />
+              </a>
+            ))}
+          </div>
+        ) : (
+          <p className="muted-copy">
+            No links yet. Add a Sheet, Google Doc, proposal, or shared folder.
+          </p>
         )}
       </section>
       <section className="split-grid">

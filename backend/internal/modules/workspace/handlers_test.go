@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,11 +21,14 @@ func TestWorkspaceCoreFlow(t *testing.T) {
 	createdAccount := performJSON[struct {
 		Account Account `json:"account"`
 		Contact Contact `json:"contact"`
-	}](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","status":"prospect","websites":[{"url":"river.example"},{"url":"shop.river.example"}],"primaryContact":{"name":"Ada Angler","email":"ada@example.com","linkedinUrl":"www.linkedin.com/in/ada-angler","source":"referral"}}`, http.StatusCreated)
+	}](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","status":"prospect","websites":[{"url":"river.example"},{"url":"shop.river.example"}],"links":[{"label":"Project tracker","url":"https://docs.google.com/spreadsheets/d/sheet/edit#gid=12"}],"primaryContact":{"name":"Ada Angler","email":"ada@example.com","linkedinUrl":"www.linkedin.com/in/ada-angler","source":"referral"}}`, http.StatusCreated)
 	account := createdAccount.Account
 	contact := createdAccount.Contact
 	if len(account.Websites) != 2 || account.Websites[0].Domain != "river.example" || account.Websites[1].Domain != "shop.river.example" {
 		t.Fatalf("unexpected account websites: %#v", account.Websites)
+	}
+	if len(account.Links) != 1 || account.Links[0].Label != "Project tracker" || !strings.HasSuffix(account.Links[0].URL, "#gid=12") {
+		t.Fatalf("unexpected account links: %#v", account.Links)
 	}
 	if contact.ID == "" || contact.Name != "Ada Angler" || contact.AccountID != account.ID || contact.LinkedInURL != "https://www.linkedin.com/in/ada-angler" {
 		t.Fatalf("unexpected contact: %#v", contact)
@@ -362,6 +366,7 @@ func TestWorkspaceRejectsInvalidRecords(t *testing.T) {
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Ada","status":"prospect"}`, http.StatusBadRequest)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Ada","linkedinUrl":"https://example.com/ada"}`, http.StatusBadRequest)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","websites":[{"url":"not a website"}]}`, http.StatusBadRequest)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","links":[{"label":"Tracker","url":"javascript:alert(1)"}]}`, http.StatusBadRequest)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/costs", `{"description":"Hosting","amountCents":-1,"incurredOn":"not-a-date"}`, http.StatusBadRequest)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","stage":"qualified","ownerEmail":"not-an-email"}`, http.StatusBadRequest)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","accountId":"missing","stage":"qualified"}`, http.StatusBadRequest)
@@ -410,6 +415,22 @@ func TestAccountUpdatePreservesManagedWebsiteMetadata(t *testing.T) {
 	}
 	if len(updated.Websites) != 1 || updated.Websites[0].Provider != "cloudflare" || updated.Websites[0].ExternalID != "zone-1" || updated.Websites[0].RenewalDate != "2027-10-01" || !updated.Websites[0].AutoRenew {
 		t.Fatalf("managed website metadata was lost: %#v", updated.Websites)
+	}
+}
+
+func TestAccountLinksCanBeManaged(t *testing.T) {
+	mux := http.NewServeMux()
+	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
+	created := performJSON[struct {
+		Account Account `json:"account"`
+	}](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs"}`, http.StatusCreated)
+	updated := performJSON[Account](t, mux, http.MethodPatch, "/api/v1/accounts/"+created.Account.ID, `{"links":[{"label":" Proposal ","url":"https://docs.google.com/document/d/proposal/edit"}]}`, http.StatusOK)
+	if len(updated.Links) != 1 || updated.Links[0].Label != "Proposal" {
+		t.Fatalf("unexpected account links: %#v", updated.Links)
+	}
+	updated = performJSON[Account](t, mux, http.MethodPatch, "/api/v1/accounts/"+created.Account.ID, `{"links":[]}`, http.StatusOK)
+	if len(updated.Links) != 0 {
+		t.Fatalf("account links were not removed: %#v", updated.Links)
 	}
 }
 

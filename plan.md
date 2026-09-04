@@ -27,8 +27,9 @@ This checklist is the release source of truth. Check an item only after its back
 - [ ] 23. Put Quick Lead on the overview as a fixed action outside managed shortcuts and create every captured lead's opportunity in Qualified.
 - [ ] 24. Keep long follow-up titles and their completion controls contained inside the follow-up panel at every supported viewport.
 - [ ] 25. Show reminders in Up next only when they are overdue or due within one week, with a separate review flow for future reminders.
+- [ ] 26. Let every authenticated role add, edit, remove, and open named external links directly from an account.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
-- [ ] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 25.
-- [ ] Re-run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests for items 20 through 25.
-- [ ] Release with Quill and deploy items 20 through 25 to production through the pinned Spacelift module.
+- [ ] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 26.
+- [ ] Re-run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests for items 20 through 26.
+- [ ] Release with Quill and deploy items 20 through 26 to production through the pinned Spacelift module.

@@ -67,16 +67,22 @@ type Website struct {
 	Status      string `json:"status,omitempty" firestore:"status,omitempty"`
 }
 
+type AccountLink struct {
+	Label string `json:"label" firestore:"label"`
+	URL   string `json:"url" firestore:"url"`
+}
+
 type Account struct {
-	ID           string    `json:"id" firestore:"-"`
-	Name         string    `json:"name" firestore:"name"`
-	Website      string    `json:"website,omitempty" firestore:"website,omitempty"`
-	Websites     []Website `json:"websites" firestore:"websites"`
-	BillingEmail string    `json:"billingEmail" firestore:"billingEmail"`
-	Status       string    `json:"status" firestore:"status"`
-	Notes        string    `json:"notes" firestore:"notes"`
-	CreatedAt    time.Time `json:"createdAt" firestore:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt" firestore:"updatedAt"`
+	ID           string        `json:"id" firestore:"-"`
+	Name         string        `json:"name" firestore:"name"`
+	Website      string        `json:"website,omitempty" firestore:"website,omitempty"`
+	Websites     []Website     `json:"websites" firestore:"websites"`
+	Links        []AccountLink `json:"links" firestore:"links"`
+	BillingEmail string        `json:"billingEmail" firestore:"billingEmail"`
+	Status       string        `json:"status" firestore:"status"`
+	Notes        string        `json:"notes" firestore:"notes"`
+	CreatedAt    time.Time     `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt    time.Time     `json:"updatedAt" firestore:"updatedAt"`
 }
 
 type Opportunity struct {
@@ -169,11 +175,12 @@ type ContactPatch struct {
 }
 
 type AccountPatch struct {
-	Name         *string    `json:"name"`
-	Websites     *[]Website `json:"websites"`
-	BillingEmail *string    `json:"billingEmail"`
-	Status       *string    `json:"status"`
-	Notes        *string    `json:"notes"`
+	Name         *string        `json:"name"`
+	Websites     *[]Website     `json:"websites"`
+	Links        *[]AccountLink `json:"links"`
+	BillingEmail *string        `json:"billingEmail"`
+	Status       *string        `json:"status"`
+	Notes        *string        `json:"notes"`
 }
 
 type OpportunityPatch struct {

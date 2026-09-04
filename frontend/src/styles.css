@@ -2971,13 +2971,19 @@ button.shortcut-main {
   margin-bottom: 18px;
 }
 
-.website-list {
+.account-links {
+  margin-bottom: 18px;
+}
+
+.website-list,
+.account-link-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
 }
 
-.website-list > a {
+.website-list > a,
+.account-link-list > a {
   min-width: 0;
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto;
@@ -2989,22 +2995,35 @@ button.shortcut-main {
   background: var(--theme-surface-dark);
 }
 
-.website-list > a > span:nth-child(2) {
+.website-list > a > span:nth-child(2),
+.account-link-list > a > span:nth-child(2) {
   min-width: 0;
   display: grid;
   gap: 4px;
 }
 
 .website-list strong,
-.website-list small {
+.website-list small,
+.account-link-list strong,
+.account-link-list small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.website-list small {
+.website-list small,
+.account-link-list small {
   color: var(--theme-muted);
   font-size: 10px;
+}
+
+.account-link-field + .account-link-field {
+  margin-top: 12px;
+}
+
+.danger-text {
+  color: var(--theme-danger);
+  justify-self: start;
 }
 
 .row-button {
@@ -3094,13 +3113,20 @@ button.shortcut-main {
   .modal select {
     font-size: 16px;
   }
-  .website-list {
+  .website-list,
+  .account-link-list {
     grid-template-columns: 1fr;
   }
   .account-websites .panel-heading {
     display: grid;
   }
   .account-websites .secondary-button {
+    width: 100%;
+  }
+  .account-links .panel-heading {
+    display: grid;
+  }
+  .account-links .secondary-button {
     width: 100%;
   }
   .repeatable-field {

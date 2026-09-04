@@ -21,6 +21,12 @@ const account = {
   websites: [
     { url: "https://river.example", domain: "river.example", autoRenew: false },
   ],
+  links: [
+    {
+      label: "Project tracker",
+      url: "https://docs.google.com/spreadsheets/d/river/edit",
+    },
+  ],
   billingEmail: "",
   status: "prospect",
   notes: "",
@@ -365,10 +371,7 @@ function mockAPI(authenticated = true) {
         );
       if (url.pathname === "/api/v1/contacts/contact-1" && method === "PATCH")
         return Promise.resolve(json({ ...contact, ...body }));
-      if (
-        url.pathname === "/api/v1/contacts/contact-1" &&
-        method === "DELETE"
-      )
+      if (url.pathname === "/api/v1/contacts/contact-1" && method === "DELETE")
         return Promise.resolve(new Response(null, { status: 204 }));
       if (
         url.pathname === "/api/v1/members/member-1/send-as" &&
@@ -994,9 +997,7 @@ describe("Kosmos application", () => {
     );
     await screen.findByRole("heading", { name: "Activity and follow-ups" });
     expect(
-      screen.queryByText(
-        "affordable-drainage-solutions.com renews in 30 days",
-      ),
+      screen.queryByText("affordable-drainage-solutions.com renews in 30 days"),
     ).not.toBeInTheDocument();
 
     fireEvent.click(
@@ -1117,11 +1118,13 @@ describe("Kosmos application", () => {
       screen.getByRole("heading", { name: /delete this account/i }),
     ).toBeInTheDocument();
     expect(
-      vi.mocked(fetch).mock.calls.some(
-        ([input, init]) =>
-          String(input) === "/api/v1/accounts/account-1" &&
-          init?.method === "DELETE",
-      ),
+      vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([input, init]) =>
+            String(input) === "/api/v1/accounts/account-1" &&
+            init?.method === "DELETE",
+        ),
     ).toBe(false);
 
     fireEvent.click(
@@ -1131,11 +1134,13 @@ describe("Kosmos application", () => {
     );
     await waitFor(() =>
       expect(
-        vi.mocked(fetch).mock.calls.some(
-          ([input, init]) =>
-            String(input) === "/api/v1/accounts/account-1" &&
-            init?.method === "DELETE",
-        ),
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/accounts/account-1" &&
+              init?.method === "DELETE",
+          ),
       ).toBe(true),
     );
     expect(
@@ -1260,6 +1265,67 @@ describe("Kosmos application", () => {
         );
       expect(JSON.parse(String(request?.[1]?.body)).websites).toEqual([]);
     });
+  });
+
+  it("manages named links directly from an account", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Accounts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /river labs/i }));
+    expect(
+      await screen.findByRole("link", { name: /project tracker/i }),
+    ).toHaveAttribute(
+      "href",
+      "https://docs.google.com/spreadsheets/d/river/edit",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /manage links/i }));
+    fireEvent.change(screen.getByLabelText(/link 1 name/i), {
+      target: { value: "Client tracker" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add another link/i }));
+    fireEvent.change(screen.getByLabelText(/link 2 name/i), {
+      target: { value: "Shared folder" },
+    });
+    fireEvent.change(screen.getByLabelText(/link 2 url/i), {
+      target: { value: "https://drive.google.com/drive/folders/client" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save links/i }));
+
+    await waitFor(() => {
+      const requests = vi
+        .mocked(fetch)
+        .mock.calls.filter(
+          ([input, init]) =>
+            String(input) === "/api/v1/accounts/account-1" &&
+            init?.method === "PATCH",
+        );
+      expect(JSON.parse(String(requests.at(-1)?.[1]?.body)).links).toEqual([
+        {
+          label: "Client tracker",
+          url: "https://docs.google.com/spreadsheets/d/river/edit",
+        },
+        {
+          label: "Shared folder",
+          url: "https://drive.google.com/drive/folders/client",
+        },
+      ]);
+    });
+    expect(
+      await screen.findByRole("link", { name: /shared folder/i }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /manage links/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: /remove link/i })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /save links/i }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: /client tracker/i }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("captures a mobile event lead with a qualified opportunity", async () => {
@@ -1465,16 +1531,15 @@ describe("Kosmos application", () => {
     );
 
     const preview = screen.getByRole("region", { name: /email preview/i });
-    expect(within(preview).getByText("Welcome {{name}}"))
-      .toBeInTheDocument();
-    expect(within(preview).getByText(/Hi {{name}} at {{company}}/))
-      .toBeInTheDocument();
+    expect(within(preview).getByText("Welcome {{name}}")).toBeInTheDocument();
+    expect(
+      within(preview).getByText(/Hi {{name}} at {{company}}/),
+    ).toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("combobox", { name: /^to$/i }), {
       target: { value: contact.email },
     });
-    expect(within(preview).getByText("Welcome Ada Angler"))
-      .toBeInTheDocument();
+    expect(within(preview).getByText("Welcome Ada Angler")).toBeInTheDocument();
     expect(
       within(preview).getByText(
         "Hi Ada Angler at River Labs. Domains: river.example.",
@@ -1612,30 +1677,37 @@ describe("Kosmos application", () => {
   it.each([
     ["desktop", 1440],
     ["mobile", 390],
-  ])("manages the shared Google Voice contacts account on %s", async (_name, width) => {
-    window.innerWidth = width;
-    mockAPI();
-    render(<App />);
-    await screen.findByRole("heading", {
-      name: /good (morning|afternoon|evening)/i,
-    });
-    fireEvent.click(screen.getByRole("link", { name: "Settings" }));
-    expect(
-      await screen.findByRole("heading", { name: /shared contacts connected/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("shared.voice@gmail.com")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /sync now/i }));
-    expect(
-      await screen.findByText(/1 kosmos contact queued/i),
-    ).toBeInTheDocument();
-    expect(
-      vi.mocked(fetch).mock.calls.some(
-        ([input, init]) =>
-          String(input) === "/api/v1/integrations/google-contacts/sync" &&
-          init?.method === "POST",
-      ),
-    ).toBe(true);
-  });
+  ])(
+    "manages the shared Google Voice contacts account on %s",
+    async (_name, width) => {
+      window.innerWidth = width;
+      mockAPI();
+      render(<App />);
+      await screen.findByRole("heading", {
+        name: /good (morning|afternoon|evening)/i,
+      });
+      fireEvent.click(screen.getByRole("link", { name: "Settings" }));
+      expect(
+        await screen.findByRole("heading", {
+          name: /shared contacts connected/i,
+        }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("shared.voice@gmail.com")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /sync now/i }));
+      expect(
+        await screen.findByText(/1 kosmos contact queued/i),
+      ).toBeInTheDocument();
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/integrations/google-contacts/sync" &&
+              init?.method === "POST",
+          ),
+      ).toBe(true);
+    },
+  );
 
   it.each([
     ["desktop", 1440],
@@ -1658,11 +1730,13 @@ describe("Kosmos application", () => {
       await screen.findByRole("heading", { name: "Contacts" }),
     ).toBeInTheDocument();
     expect(
-      vi.mocked(fetch).mock.calls.some(
-        ([input, init]) =>
-          String(input) === "/api/v1/contacts/contact-1" &&
-          init?.method === "DELETE",
-      ),
+      vi
+        .mocked(fetch)
+        .mock.calls.some(
+          ([input, init]) =>
+            String(input) === "/api/v1/contacts/contact-1" &&
+            init?.method === "DELETE",
+        ),
     ).toBe(true);
   });
 

@@ -867,9 +867,12 @@ func (m Module) search(w http.ResponseWriter, r *http.Request) {
 	accountNames := make(map[string]string, len(accounts))
 	for _, item := range accounts {
 		accountNames[item.ID] = item.Name
-		websiteValues := make([]string, 0, len(item.Websites)*2)
+		websiteValues := make([]string, 0, len(item.Websites)*2+len(item.Links)*2)
 		for _, website := range accountWebsites(item) {
 			websiteValues = append(websiteValues, website.URL, website.Domain)
+		}
+		for _, link := range item.Links {
+			websiteValues = append(websiteValues, link.Label, link.URL)
 		}
 		if matches(query, append([]string{item.Name, item.BillingEmail, item.Notes}, websiteValues...)...) {
 			results = append(results, searchResult{ID: item.ID, Kind: "account", Title: item.Name, Subtitle: titleCase(item.Status), Href: "/accounts/" + item.ID})

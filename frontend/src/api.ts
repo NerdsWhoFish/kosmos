@@ -25,11 +25,16 @@ export type Website = {
   autoRenew: boolean;
   status?: string;
 };
+export type AccountLink = {
+  label: string;
+  url: string;
+};
 export type Account = {
   id: string;
   name: string;
   website?: string;
   websites: Website[];
+  links: AccountLink[];
   billingEmail: string;
   status: "prospect" | "customer" | "inactive";
   notes: string;
