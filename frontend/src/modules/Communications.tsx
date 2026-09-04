@@ -468,6 +468,7 @@ export function Communications() {
           <form onSubmit={createTemplate}>
             <div
               className="template-variables"
+              role="note"
               aria-label="Available template variables"
             >
               <strong>Available variables</strong>
