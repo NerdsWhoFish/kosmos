@@ -2458,6 +2458,11 @@ select {
   overflow: hidden;
 }
 
+.fixed-shortcut {
+  padding: 0;
+  overflow: hidden;
+}
+
 .shortcut-main {
   display: flex;
   min-width: 0;
@@ -2465,6 +2470,13 @@ select {
   align-items: center;
   gap: 12px;
   padding: 12px;
+}
+
+button.shortcut-main {
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
 }
 
 .shortcut-main > span:nth-child(2) {

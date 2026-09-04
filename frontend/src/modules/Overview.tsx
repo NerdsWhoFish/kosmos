@@ -229,7 +229,7 @@ export function Overview({
             )}
           </div>
           <div className="shortcut-grid">
-            <article className="shortcut-card">
+            <article className="shortcut-card fixed-shortcut">
               <button
                 className="shortcut-main"
                 type="button"
