@@ -2,9 +2,12 @@ package operations
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -13,6 +16,25 @@ import (
 
 	"golang.org/x/oauth2"
 )
+
+func TestGmailMessagePreservesOnlyAuthoredLineBreaks(t *testing.T) {
+	body := "Hey Joey,\n\nThis deliberately long paragraph should remain one logical line after Gmail decodes the MIME transport even though its encoded form uses safe transport line lengths.\n\nThanks"
+	raw := encodeGmailMessage("joey@nerdswhofish.com", "customer@example.com", "Renewal amount: $25", body)
+	message, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Header.Get("Content-Transfer-Encoding") != "base64" {
+		t.Fatalf("encoding = %q", message.Header.Get("Content-Transfer-Encoding"))
+	}
+	decoded, err := io.ReadAll(base64.NewDecoder(base64.StdEncoding, message.Body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(decoded) != body {
+		t.Fatalf("decoded body = %q, want exact authored body", decoded)
+	}
+}
 
 func TestRecentMailUsesMetadataCompatibleFilters(t *testing.T) {
 	since := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -65,12 +66,29 @@ func (p LiveGoogleProvider) Send(ctx context.Context, token *oauth2.Token, from,
 	if err != nil {
 		return "", err
 	}
-	message := "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + subject + "\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + body
+	message := encodeGmailMessage(from, to, subject, body)
 	result, err := service.Users.Messages.Send("me", &gmail.Message{Raw: base64.RawURLEncoding.EncodeToString([]byte(message))}).Do()
 	if err != nil {
 		return "", err
 	}
 	return result.Id, nil
+}
+
+func encodeGmailMessage(from, to, subject, body string) string {
+	encodedBody := base64.StdEncoding.EncodeToString([]byte(body))
+	lines := make([]string, 0, (len(encodedBody)+75)/76)
+	for len(encodedBody) > 76 {
+		lines = append(lines, encodedBody[:76])
+		encodedBody = encodedBody[76:]
+	}
+	lines = append(lines, encodedBody)
+	return "From: " + from + "\r\n" +
+		"To: " + to + "\r\n" +
+		"Subject: " + mime.BEncoding.Encode("UTF-8", subject) + "\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/plain; charset=UTF-8\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		strings.Join(lines, "\r\n")
 }
 
 func (p LiveGoogleProvider) SendAsAliases(ctx context.Context, token *oauth2.Token) ([]string, error) {
