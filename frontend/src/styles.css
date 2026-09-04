@@ -2505,8 +2505,9 @@ button.shortcut-main {
   gap: 3px;
 }
 
-.shortcut-actions {
+.shortcut-card > span.shortcut-actions {
   display: flex;
+  flex: 0 0 auto;
   gap: 3px;
   padding-right: 9px;
 }
