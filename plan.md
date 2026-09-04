@@ -21,16 +21,16 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 17. Let users attach a receipt while recording a business cost and show its download link with the cost.
 - [x] 18. Let users edit existing accounts, including adding, editing, and removing the domains tied to an account.
 - [x] 19. Let an administrator connect the shared Google account used for Google Voice, then create, update, and optionally delete that account's Google Contacts when Kosmos contacts change.
-- [ ] 20. Preserve email-template variables in the composer and preview, then merge them from the selected contact and account before sending.
-- [ ] 21. Open Google Voice with the shared Google account connected by an administrator instead of the browser's default account.
-- [ ] 22. Let users delete an account after explicit confirmation without leaving linked workspace records orphaned.
-- [ ] 23. Put Quick Lead on the overview as a fixed action outside managed shortcuts and create every captured lead's opportunity in Qualified.
-- [ ] 24. Keep long follow-up titles and their completion controls contained inside the follow-up panel at every supported viewport.
-- [ ] 25. Show reminders in Up next only when they are overdue or due within one week, with a separate review flow for future reminders.
-- [ ] 26. Let every authenticated role add, edit, remove, and open named external links directly from an account.
-- [ ] 27. Keep landing-zone shortcut actions compact and contained instead of stretching across the shortcut row.
+- [x] 20. Preserve email-template variables in the composer and preview, then merge them from the selected contact and account before sending.
+- [x] 21. Open Google Voice with the shared Google account connected by an administrator instead of the browser's default account.
+- [x] 22. Let users delete an account after explicit confirmation without leaving linked workspace records orphaned.
+- [x] 23. Put Quick Lead on the overview as a fixed action outside managed shortcuts and create every captured lead's opportunity in Qualified.
+- [x] 24. Keep long follow-up titles and their completion controls contained inside the follow-up panel at every supported viewport.
+- [x] 25. Show reminders in Up next only when they are overdue or due within one week, with a separate review flow for future reminders.
+- [x] 26. Let every authenticated role add, edit, remove, and open named external links directly from an account.
+- [x] 27. Keep landing-zone shortcut actions compact and contained instead of stretching across the shortcut row.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
-- [ ] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
-- [ ] Re-run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests for items 20 through 27.
-- [ ] Release with Quill and deploy items 20 through 27 to production through the pinned Spacelift module.
+- [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
+- [x] Re-run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests for items 20 through 27.
+- [x] Release v0.3.1 with Quill and deploy items 20 through 27 to production through pinned Spacelift module 0.6.0.
