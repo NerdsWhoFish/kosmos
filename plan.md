@@ -57,4 +57,4 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] Run backend, API-contract, security, frontend, accessibility, and responsive browser verification for items 39 and 40.
 - [x] Release v0.3.5 and deploy items 39 and 40 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.7.0.
 - [x] Run frontend unit, build, accessibility, and responsive browser verification for item 41 across phone, tablet, laptop, and desktop viewports.
-- [ ] Release v0.3.6 and deploy item 41 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.7.0.
+- [x] Release v0.3.6 and deploy item 41 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.7.0.
