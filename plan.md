@@ -174,7 +174,7 @@ Cloud Run is stateless. Background work uses a queue because scale-to-zero insta
 
 Cloudflare configuration is also managed as code:
 
-- a Cloudflare Worker proxy and custom domain for `cast.nerdswhofish.com`
+- a Cloudflare Worker proxy and custom domain for `kosmos.nerdswhofish.com`
 - DNS records and proxied routing
 - Access policies for administrative or staging surfaces
 - rate limiting, WAF rules, and security headers where appropriate

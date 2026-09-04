@@ -88,7 +88,7 @@ run "production_service" {
     project_id                  = "kosmos-production"
     environment                 = "production"
     image_digest                = "us-east1-docker.pkg.dev/kosmos-production/kosmos/kosmos@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    public_url                  = "https://cast.nerdswhofish.com"
+    public_url                  = "https://kosmos.nerdswhofish.com"
     google_client_id            = "client.apps.googleusercontent.com"
     allowed_google_domains      = ["nerdswhofish.com", "theoutdoorprogrammer.com", "apollorion.com"]
     organization_id             = "nerds-who-fish"
@@ -192,7 +192,7 @@ run "production_service" {
   }
 
   assert {
-    condition     = length(google_monitoring_uptime_check_config.health) == 1 && google_monitoring_uptime_check_config.health[0].monitored_resource[0].labels.host == "cast.nerdswhofish.com"
+    condition     = length(google_monitoring_uptime_check_config.health) == 1 && google_monitoring_uptime_check_config.health[0].monitored_resource[0].labels.host == "kosmos.nerdswhofish.com"
     error_message = "production must monitor the public health endpoint"
   }
 
