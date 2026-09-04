@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/mail"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +24,10 @@ type GoogleProvider interface {
 	TillerRows(context.Context, *oauth2.Token, TillerSettings) ([][]any, error)
 }
 
-type LiveGoogleProvider struct{ config oauth2.Config }
+type LiveGoogleProvider struct {
+	config        oauth2.Config
+	gmailEndpoint string
+}
 
 func NewLiveGoogleProvider(clientID, clientSecret string) LiveGoogleProvider {
 	return LiveGoogleProvider{config: oauth2.Config{ClientID: clientID, ClientSecret: clientSecret, Endpoint: google.Endpoint}}
@@ -35,8 +37,16 @@ func (p LiveGoogleProvider) tokenSource(ctx context.Context, token *oauth2.Token
 	return p.config.TokenSource(ctx, token)
 }
 
+func (p LiveGoogleProvider) gmailService(ctx context.Context, token *oauth2.Token) (*gmail.Service, error) {
+	options := []option.ClientOption{option.WithTokenSource(p.tokenSource(ctx, token))}
+	if p.gmailEndpoint != "" {
+		options = append(options, option.WithEndpoint(p.gmailEndpoint))
+	}
+	return gmail.NewService(ctx, options...)
+}
+
 func (p LiveGoogleProvider) Send(ctx context.Context, token *oauth2.Token, from, to, subject, body string) (string, error) {
-	service, err := gmail.NewService(ctx, option.WithTokenSource(p.tokenSource(ctx, token)))
+	service, err := p.gmailService(ctx, token)
 	if err != nil {
 		return "", err
 	}
@@ -49,7 +59,7 @@ func (p LiveGoogleProvider) Send(ctx context.Context, token *oauth2.Token, from,
 }
 
 func (p LiveGoogleProvider) SendAsAliases(ctx context.Context, token *oauth2.Token) ([]string, error) {
-	service, err := gmail.NewService(ctx, option.WithTokenSource(p.tokenSource(ctx, token)))
+	service, err := p.gmailService(ctx, token)
 	if err != nil {
 		return nil, err
 	}
@@ -67,12 +77,11 @@ func (p LiveGoogleProvider) SendAsAliases(ctx context.Context, token *oauth2.Tok
 }
 
 func (p LiveGoogleProvider) RecentMail(ctx context.Context, token *oauth2.Token, since time.Time) ([]MailMetadata, error) {
-	service, err := gmail.NewService(ctx, option.WithTokenSource(p.tokenSource(ctx, token)))
+	service, err := p.gmailService(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	query := "in:inbox after:" + strconv.FormatInt(since.Unix(), 10)
-	listing, err := service.Users.Messages.List("me").Q(query).MaxResults(50).Do()
+	listing, err := service.Users.Messages.List("me").LabelIds("INBOX").MaxResults(50).Do()
 	if err != nil {
 		return nil, err
 	}
@@ -95,6 +104,9 @@ func (p LiveGoogleProvider) RecentMail(ctx context.Context, token *oauth2.Token,
 		}
 		if item.ReceivedAt.IsZero() {
 			item.ReceivedAt = time.UnixMilli(message.InternalDate).UTC()
+		}
+		if !item.ReceivedAt.After(since) {
+			continue
 		}
 		items = append(items, item)
 	}
