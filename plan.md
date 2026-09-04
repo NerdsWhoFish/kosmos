@@ -20,6 +20,7 @@ This checklist is the release source of truth. Check an item only after its back
 - [ ] 16. Diagnose and repair the Sender addresses `502`, with useful user-facing errors and production verification.
 - [ ] 17. Let users attach a receipt while recording a business cost and show its download link with the cost.
 - [ ] 18. Let users edit existing accounts, including adding, editing, and removing the domains tied to an account.
+- [ ] 19. Let an administrator connect the shared Google account used for Google Voice, then create, update, and optionally delete that account's Google Contacts when Kosmos contacts change.
 - [ ] Run backend unit, race, vet, API-contract, and integration tests.
 - [ ] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [ ] Release with Quill and deploy the complete checklist to production through the pinned Spacelift module.
