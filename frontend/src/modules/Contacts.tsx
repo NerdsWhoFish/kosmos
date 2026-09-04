@@ -463,7 +463,7 @@ function ContactAccount({
           <span className="account-fact-action">
             <ExternalLink size={16} />
             <small>Google Voice</small>
-            <GoogleVoiceButton phone={contact.phone} />
+            <GoogleVoiceButton phone={contact.phone} contactId={contact.id} />
           </span>
         )}
       </section>
@@ -479,6 +479,7 @@ function ContactAccount({
             <select name="kind" aria-label="Activity type">
               <option value="note">Note</option>
               <option value="call">Call</option>
+              <option value="text">Text</option>
               <option value="email">Email</option>
               <option value="meeting">Meeting</option>
             </select>

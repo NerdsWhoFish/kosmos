@@ -55,6 +55,14 @@ locals {
     KOSMOS_TASKS_QUEUE    = google_cloud_tasks_queue.jobs.name
   })
   pagination_indexes = {
+    account_events = {
+      collection = "events"
+      fields = [
+        { path = "kind", order = "ASCENDING" },
+        { path = "occurredAt", order = "DESCENDING" },
+        { path = "__name__", order = "DESCENDING" },
+      ]
+    }
     activities = {
       collection = "activities"
       fields = [

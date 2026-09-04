@@ -132,6 +132,40 @@ func TestSummaryCountsRemindersOneWeekBeforeDue(t *testing.T) {
 	}
 }
 
+func TestAccountEventsAreNewestFirstFilterableAndAttributed(t *testing.T) {
+	store := NewMemoryStore()
+	mux := http.NewServeMux()
+	NewModule(
+		store,
+		func(*http.Request) (string, error) { return "nerds-who-fish", nil },
+		WithActor(func(*http.Request) string { return "owner@nerdswhofish.com" }),
+	).RegisterRoutes(mux)
+	created := performJSON[struct {
+		Account Account `json:"account"`
+		Contact Contact `json:"contact"`
+	}](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","primaryContact":{"name":"Ada"}}`, http.StatusCreated)
+	performJSON[Opportunity](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","accountId":"`+created.Account.ID+`","stage":"qualified"}`, http.StatusCreated)
+	performJSON[Contact](t, mux, http.MethodPatch, "/api/v1/contacts/"+created.Contact.ID, `{"phone":"+15551234567"}`, http.StatusOK)
+
+	type eventResponse struct {
+		Events []AccountEvent `json:"events"`
+		Page   struct {
+			NextCursor string `json:"nextCursor"`
+		} `json:"page"`
+	}
+	first := performJSON[eventResponse](t, mux, http.MethodGet, "/api/v1/accounts/"+created.Account.ID+"/events?limit=2", "", http.StatusOK)
+	if len(first.Events) != 2 || first.Page.NextCursor == "" || first.Events[0].Action != "contact.updated" {
+		t.Fatalf("unexpected first event page: %#v", first)
+	}
+	if first.Events[0].Actor != "owner@nerdswhofish.com" {
+		t.Fatalf("event actor = %q", first.Events[0].Actor)
+	}
+	contacts := performJSON[eventResponse](t, mux, http.MethodGet, "/api/v1/accounts/"+created.Account.ID+"/events?kind=contact", "", http.StatusOK)
+	if len(contacts.Events) != 2 {
+		t.Fatalf("contact events = %#v", contacts.Events)
+	}
+}
+
 func TestContactMutationsPublishGoogleSyncEvents(t *testing.T) {
 	type mutation struct {
 		contact Contact

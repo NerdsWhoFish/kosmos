@@ -338,6 +338,7 @@ func (m *Module) linkCloudflareDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = m.audit(r.Context(), scope, actor.Email, "cloudflare.domain_linked", "account", account.ID, "Linked "+selected.DomainName+" and renewal reminders")
+	m.recordAccountEvent(r.Context(), scope, workspace.AccountEvent{ID: deterministicID("cloudflare.domain_linked|" + account.ID + "|" + selected.DomainName + "|" + renewalDate), AccountID: account.ID, Kind: "domain", Action: "cloudflare.domain_linked", Title: "Cloudflare domain linked", Summary: selected.DomainName, Actor: actor.Email, EntityType: "domain", EntityID: selected.DomainName})
 	writeJSON(w, http.StatusOK, map[string]any{"account": account, "domain": website, "reminders": savedReminders})
 }
 

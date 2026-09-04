@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Building2,
+  Clock3,
   Cloud,
   ExternalLink,
   FilePlus2,
@@ -13,14 +14,17 @@ import {
 } from "lucide-react";
 import {
   Account,
+  AccountEvent,
   AccountLink,
   api,
+  apiPage,
   CloudflareDomain,
   CloudflareStatus,
   Contact,
   Document,
   money,
   Opportunity,
+  PageMetadata,
   Website,
 } from "../api";
 import { ContactSourcePicker } from "../components/ContactSourcePicker";
@@ -47,6 +51,7 @@ export function Accounts({
 }) {
   const [items, setItems] = useState<Account[]>([]);
   const [selected, setSelected] = useState<AccountDetail | null>(null);
+  const [recentEvents, setRecentEvents] = useState<AccountEvent[]>([]);
   const [cloudflare, setCloudflare] = useState<CloudflareStatus | null>(null);
   const [domains, setDomains] = useState<CloudflareDomain[]>([]);
   const [websiteFields, setWebsiteFields] = useState([""]);
@@ -81,10 +86,20 @@ export function Accounts({
   const loadSelected = useCallback(
     (id: string) =>
       api<AccountDetail>(`/api/v1/accounts/${id}`)
-        .then(setSelected)
+        .then((detail) => {
+          setSelected(detail);
+        })
         .catch((reason: Error) => setError(reason.message)),
     [],
   );
+
+  const loadRecentEvents = useCallback((id: string) => {
+    void apiPage<{ events: AccountEvent[] }>(
+      `/api/v1/accounts/${id}/events?limit=5`,
+    )
+      .then((timeline) => setRecentEvents(timeline.events ?? []))
+      .catch(() => setRecentEvents([]));
+  }, []);
 
   useEffect(() => {
     void load();
@@ -92,10 +107,12 @@ export function Accounts({
   useEffect(() => {
     if (!route.id) {
       setSelected(null);
+      setRecentEvents([]);
       return;
     }
     void loadSelected(route.id);
-  }, [route.id, loadSelected]);
+    loadRecentEvents(route.id);
+  }, [route.id, loadRecentEvents, loadSelected]);
   useEffect(() => {
     if (!selected) return;
     if (route.action === "edit") {
@@ -200,6 +217,7 @@ export function Accounts({
           item.id === response.account.id ? response.account : item,
         ),
       );
+      loadRecentEvents(response.account.id);
       navigate(`/accounts/${response.account.id}`);
     } catch (reason) {
       setFormError(
@@ -223,6 +241,7 @@ export function Accounts({
       setItems((current) =>
         current.map((item) => (item.id === account.id ? account : item)),
       );
+      loadRecentEvents(account.id);
     } catch (reason) {
       setFormError(
         reason instanceof Error
@@ -255,6 +274,7 @@ export function Accounts({
       setItems((current) =>
         current.map((item) => (item.id === account.id ? account : item)),
       );
+      loadRecentEvents(account.id);
       navigate(`/accounts/${account.id}`);
     } catch (reason) {
       setFormError(
@@ -291,6 +311,7 @@ export function Accounts({
       setItems((current) =>
         current.map((item) => (item.id === account.id ? account : item)),
       );
+      loadRecentEvents(account.id);
       navigate(`/accounts/${account.id}`);
     } catch (reason) {
       setFormError(
@@ -337,6 +358,7 @@ export function Accounts({
         {route.action === "view" && (
           <AccountView
             detail={selected}
+            events={recentEvents}
             cloudflare={cloudflare}
             navigate={navigate}
             saving={saving}
@@ -349,6 +371,9 @@ export function Accounts({
             }
             onDelete={() => navigate(`/accounts/${selected.account.id}/delete`)}
           />
+        )}
+        {route.action === "events" && (
+          <AccountEventsPage account={selected.account} navigate={navigate} />
         )}
         {route.action === "edit" && (
           <WorkflowPage
@@ -873,6 +898,7 @@ export function Accounts({
 
 function AccountView({
   detail,
+  events,
   cloudflare,
   navigate,
   onLink,
@@ -884,6 +910,7 @@ function AccountView({
   onDelete,
 }: {
   detail: AccountDetail;
+  events: AccountEvent[];
   cloudflare: CloudflareStatus | null;
   navigate: (path: string) => void;
   onLink: () => void;
@@ -1100,6 +1127,27 @@ function AccountView({
           )}
         </div>
       </section>
+      <section className="panel account-events">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Timeline</p>
+            <h2>Recent events</h2>
+          </div>
+          <button
+            className="secondary-button"
+            onClick={() => navigate(`/accounts/${detail.account.id}/events`)}
+          >
+            View all events
+          </button>
+        </div>
+        {events.length ? (
+          <AccountEventList events={events} />
+        ) : (
+          <p className="muted-copy">
+            New account changes and customer activity will appear here.
+          </p>
+        )}
+      </section>
       <section className="panel account-documents">
         <div className="panel-heading">
           <div>
@@ -1141,6 +1189,154 @@ function AccountView({
           </p>
         )}
       </section>
+    </div>
+  );
+}
+
+const eventKinds = [
+  ["", "Everything"],
+  ["account", "Account"],
+  ["contact", "Contacts"],
+  ["opportunity", "Opportunities"],
+  ["email", "Email"],
+  ["call", "Calls"],
+  ["text", "Texts"],
+  ["activity", "Notes and meetings"],
+  ["reminder", "Reminders"],
+  ["document", "Documents"],
+  ["domain", "Domains"],
+  ["transaction", "Transactions"],
+] as const;
+
+function AccountEventsPage({
+  account,
+  navigate,
+}: {
+  account: Account;
+  navigate: (path: string) => void;
+}) {
+  const [events, setEvents] = useState<AccountEvent[]>([]);
+  const [page, setPage] = useState<PageMetadata>({});
+  const [kind, setKind] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const loadEvents = useCallback(
+    async (cursor = "", append = false) => {
+      setLoading(true);
+      setError("");
+      const query = new URLSearchParams({ limit: "20" });
+      if (kind) query.set("kind", kind);
+      if (cursor) query.set("cursor", cursor);
+      try {
+        const response = await apiPage<{
+          events: AccountEvent[];
+          page: PageMetadata;
+        }>(`/api/v1/accounts/${account.id}/events?${query}`);
+        setEvents((current) =>
+          append ? [...current, ...response.events] : response.events,
+        );
+        setPage(response.page);
+      } catch (reason) {
+        setError(
+          reason instanceof Error ? reason.message : "Could not load events",
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [account.id, kind],
+  );
+
+  useEffect(() => {
+    void loadEvents();
+  }, [loadEvents]);
+
+  return (
+    <Page
+      eyebrow="Account history"
+      title={`${account.name} events`}
+      detail="Every change and customer interaction Kosmos can tie to this account."
+      action={
+        <button
+          className="secondary-button"
+          onClick={() => navigate(`/accounts/${account.id}`)}
+        >
+          ← Back to {account.name}
+        </button>
+      }
+    >
+        <section className="panel">
+          <div className="event-toolbar">
+            <label>
+              Show
+              <select value={kind} onChange={(event) => setKind(event.target.value)}>
+                {eventKinds.map(([value, label]) => (
+                  <option value={value} key={value || "all"}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span>{events.length} shown</span>
+          </div>
+          {error ? (
+            <ErrorState message={error} retry={() => loadEvents()} />
+          ) : loading && !events.length ? (
+            <LoadingState label="Loading account events" />
+          ) : events.length ? (
+            <>
+              <AccountEventList events={events} />
+              <div className="form-actions event-actions">
+                {events.length > 20 && (
+                  <button
+                    className="secondary-button"
+                    onClick={() => loadEvents()}
+                    disabled={loading}
+                  >
+                    Show less
+                  </button>
+                )}
+                {page.nextCursor && (
+                  <button
+                    className="primary-button"
+                    onClick={() => loadEvents(page.nextCursor, true)}
+                    disabled={loading}
+                  >
+                    {loading ? "Loading..." : "Load more"}
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <EmptyState
+              title="No matching events"
+              detail="Try another event type or come back after more account activity."
+            />
+          )}
+        </section>
+    </Page>
+  );
+}
+
+function AccountEventList({ events }: { events: AccountEvent[] }) {
+  return (
+    <div className="account-event-list">
+      {events.map((event) => (
+        <article className="account-event" key={event.id}>
+          <span className="activity-icon lavender">
+            <Clock3 size={16} />
+          </span>
+          <span className="account-event-copy">
+            <strong>{event.title}</strong>
+            {event.summary && <small>{event.summary}</small>}
+            <time dateTime={event.occurredAt}>
+              {new Date(event.occurredAt).toLocaleString()} · {event.actor}
+            </time>
+          </span>
+          <span className="event-kind">{event.kind}</span>
+        </article>
+      ))}
     </div>
   );
 }

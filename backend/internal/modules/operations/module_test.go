@@ -162,13 +162,17 @@ func TestEmailTemplateCustomInputsAreValidatedAndPersisted(t *testing.T) {
 }
 
 func TestVoiceLinkSelectsSharedGoogleAccount(t *testing.T) {
-	module, mux, _ := newTestModule(t)
+	module, mux, workspaceStore := newTestModule(t)
 	const googleEmail = "shared.voice@gmail.com"
 	if err := module.store.Put(context.Background(), "nerds-who-fish", "voiceContactsConnections", voiceContactsConnectionID, VoiceContactsConnection{ID: voiceContactsConnectionID, GoogleEmail: googleEmail}); err != nil {
 		t.Fatal(err)
 	}
 
-	response := performJSON[map[string]string](t, mux, http.MethodGet, "/api/v1/voice/link?phone=%2B15551234567&mode=call", "", http.StatusOK)
+	account, contact, err := workspaceStore.CreateAccountWithContact(context.Background(), "nerds-who-fish", workspace.Account{Name: "River Labs"}, workspace.Contact{Name: "Ada", Phone: "+15551234567"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := performJSON[map[string]string](t, mux, http.MethodGet, "/api/v1/voice/link?phone=%2B15551234567&mode=call&contactId="+contact.ID, "", http.StatusOK)
 	chooser, err := url.Parse(response["googleVoiceUrl"])
 	if err != nil {
 		t.Fatal(err)
@@ -185,6 +189,10 @@ func TestVoiceLinkSelectsSharedGoogleAccount(t *testing.T) {
 	}
 	if response["googleAccount"] != googleEmail {
 		t.Fatalf("google account = %q", response["googleAccount"])
+	}
+	events, _, err := workspaceStore.ListAccountEventsPage(context.Background(), "nerds-who-fish", account.ID, pagination.Request{Limit: 10}, "call")
+	if err != nil || len(events) != 1 || events[0].Action != "google_voice.opened" {
+		t.Fatalf("voice events = %#v, %v", events, err)
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/voice/link?phone=%2B15551234567&redirect=1", nil)
@@ -237,6 +245,19 @@ func TestGoogleMailAndTillerFlow(t *testing.T) {
 	}
 	if tillerNotification == nil || tillerNotification.Href != "/operations" {
 		t.Fatalf("unexpected business operation notifications: %#v", notifications.Notifications)
+	}
+	events, _, err := workspaceStore.ListAccountEventsPage(context.Background(), "nerds-who-fish", account.ID, pagination.Request{Limit: 20}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := make(map[string]bool, len(events))
+	for _, event := range events {
+		actions[event.Action] = true
+	}
+	for _, action := range []string{"email.sent", "email.received", "transaction.imported"} {
+		if !actions[action] {
+			t.Fatalf("missing %s in account events: %#v", action, events)
+		}
 	}
 }
 

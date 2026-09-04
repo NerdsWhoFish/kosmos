@@ -334,6 +334,38 @@ paths:
           description: Account and linked workspace records deleted
         '404':
           $ref: '#/components/responses/NotFound'
+  /accounts/{id}/events:
+    get:
+      operationId: listAccountEvents
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [account, contact, opportunity, email, call, text, activity, reminder, document, domain, transaction]
+      responses:
+        '200':
+          description: Newest-first account event history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, page]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccountEvent'
+                  page:
+                    $ref: '#/components/schemas/Page'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /intake/contact:
     post:
       operationId: ingestContactForm
@@ -2004,6 +2036,35 @@ components:
           description: Documents linked to this account, sorted from newest to oldest by creation time.
           items:
             $ref: '#/components/schemas/Document'
+    AccountEvent:
+      type: object
+      required: [id, accountId, kind, action, title, summary, actor, entityType, entityId, occurredAt, createdAt]
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+        kind:
+          type: string
+          enum: [account, contact, opportunity, email, call, text, activity, reminder, document, domain, transaction]
+        action:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        actor:
+          type: string
+        entityType:
+          type: string
+        entityId:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
     Website:
       type: object
       required: [url, domain]
@@ -2132,7 +2193,7 @@ components:
           type: string
         kind:
           type: string
-          enum: [note, call, email, meeting]
+          enum: [note, call, text, email, meeting]
           default: note
         body:
           type: string

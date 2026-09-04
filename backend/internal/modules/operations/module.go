@@ -54,6 +54,7 @@ type Workspace interface {
 	GetContact(context.Context, string, string) (workspace.Contact, error)
 	CreateContact(context.Context, string, workspace.Contact) (workspace.Contact, error)
 	ListCosts(context.Context, string) ([]workspace.Cost, error)
+	CreateAccountEvent(context.Context, string, workspace.AccountEvent) (workspace.AccountEvent, error)
 }
 
 type Module struct {
@@ -666,6 +667,9 @@ func (m *Module) sendEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = m.audit(r.Context(), scope, actor.Email, "email.sent", "gmail_message", messageID, "Sent email to "+request.To)
 	_ = m.notify(r.Context(), scope, "Email sent", request.Subject, "email", "/communications", "sent:"+messageID)
+	for _, contact := range m.contactsForEmail(r.Context(), scope, request.To) {
+		m.recordAccountEvent(r.Context(), scope, workspace.AccountEvent{ID: deterministicID("email.sent|" + messageID + "|" + contact.AccountID), AccountID: contact.AccountID, Kind: "email", Action: "email.sent", Title: "Email sent to " + contact.Name, Summary: request.Subject, Actor: actor.Email, EntityType: "gmail_message", EntityID: messageID})
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": messageID, "status": "sent"})
 }
 
@@ -993,7 +997,7 @@ func (m *Module) exportRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) voiceLink(w http.ResponseWriter, r *http.Request) {
-	scope, _, ok := m.authorize(w, r)
+	scope, actor, ok := m.authorize(w, r)
 	if !ok {
 		return
 	}
@@ -1017,6 +1021,16 @@ func (m *Module) voiceLink(w http.ResponseWriter, r *http.Request) {
 		"q":        {string(query)},
 	}.Encode()
 	chooserURL := "https://accounts.google.com/AccountChooser?" + url.Values{"Email": {connection.GoogleEmail}, "continue": {voiceURL}}.Encode()
+	contactID := strings.TrimSpace(r.URL.Query().Get("contactId"))
+	mode := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("mode")))
+	if mode != "call" {
+		mode = "text"
+	}
+	if contactID != "" {
+		if contact, contactErr := m.workspace.GetContact(r.Context(), scope, contactID); contactErr == nil && contact.AccountID != "" {
+			m.recordAccountEvent(r.Context(), scope, workspace.AccountEvent{AccountID: contact.AccountID, Kind: mode, Action: "google_voice.opened", Title: "Google Voice opened for " + contact.Name, Summary: "Opened the shared Google Voice account", Actor: actor.Email, EntityType: "contact", EntityID: contact.ID})
+		}
+	}
 	if r.URL.Query().Get("redirect") == "1" {
 		http.Redirect(w, r, chooserURL, http.StatusSeeOther)
 		return
@@ -1225,6 +1239,10 @@ func (m *Module) syncEmailConnection(ctx context.Context, scope, connectionID, a
 		return 0, err
 	}
 	createdIDs := make([]string, 0, len(messages))
+	contactsByID := make(map[string]workspace.Contact, len(contacts))
+	for _, contact := range contacts {
+		contactsByID[contact.ID] = contact
+	}
 	for _, message := range messages {
 		message.ContactID = matchSender(message.From, contacts)
 		if message.ContactID == "" {
@@ -1238,6 +1256,8 @@ func (m *Module) syncEmailConnection(ctx context.Context, scope, connectionID, a
 		if err := m.notify(ctx, scope, "New prospect email", message.Subject, "email", "/communications", "gmail:"+message.ID); err != nil {
 			return len(createdIDs), err
 		}
+		contact := contactsByID[message.ContactID]
+		m.recordAccountEvent(ctx, scope, workspace.AccountEvent{ID: deterministicID("email.received|" + message.ID + "|" + contact.AccountID), AccountID: contact.AccountID, Kind: "email", Action: "email.received", Title: "Email received from " + contact.Name, Summary: message.Subject, Actor: actor, EntityType: "gmail_message", EntityID: message.ID, OccurredAt: message.ReceivedAt})
 		createdIDs = append(createdIDs, message.ID)
 	}
 	now := time.Now().UTC()
@@ -1283,6 +1303,9 @@ func (m *Module) syncTillerConnection(ctx context.Context, scope, connectionID, 
 			return len(createdIDs), len(transactions), err
 		}
 		createdIDs = append(createdIDs, item.ID)
+		if item.AccountID != "" {
+			m.recordAccountEvent(ctx, scope, workspace.AccountEvent{ID: deterministicID("transaction.imported|" + item.ID), AccountID: item.AccountID, Kind: "transaction", Action: "transaction.imported", Title: "Transaction imported", Summary: item.Description, Actor: actor, EntityType: "transaction", EntityID: item.ID})
+		}
 	}
 	if len(createdIDs) > 0 {
 		sort.Strings(createdIDs)
@@ -1306,6 +1329,31 @@ func (m *Module) auditJob(ctx context.Context, scope, actor, action, entityType,
 		return nil
 	} else {
 		return err
+	}
+}
+
+func (m *Module) contactsForEmail(ctx context.Context, scope, email string) []workspace.Contact {
+	contacts, err := m.workspace.ListContacts(ctx, scope)
+	if err != nil {
+		slog.ErrorContext(ctx, "account event contact lookup failed", "error", err)
+		return nil
+	}
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	result := make([]workspace.Contact, 0, 1)
+	for _, contact := range contacts {
+		if contact.AccountID != "" && strings.EqualFold(strings.TrimSpace(contact.Email), normalized) {
+			result = append(result, contact)
+		}
+	}
+	return result
+}
+
+func (m *Module) recordAccountEvent(ctx context.Context, scope string, event workspace.AccountEvent) {
+	if event.AccountID == "" {
+		return
+	}
+	if _, err := m.workspace.CreateAccountEvent(ctx, scope, event); err != nil {
+		slog.ErrorContext(ctx, "account event save failed", "account.id", event.AccountID, "event.action", event.Action, "error", err)
 	}
 }
 

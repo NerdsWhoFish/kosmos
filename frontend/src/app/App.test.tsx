@@ -356,6 +356,29 @@ function mockAPI(authenticated = true) {
         return Promise.resolve(json({ ...account, ...body }));
       if (url.pathname === "/api/v1/accounts/account-1" && method === "DELETE")
         return Promise.resolve(new Response(null, { status: 204 }));
+      if (/^\/api\/v1\/accounts\/account-[12]\/events$/.test(url.pathname))
+        return Promise.resolve(
+          json({
+            events: [
+              {
+                id: "event-1",
+                accountId: url.pathname.includes("account-2")
+                  ? "account-2"
+                  : "account-1",
+                kind: "email",
+                action: "email.received",
+                title: "Email received from Ada",
+                summary: "Website renewal",
+                actor: user.email,
+                entityType: "gmail_message",
+                entityId: "mail-1",
+                occurredAt: "2026-09-04T12:00:00Z",
+                createdAt: "2026-09-04T12:00:00Z",
+              },
+            ],
+            page: { limit: 20, nextCursor: "" },
+          }),
+        );
       if (url.pathname === "/api/v1/accounts/account-2")
         return Promise.resolve(
           json({
@@ -1568,7 +1591,7 @@ describe("Kosmos application", () => {
     });
     expect(voiceLink).toHaveAttribute(
       "href",
-      `/api/v1/voice/link?phone=${encodeURIComponent(contact.phone)}&mode=message&redirect=1`,
+      `/api/v1/voice/link?phone=${encodeURIComponent(contact.phone)}&mode=message&redirect=1&contactId=${contact.id}`,
     );
   });
 
@@ -2093,5 +2116,67 @@ describe("Kosmos application", () => {
     expect(
       screen.getByRole("heading", { name: /domain inventory connected/i }),
     ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["desktop", 1440],
+    ["mobile", 390],
+  ])("shows recent and filterable account events on %s", async (_name, width) => {
+    window.innerWidth = width;
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Accounts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /river labs/i }));
+    expect(await screen.findByText("Email received from Ada")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /view all events/i }));
+    expect(
+      await screen.findByRole("heading", { name: /river labs events/i }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: /show/i }), {
+      target: { value: "email" },
+    });
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([input]) => String(input).includes("kind=email")),
+      ).toBe(true),
+    );
+  });
+
+  it("keeps unread notification copy on distinct lines", async () => {
+    const original = responses["/api/v1/notifications"];
+    responses["/api/v1/notifications"] = {
+      notifications: [
+        {
+          id: "notification-1",
+          title: "Email sent",
+          summary: "Your domain is going to expire with NerdsWhoFish",
+          kind: "email",
+          href: "/communications",
+          createdAt: "2026-09-04T12:00:00Z",
+        },
+      ],
+    };
+    try {
+      mockAPI();
+      render(<App />);
+      await screen.findByRole("heading", {
+        name: /good (morning|afternoon|evening)/i,
+      });
+      fireEvent.click(screen.getByRole("link", { name: "Inbox" }));
+      const summary = await screen.findByText(
+        "Your domain is going to expire with NerdsWhoFish",
+      );
+      expect(summary.parentElement).toHaveClass("notification-copy");
+      expect(
+        screen.getByRole("button", { name: /mark read/i }),
+      ).toBeInTheDocument();
+    } finally {
+      responses["/api/v1/notifications"] = original;
+    }
   });
 });

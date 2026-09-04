@@ -213,6 +213,7 @@ func TestOpenAPIPaginatedListResponseSchemas(t *testing.T) {
 		itemSchema string
 	}{
 		"/accounts":                 {"accounts", "Account"},
+		"/accounts/{id}/events":     {"events", "AccountEvent"},
 		"/activities":               {"activities", "Activity"},
 		"/attachments":              {"attachments", "Attachment"},
 		"/audit":                    {"entries", "AuditEntry"},

@@ -10,12 +10,14 @@ import (
 )
 
 type ScopeFunc func(*http.Request) (string, error)
+type ActorFunc func(*http.Request) string
 type ContactMutationFunc func(context.Context, string, Contact, string) error
 type CostDeletionFunc func(context.Context, string, string) error
 
 type Module struct {
 	store           Store
 	scope           ScopeFunc
+	actor           ActorFunc
 	contactMutation ContactMutationFunc
 	costDeletion    CostDeletionFunc
 }
@@ -26,12 +28,16 @@ func WithContactMutation(handler ContactMutationFunc) ModuleOption {
 	return func(module *Module) { module.contactMutation = handler }
 }
 
+func WithActor(handler ActorFunc) ModuleOption {
+	return func(module *Module) { module.actor = handler }
+}
+
 func WithCostDeletion(handler CostDeletionFunc) ModuleOption {
 	return func(module *Module) { module.costDeletion = handler }
 }
 
 func NewModule(store Store, scope ScopeFunc, options ...ModuleOption) Module {
-	module := Module{store: store, scope: scope}
+	module := Module{store: store, scope: scope, actor: func(*http.Request) string { return "workspace" }}
 	for _, option := range options {
 		option(&module)
 	}
@@ -113,6 +119,20 @@ type Activity struct {
 	Body          string    `json:"body" firestore:"body"`
 	OccurredAt    time.Time `json:"occurredAt" firestore:"occurredAt"`
 	CreatedAt     time.Time `json:"createdAt" firestore:"createdAt"`
+}
+
+type AccountEvent struct {
+	ID         string    `json:"id" firestore:"-"`
+	AccountID  string    `json:"accountId" firestore:"accountId"`
+	Kind       string    `json:"kind" firestore:"kind"`
+	Action     string    `json:"action" firestore:"action"`
+	Title      string    `json:"title" firestore:"title"`
+	Summary    string    `json:"summary" firestore:"summary"`
+	Actor      string    `json:"actor" firestore:"actor"`
+	EntityType string    `json:"entityType" firestore:"entityType"`
+	EntityID   string    `json:"entityId" firestore:"entityId"`
+	OccurredAt time.Time `json:"occurredAt" firestore:"occurredAt"`
+	CreatedAt  time.Time `json:"createdAt" firestore:"createdAt"`
 }
 
 type Reminder struct {
@@ -234,6 +254,8 @@ type Store interface {
 	CreateAccountWithContact(context.Context, string, Account, Contact) (Account, Contact, error)
 	UpdateAccount(context.Context, string, string, AccountPatch) (Account, error)
 	DeleteAccount(context.Context, string, string) ([]Contact, error)
+	CreateAccountEvent(context.Context, string, AccountEvent) (AccountEvent, error)
+	ListAccountEventsPage(context.Context, string, string, pagination.Request, string) ([]AccountEvent, pagination.Metadata, error)
 	LinkWebsiteRenewal(context.Context, string, string, Website, []Reminder) (Account, []Reminder, error)
 	ListContacts(context.Context, string) ([]Contact, error)
 	GetContact(context.Context, string, string) (Contact, error)

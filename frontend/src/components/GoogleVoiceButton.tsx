@@ -2,14 +2,17 @@ import { PhoneCall } from "lucide-react";
 
 export function GoogleVoiceButton({
   phone,
+  contactId,
   mode = "message",
   className = "secondary-button",
 }: {
   phone: string;
+  contactId?: string;
   mode?: "call" | "message";
   className?: string;
 }) {
   const query = new URLSearchParams({ phone, mode, redirect: "1" });
+  if (contactId) query.set("contactId", contactId);
 
   return (
     <span className="voice-link-action">

@@ -835,7 +835,11 @@ export function Communications({
                 </button>
               </>
             )}
-            <GoogleVoiceButton phone={phone} className="primary-button" />
+            <GoogleVoiceButton
+              phone={phone}
+              contactId={voiceContactID || undefined}
+              className="primary-button"
+            />
           </div>
         </div>
         <div className="panel">
@@ -851,7 +855,7 @@ export function Communications({
                   <span className="activity-icon lavender">
                     <MessageSquareText size={16} />
                   </span>
-                  <span>
+                  <span className="notification-copy">
                     <strong>{item.title}</strong>
                     <small>{item.summary}</small>
                     <time>{shortDate(item.createdAt)}</time>

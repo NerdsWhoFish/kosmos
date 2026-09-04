@@ -75,8 +75,21 @@ export type Activity = {
   id: string;
   contactId: string;
   opportunityId: string;
-  kind: "note" | "call" | "email" | "meeting";
+  kind: "note" | "call" | "text" | "email" | "meeting";
   body: string;
+  occurredAt: string;
+  createdAt: string;
+};
+export type AccountEvent = {
+  id: string;
+  accountId: string;
+  kind: string;
+  action: string;
+  title: string;
+  summary: string;
+  actor: string;
+  entityType: string;
+  entityId: string;
   occurredAt: string;
   createdAt: string;
 };
@@ -297,7 +310,7 @@ export type ModuleManifest = {
 export type AcceptedJob = { id: string; status: "accepted" };
 
 type APIError = { error?: string | { message?: string } };
-type PageMetadata = { nextCursor?: string };
+export type PageMetadata = { limit?: number; nextCursor?: string };
 type PaginatedBody = Record<string, unknown> & { page: PageMetadata };
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -316,6 +329,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const firstPage = await fetchJSON<T>(path, request);
   if (method !== "GET") return firstPage;
   return collectPages(path, request, firstPage);
+}
+
+export async function apiPage<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  return fetchJSON<T>(path, { ...init, headers });
 }
 
 async function fetchJSON<T>(path: string, init: RequestInit): Promise<T> {

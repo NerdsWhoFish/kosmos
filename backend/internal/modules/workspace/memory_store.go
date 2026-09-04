@@ -15,6 +15,7 @@ import (
 
 type memoryWorkspace struct {
 	accounts          []Account
+	accountEvents     []AccountEvent
 	contacts          []Contact
 	contactSources    []ContactSource
 	opportunities     []Opportunity
@@ -172,8 +173,53 @@ func (s *MemoryStore) DeleteAccount(_ context.Context, scope, id string) ([]Cont
 		}
 	}
 	workspace.documentRevisions = keptRevisions
+	keptEvents := workspace.accountEvents[:0]
+	for _, event := range workspace.accountEvents {
+		if event.AccountID != id {
+			keptEvents = append(keptEvents, event)
+		}
+	}
+	workspace.accountEvents = keptEvents
 	workspace.accounts = append(workspace.accounts[:accountIndex], workspace.accounts[accountIndex+1:]...)
 	return deletedContacts, nil
+}
+
+func (s *MemoryStore) CreateAccountEvent(_ context.Context, scope string, item AccountEvent) (AccountEvent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspace(scope)
+	if item.ID != "" {
+		for _, existing := range workspace.accountEvents {
+			if existing.ID == item.ID && existing.AccountID == item.AccountID {
+				return existing, nil
+			}
+		}
+	} else {
+		id, err := newID()
+		if err != nil {
+			return AccountEvent{}, err
+		}
+		item.ID = id
+	}
+	now := time.Now().UTC()
+	if item.OccurredAt.IsZero() {
+		item.OccurredAt = now
+	}
+	item.CreatedAt = now
+	workspace.accountEvents = append(workspace.accountEvents, item)
+	return item, nil
+}
+
+func (s *MemoryStore) ListAccountEventsPage(_ context.Context, scope, accountID string, request pagination.Request, kind string) ([]AccountEvent, pagination.Metadata, error) {
+	s.mu.Lock()
+	items := append([]AccountEvent(nil), s.workspace(scope).accountEvents...)
+	s.mu.Unlock()
+	spec := pagination.Spec{Key: "workspace.account-events:" + accountID + ":" + kind, OrderBy: "occurredAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue, Filters: []pagination.Filter{{Field: "accountId", Value: accountID}}}
+	if kind != "" {
+		spec.Filters = append(spec.Filters, pagination.Filter{Field: "kind", Value: kind})
+	}
+	metadata, err := pagination.Apply(&items, request, spec)
+	return items, metadata, err
 }
 
 func remainingAccountLinks(links []RecordLink, accountID string, contactIDs, opportunityIDs map[string]struct{}) []RecordLink {

@@ -24,6 +24,7 @@ func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/accounts", m.listAccounts)
 	mux.HandleFunc("POST /api/v1/accounts", m.createAccount)
 	mux.HandleFunc("GET /api/v1/accounts/{id}", m.getAccount)
+	mux.HandleFunc("GET /api/v1/accounts/{id}/events", m.listAccountEvents)
 	mux.HandleFunc("PATCH /api/v1/accounts/{id}", m.updateAccount)
 	mux.HandleFunc("DELETE /api/v1/accounts/{id}", m.deleteAccount)
 	mux.HandleFunc("GET /api/v1/leads", m.listLeads)
@@ -84,6 +85,9 @@ func (m Module) createAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.PrimaryContact == nil {
 		created, err := m.store.CreateAccount(r.Context(), scope, request.Account)
+		if err == nil {
+			m.recordAccountEvent(r, scope, AccountEvent{AccountID: created.ID, Kind: "account", Action: "account.created", Title: "Account created", Summary: created.Name, EntityType: "account", EntityID: created.ID})
+		}
 		respondCreated(w, map[string]any{"account": created, "contact": nil}, err, "account_save_failed", "Could not save account")
 		return
 	}
@@ -99,6 +103,8 @@ func (m Module) createAccount(w http.ResponseWriter, r *http.Request) {
 	account, contact, err := m.store.CreateAccountWithContact(r.Context(), scope, request.Account, *request.PrimaryContact)
 	if err == nil {
 		m.publishContactMutation(r.Context(), scope, contact, "upsert")
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: account.ID, Kind: "account", Action: "account.created", Title: "Account created", Summary: account.Name, EntityType: "account", EntityID: account.ID})
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: account.ID, Kind: "contact", Action: "contact.created", Title: "Contact added", Summary: contact.Name, EntityType: "contact", EntityID: contact.ID})
 	}
 	respondCreated(w, map[string]any{"account": account, "contact": contact}, err, "account_save_failed", "Could not save account and contact")
 }
@@ -178,7 +184,41 @@ func (m Module) updateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, err := m.store.UpdateAccount(r.Context(), scope, r.PathValue("id"), patch)
+	if err == nil {
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: updated.ID, Kind: "account", Action: "account.updated", Title: "Account updated", Summary: updated.Name, EntityType: "account", EntityID: updated.ID})
+	}
 	respondUpdated(w, updated, err, "account_not_found", "Account not found", "account_save_failed", "Could not save account")
+}
+
+func (m Module) listAccountEvents(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	accountID := r.PathValue("id")
+	if _, err := m.store.GetAccount(r.Context(), scope, accountID); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "account_not_found", "Account not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "account_events_load_failed", "Could not load account events")
+		return
+	}
+	page, err := pagination.Parse(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", err.Error())
+		return
+	}
+	kind := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("kind")))
+	if kind != "" && !contains([]string{"account", "contact", "opportunity", "email", "call", "text", "activity", "reminder", "document", "domain", "transaction"}, kind) {
+		writeError(w, http.StatusBadRequest, "invalid_event_kind", "Choose a valid event type")
+		return
+	}
+	events, metadata, err := m.store.ListAccountEventsPage(r.Context(), scope, accountID, page, kind)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "account_events_load_failed", "Could not load account events")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "page": metadata})
 }
 
 func (m Module) deleteAccount(w http.ResponseWriter, r *http.Request) {
@@ -261,6 +301,7 @@ func (m Module) createContact(w http.ResponseWriter, r *http.Request) {
 	created, err := m.store.CreateContact(r.Context(), scope, contact)
 	if err == nil {
 		m.publishContactMutation(r.Context(), scope, created, "upsert")
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: created.AccountID, Kind: "contact", Action: "contact.created", Title: "Contact added", Summary: created.Name, EntityType: "contact", EntityID: created.ID})
 	}
 	respondCreated(w, created, err, "contact_save_failed", "Could not save contact")
 }
@@ -268,6 +309,15 @@ func (m Module) createContact(w http.ResponseWriter, r *http.Request) {
 func (m Module) updateContact(w http.ResponseWriter, r *http.Request) {
 	scope, ok := m.requireScope(w, r)
 	if !ok {
+		return
+	}
+	existing, err := m.store.GetContact(r.Context(), scope, r.PathValue("id"))
+	if errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "contact_not_found", "Contact not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "contact_save_failed", "Could not save contact")
 		return
 	}
 	var patch ContactPatch
@@ -294,6 +344,10 @@ func (m Module) updateContact(w http.ResponseWriter, r *http.Request) {
 	updated, err := m.store.UpdateContact(r.Context(), scope, r.PathValue("id"), patch)
 	if err == nil {
 		m.publishContactMutation(r.Context(), scope, updated, "upsert")
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: updated.AccountID, Kind: "contact", Action: "contact.updated", Title: "Contact updated", Summary: updated.Name, EntityType: "contact", EntityID: updated.ID})
+		if existing.AccountID != "" && existing.AccountID != updated.AccountID {
+			m.recordAccountEvent(r, scope, AccountEvent{AccountID: existing.AccountID, Kind: "contact", Action: "contact.moved", Title: "Contact moved to another account", Summary: updated.Name, EntityType: "contact", EntityID: updated.ID})
+		}
 	}
 	respondUpdated(w, updated, err, "contact_not_found", "Contact not found", "contact_save_failed", "Could not save contact")
 }
@@ -320,6 +374,7 @@ func (m Module) deleteContact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.publishContactMutation(r.Context(), scope, contact, "delete")
+	m.recordAccountEvent(r, scope, AccountEvent{AccountID: contact.AccountID, Kind: "contact", Action: "contact.deleted", Title: "Contact removed", Summary: contact.Name, EntityType: "contact", EntityID: contact.ID})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -330,6 +385,58 @@ func (m Module) publishContactMutation(ctx context.Context, scope string, contac
 	if err := m.contactMutation(ctx, scope, contact, action); err != nil {
 		slog.ErrorContext(ctx, "Google contact mutation enqueue failed", "contact.id", contact.ID, "contact.action", action)
 	}
+}
+
+func (m Module) recordAccountEvent(r *http.Request, scope string, event AccountEvent) {
+	if event.AccountID == "" {
+		return
+	}
+	event.Actor = m.actor(r)
+	if _, err := m.store.CreateAccountEvent(r.Context(), scope, event); err != nil {
+		slog.ErrorContext(r.Context(), "account event save failed", "account.id", event.AccountID, "event.action", event.Action, "error", err)
+	}
+}
+
+func (m Module) accountIDForActivity(ctx context.Context, scope string, activity Activity) string {
+	if activity.OpportunityID != "" {
+		if opportunity, err := m.store.GetOpportunity(ctx, scope, activity.OpportunityID); err == nil {
+			return opportunity.AccountID
+		}
+	}
+	if activity.ContactID != "" {
+		if contact, err := m.store.GetContact(ctx, scope, activity.ContactID); err == nil {
+			return contact.AccountID
+		}
+	}
+	return ""
+}
+
+func (m Module) accountIDForReminder(ctx context.Context, scope string, reminder Reminder) string {
+	if reminder.AccountID != "" {
+		return reminder.AccountID
+	}
+	if reminder.ContactID != "" {
+		if contact, err := m.store.GetContact(ctx, scope, reminder.ContactID); err == nil {
+			return contact.AccountID
+		}
+	}
+	return ""
+}
+
+func (m Module) recordDocumentEvent(r *http.Request, scope string, document Document, action, title string) {
+	for _, accountID := range linkedAccountIDs(document) {
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: accountID, Kind: "document", Action: action, Title: title, Summary: document.Title, EntityType: "document", EntityID: document.ID})
+	}
+}
+
+func linkedAccountIDs(document Document) []string {
+	result := make([]string, 0)
+	for _, link := range document.Links {
+		if link.Type == "account" && link.ID != "" && !contains(result, link.ID) {
+			result = append(result, link.ID)
+		}
+	}
+	return result
 }
 
 func (m Module) listContactSources(w http.ResponseWriter, r *http.Request) {
@@ -458,6 +565,9 @@ func (m Module) createOpportunity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := m.store.CreateOpportunity(r.Context(), scope, item)
+	if err == nil {
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: created.AccountID, Kind: "opportunity", Action: "opportunity.created", Title: "Opportunity added", Summary: created.Name, EntityType: "opportunity", EntityID: created.ID})
+	}
 	respondCreated(w, created, err, "opportunity_save_failed", "Could not save opportunity")
 }
 
@@ -500,12 +610,30 @@ func (m Module) updateOpportunity(w http.ResponseWriter, r *http.Request) {
 		patch.AccountID = &candidate.AccountID
 	}
 	updated, err := m.store.UpdateOpportunity(r.Context(), scope, r.PathValue("id"), patch)
+	if err == nil {
+		action, title := "opportunity.updated", "Opportunity updated"
+		if updated.Stage != existing.Stage {
+			action, title = "opportunity.stage_changed", "Opportunity moved to "+updated.Stage
+		}
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: updated.AccountID, Kind: "opportunity", Action: action, Title: title, Summary: updated.Name, EntityType: "opportunity", EntityID: updated.ID})
+		if existing.AccountID != "" && existing.AccountID != updated.AccountID {
+			m.recordAccountEvent(r, scope, AccountEvent{AccountID: existing.AccountID, Kind: "opportunity", Action: "opportunity.moved", Title: "Opportunity moved to another account", Summary: updated.Name, EntityType: "opportunity", EntityID: updated.ID})
+		}
+	}
 	respondUpdated(w, updated, err, "opportunity_not_found", "Opportunity not found", "opportunity_save_failed", "Could not save opportunity")
 }
 
 func (m Module) deleteOpportunity(w http.ResponseWriter, r *http.Request) {
 	scope, ok := m.requireScope(w, r)
 	if !ok {
+		return
+	}
+	existing, err := m.store.GetOpportunity(r.Context(), scope, r.PathValue("id"))
+	if errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "opportunity_not_found", "Opportunity not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "opportunity_delete_failed", "Could not delete opportunity")
 		return
 	}
 	if err := m.store.DeleteOpportunity(r.Context(), scope, r.PathValue("id")); errors.Is(err, errNotFound) {
@@ -515,6 +643,7 @@ func (m Module) deleteOpportunity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "opportunity_delete_failed", "Could not delete opportunity")
 		return
 	}
+	m.recordAccountEvent(r, scope, AccountEvent{AccountID: existing.AccountID, Kind: "opportunity", Action: "opportunity.deleted", Title: "Opportunity removed", Summary: existing.Name, EntityType: "opportunity", EntityID: existing.ID})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -571,11 +700,19 @@ func (m Module) createActivity(w http.ResponseWriter, r *http.Request) {
 	if item.OccurredAt.IsZero() {
 		item.OccurredAt = time.Now().UTC()
 	}
-	if item.Body == "" || len(item.Body) > 4000 || !contains([]string{"note", "call", "email", "meeting"}, item.Kind) {
+	if item.Body == "" || len(item.Body) > 4000 || !contains([]string{"note", "call", "text", "email", "meeting"}, item.Kind) {
 		writeError(w, http.StatusBadRequest, "invalid_activity", "Add a note of 4,000 characters or fewer")
 		return
 	}
 	created, err := m.store.CreateActivity(r.Context(), scope, item)
+	if err == nil {
+		accountID := m.accountIDForActivity(r.Context(), scope, created)
+		kind := created.Kind
+		if !contains([]string{"call", "text", "email"}, kind) {
+			kind = "activity"
+		}
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: accountID, Kind: kind, Action: "activity.created", Title: strings.ToUpper(created.Kind[:1]) + created.Kind[1:] + " recorded", Summary: created.Body, EntityType: "activity", EntityID: created.ID, OccurredAt: created.OccurredAt})
+	}
 	respondCreated(w, created, err, "activity_save_failed", "Could not save activity")
 }
 
@@ -606,6 +743,10 @@ func (m Module) createReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := m.store.CreateReminder(r.Context(), scope, item)
+	if err == nil {
+		accountID := m.accountIDForReminder(r.Context(), scope, created)
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: accountID, Kind: "reminder", Action: "reminder.created", Title: "Reminder added", Summary: created.Title, EntityType: "reminder", EntityID: created.ID})
+	}
 	respondCreated(w, created, err, "reminder_save_failed", "Could not save reminder")
 }
 
@@ -624,6 +765,16 @@ func (m Module) updateReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, err := m.store.UpdateReminder(r.Context(), scope, r.PathValue("id"), patch)
+	if err == nil {
+		action, title := "reminder.updated", "Reminder updated"
+		if patch.Completed != nil {
+			action, title = "reminder.completed", "Reminder completed"
+			if !*patch.Completed {
+				action, title = "reminder.reopened", "Reminder reopened"
+			}
+		}
+		m.recordAccountEvent(r, scope, AccountEvent{AccountID: m.accountIDForReminder(r.Context(), scope, updated), Kind: "reminder", Action: action, Title: title, Summary: updated.Title, EntityType: "reminder", EntityID: updated.ID})
+	}
 	respondUpdated(w, updated, err, "reminder_not_found", "Reminder not found", "reminder_save_failed", "Could not save reminder")
 }
 
@@ -650,6 +801,9 @@ func (m Module) createDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := m.store.CreateDocument(r.Context(), scope, item)
+	if err == nil {
+		m.recordDocumentEvent(r, scope, created, "document.created", "Document added")
+	}
 	respondCreated(w, created, err, "document_save_failed", "Could not save document")
 }
 
@@ -679,8 +833,10 @@ func (m Module) updateDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "document_save_failed", "Could not save document")
 		return
 	}
+	var existing Document
 	for _, current := range documents {
 		if current.ID == r.PathValue("id") {
+			existing = current
 			_, err = m.store.CreateDocumentRevision(r.Context(), scope, DocumentRevision{DocumentID: current.ID, Title: current.Title, Body: current.Body, Links: current.Links, Revision: current.Revision})
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "document_save_failed", "Could not save document history")
@@ -690,6 +846,14 @@ func (m Module) updateDocument(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	updated, err := m.store.UpdateDocument(r.Context(), scope, r.PathValue("id"), patch)
+	if err == nil {
+		m.recordDocumentEvent(r, scope, updated, "document.updated", "Document updated")
+		for _, accountID := range linkedAccountIDs(existing) {
+			if !contains(linkedAccountIDs(updated), accountID) {
+				m.recordAccountEvent(r, scope, AccountEvent{AccountID: accountID, Kind: "document", Action: "document.unlinked", Title: "Document unlinked", Summary: updated.Title, EntityType: "document", EntityID: updated.ID})
+			}
+		}
+	}
 	respondUpdated(w, updated, err, "document_not_found", "Document not found", "document_save_failed", "Could not save document")
 }
 
@@ -698,6 +862,18 @@ func (m Module) deleteDocument(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	documents, err := m.store.ListDocuments(r.Context(), scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "document_delete_failed", "Could not delete document")
+		return
+	}
+	var existing Document
+	for _, document := range documents {
+		if document.ID == r.PathValue("id") {
+			existing = document
+			break
+		}
+	}
 	if err := m.store.DeleteDocument(r.Context(), scope, r.PathValue("id")); errors.Is(err, errNotFound) {
 		writeError(w, http.StatusNotFound, "document_not_found", "Document not found")
 		return
@@ -705,6 +881,7 @@ func (m Module) deleteDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "document_delete_failed", "Could not delete document")
 		return
 	}
+	m.recordDocumentEvent(r, scope, existing, "document.deleted", "Document removed")
 	w.WriteHeader(http.StatusNoContent)
 }
 

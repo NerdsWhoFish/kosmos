@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/workspace"
 )
 
 const tillerWebhookConnectionID = "default"
@@ -237,6 +239,7 @@ func (m *Module) receiveTillerWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		created++
 		_ = m.notify(r.Context(), m.publicScope, "Customer purchase", description, "transaction", "/operations", "tiller-purchase:"+id)
+		m.recordAccountEvent(r.Context(), m.publicScope, workspace.AccountEvent{ID: deterministicID("tiller.purchase_imported|" + id), AccountID: mapping.AccountID, Kind: "transaction", Action: "tiller.purchase_imported", Title: "Customer purchase", Summary: description, Actor: "tiller-webhook", EntityType: "transaction", EntityID: id, OccurredAt: envelope.CreatedAt})
 	}
 	if created > 0 {
 		_ = m.audit(r.Context(), m.publicScope, "tiller-webhook", "tiller.purchase_imported", "order", envelope.Data.OrderID, fmt.Sprintf("Recorded %d mapped purchase transactions", created))

@@ -140,6 +140,13 @@ func main() {
 			workspace.NewModule(
 				workspaceStore,
 				scope,
+				workspace.WithActor(func(r *http.Request) string {
+					_, actor, err := identity(r)
+					if err != nil {
+						return "workspace"
+					}
+					return actor.Email
+				}),
 				workspace.WithContactMutation(func(ctx context.Context, scope string, contact workspace.Contact, action string) error {
 					return operationsModule.EnqueueGoogleContactMutation(ctx, scope, contact, action, "workspace")
 				}),

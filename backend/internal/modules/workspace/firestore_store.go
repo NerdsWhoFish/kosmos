@@ -28,6 +28,10 @@ func (s *FirestoreStore) collection(scope, name string) *firestore.CollectionRef
 	return s.client.Collection("organizations").Doc(scope).Collection(name)
 }
 
+func (s *FirestoreStore) accountEvents(scope, accountID string) *firestore.CollectionRef {
+	return s.collection(scope, "accounts").Doc(accountID).Collection("events")
+}
+
 func (s *FirestoreStore) ListPage(ctx context.Context, scope, collection string, request pagination.Request, spec pagination.Spec, target any) (pagination.Metadata, error) {
 	return firestorepage.List(ctx, s.collection(scope, collection), request, spec, target)
 }
@@ -230,6 +234,19 @@ func (s *FirestoreStore) DeleteAccount(ctx context.Context, scope, id string) ([
 	if err != nil {
 		return nil, err
 	}
+	eventIter := s.accountEvents(scope, id).Documents(ctx)
+	defer eventIter.Stop()
+	eventRefs := make([]*firestore.DocumentRef, 0)
+	for {
+		event, eventErr := eventIter.Next()
+		if errors.Is(eventErr, iterator.Done) {
+			break
+		}
+		if eventErr != nil {
+			return nil, eventErr
+		}
+		eventRefs = append(eventRefs, event.Ref)
+	}
 
 	deletedContacts := make([]Contact, 0)
 	contactIDs := make(map[string]struct{})
@@ -319,12 +336,66 @@ func (s *FirestoreStore) DeleteAccount(ctx context.Context, scope, id string) ([
 			}
 		}
 	}
+	for _, ref := range eventRefs {
+		batch.Delete(ref)
+		writeCount++
+		if writeCount == batchLimit {
+			if err := commit(); err != nil {
+				return nil, err
+			}
+		}
+	}
 	batch.Delete(accountRef)
 	writeCount++
 	if err := commit(); err != nil {
 		return nil, err
 	}
 	return deletedContacts, nil
+}
+
+func (s *FirestoreStore) CreateAccountEvent(ctx context.Context, scope string, item AccountEvent) (AccountEvent, error) {
+	ctx, span := otel.Tracer("github.com/NerdsWhoFish/kosmos/workspace").Start(ctx, "firestore.account_event.create")
+	defer span.End()
+	collection := s.accountEvents(scope, item.AccountID)
+	document := collection.NewDoc()
+	if item.ID != "" {
+		document = collection.Doc(item.ID)
+	} else {
+		item.ID = document.ID
+	}
+	now := time.Now().UTC()
+	if item.OccurredAt.IsZero() {
+		item.OccurredAt = now
+	}
+	item.CreatedAt = now
+	if _, err := document.Create(ctx, item); status.Code(err) == codes.AlreadyExists {
+		snapshot, getErr := document.Get(ctx)
+		if getErr != nil {
+			span.RecordError(getErr)
+			return AccountEvent{}, getErr
+		}
+		var existing AccountEvent
+		if getErr := snapshot.DataTo(&existing); getErr != nil {
+			span.RecordError(getErr)
+			return AccountEvent{}, getErr
+		}
+		existing.ID = document.ID
+		return existing, nil
+	} else if err != nil {
+		span.RecordError(err)
+		return AccountEvent{}, err
+	}
+	return item, nil
+}
+
+func (s *FirestoreStore) ListAccountEventsPage(ctx context.Context, scope, accountID string, request pagination.Request, kind string) ([]AccountEvent, pagination.Metadata, error) {
+	items := make([]AccountEvent, 0)
+	spec := pagination.Spec{Key: "workspace.account-events:" + accountID + ":" + kind, OrderBy: "occurredAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue}
+	if kind != "" {
+		spec.Filters = []pagination.Filter{{Field: "kind", Value: kind}}
+	}
+	metadata, err := firestorepage.List(ctx, s.accountEvents(scope, accountID), request, spec, &items)
+	return items, metadata, err
 }
 
 func (s *FirestoreStore) LinkWebsiteRenewal(ctx context.Context, scope, id string, website Website, reminders []Reminder) (Account, []Reminder, error) {
