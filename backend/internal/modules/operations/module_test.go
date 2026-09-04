@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -16,9 +17,13 @@ import (
 )
 
 type fakeGoogle struct {
-	mail []MailMetadata
-	rows [][]any
-	sent *int
+	mail        []MailMetadata
+	rows        [][]any
+	sent        *int
+	mailCalls   *int
+	tillerCalls *int
+	mailErr     error
+	tillerErr   error
 }
 
 func (f fakeGoogle) Send(context.Context, *oauth2.Token, string, string, string) (string, error) {
@@ -29,11 +34,17 @@ func (f fakeGoogle) Send(context.Context, *oauth2.Token, string, string, string)
 }
 
 func (f fakeGoogle) RecentMail(context.Context, *oauth2.Token, time.Time) ([]MailMetadata, error) {
-	return f.mail, nil
+	if f.mailCalls != nil {
+		(*f.mailCalls)++
+	}
+	return f.mail, f.mailErr
 }
 
 func (f fakeGoogle) TillerRows(context.Context, *oauth2.Token, TillerSettings) ([][]any, error) {
-	return f.rows, nil
+	if f.tillerCalls != nil {
+		(*f.tillerCalls)++
+	}
+	return f.rows, f.tillerErr
 }
 
 func newTestModule(t *testing.T) (*Module, *http.ServeMux, *workspace.MemoryStore) {
@@ -44,9 +55,10 @@ func newTestModule(t *testing.T) (*Module, *http.ServeMux, *workspace.MemoryStor
 	}, "nerds-who-fish", []byte("0123456789abcdef0123456789abcdef"), fakeGoogle{
 		mail: []MailMetadata{{ID: "mail-1", From: "Ada <ada@example.com>", Subject: "Ready", ReceivedAt: time.Now().UTC()}},
 		rows: [][]any{{"Date", "Description", "Amount", "Merchant", "Transaction ID"}, {"2026-09-03", "River Labs deposit", "250.00", "River Labs", "row-1"}},
-	})
+	}, WithJobQueue(NewMemoryJobQueue()))
 	mux := http.NewServeMux()
 	module.RegisterRoutes(mux)
+	module.RegisterJobRoutes(mux)
 	return module, mux, workspaceStore
 }
 
@@ -101,20 +113,132 @@ func TestGoogleMailAndTillerFlow(t *testing.T) {
 		t.Fatalf("open saved token: %v", err)
 	}
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/email/send", `{"to":"ada@example.com","subject":"Hello","body":"Ready to fish?"}`, http.StatusCreated)
-	synced := performJSON[map[string]int](t, mux, http.MethodPost, "/api/v1/email/sync", `{}`, http.StatusOK)
-	if synced["newMessages"] != 1 {
-		t.Fatalf("newMessages = %d", synced["newMessages"])
+	queuedMail := performJSON[map[string]string](t, mux, http.MethodPost, "/api/v1/email/sync", `{}`, http.StatusAccepted)
+	mailJob := module.jobs.(*MemoryJobQueue).Jobs()[0]
+	performJSON[map[string]string](t, mux, http.MethodPost, jobsBasePath+"/execute", mustJSON(t, mailJob), http.StatusOK)
+	if queuedMail["status"] != "accepted" {
+		t.Fatalf("mail sync status = %q", queuedMail["status"])
 	}
 	performJSON[GoogleConnection](t, mux, http.MethodPut, "/api/v1/integrations/tiller", `{"spreadsheetId":"sheet-1","range":"Transactions!A:Z"}`, http.StatusOK)
-	result := performJSON[map[string]int](t, mux, http.MethodPost, "/api/v1/integrations/tiller/sync", `{}`, http.StatusOK)
-	if result["newTransactions"] != 1 {
-		t.Fatalf("newTransactions = %d", result["newTransactions"])
-	}
+	performJSON[map[string]string](t, mux, http.MethodPost, "/api/v1/integrations/tiller/sync", `{}`, http.StatusAccepted)
+	tillerJob := module.jobs.(*MemoryJobQueue).Jobs()[1]
+	performJSON[map[string]string](t, mux, http.MethodPost, jobsBasePath+"/execute", mustJSON(t, tillerJob), http.StatusOK)
 	transactions := performJSON[struct {
 		Transactions []Transaction `json:"transactions"`
 	}](t, mux, http.MethodGet, "/api/v1/transactions", "", http.StatusOK)
 	if len(transactions.Transactions) != 1 || transactions.Transactions[0].MatchStatus != "matched" {
 		t.Fatalf("unexpected transactions: %#v", transactions.Transactions)
+	}
+}
+
+func TestManualSyncQueuesWithoutCallingGoogle(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	mailCalls, tillerCalls := 0, 0
+	module.google = fakeGoogle{mailCalls: &mailCalls, tillerCalls: &tillerCalls}
+	if err := module.SaveGoogleGrant(context.Background(), Identity{Email: "owner@nerdswhofish.com"}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	var connection GoogleConnection
+	connectionID := memberID("owner@nerdswhofish.com")
+	if err := module.store.Get(context.Background(), "nerds-who-fish", "googleConnections", connectionID, &connection); err != nil {
+		t.Fatal(err)
+	}
+	connection.Tiller = &TillerSettings{SpreadsheetID: "sheet-1", Range: "Transactions!A:Z"}
+	if err := module.store.Put(context.Background(), "nerds-who-fish", "googleConnections", connectionID, connection); err != nil {
+		t.Fatal(err)
+	}
+
+	mail := performJSON[map[string]string](t, mux, http.MethodPost, "/api/v1/email/sync", `{}`, http.StatusAccepted)
+	tiller := performJSON[map[string]string](t, mux, http.MethodPost, "/api/v1/integrations/tiller/sync", `{}`, http.StatusAccepted)
+	if mail["status"] != "accepted" || tiller["status"] != "accepted" || mailCalls != 0 || tillerCalls != 0 {
+		t.Fatalf("manual sync performed inline: mail=%#v tiller=%#v calls=%d/%d", mail, tiller, mailCalls, tillerCalls)
+	}
+	jobs := module.jobs.(*MemoryJobQueue).Jobs()
+	if len(jobs) != 2 || jobs[0].Type != JobTypeGmailSync || jobs[1].Type != JobTypeTillerSync {
+		t.Fatalf("queued jobs = %#v", jobs)
+	}
+}
+
+func TestSchedulerQueuesEveryGoogleConnectionAndConfiguredTiller(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	for _, email := range []string{"owner@nerdswhofish.com", "admin@nerdswhofish.com"} {
+		if err := module.SaveGoogleGrant(context.Background(), Identity{Email: email}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ownerID := memberID("owner@nerdswhofish.com")
+	var owner GoogleConnection
+	if err := module.store.Get(context.Background(), "nerds-who-fish", "googleConnections", ownerID, &owner); err != nil {
+		t.Fatal(err)
+	}
+	owner.Tiller = &TillerSettings{SpreadsheetID: "sheet-1", Range: "Transactions!A:Z"}
+	if err := module.store.Put(context.Background(), "nerds-who-fish", "googleConnections", ownerID, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "https://kosmos-jobs-hash-ue.a.run.app"+jobsBasePath+"/schedule", nil)
+	request.Header.Set("X-CloudScheduler-ScheduleTime", "2026-09-04T13:00:00Z")
+	record := httptest.NewRecorder()
+	mux.ServeHTTP(record, request)
+	if record.Code != http.StatusAccepted {
+		t.Fatalf("schedule status = %d: %s", record.Code, record.Body.String())
+	}
+	jobs := module.jobs.(*MemoryJobQueue).Jobs()
+	counts := map[string]int{}
+	for _, job := range jobs {
+		counts[job.Type]++
+		if job.Actor != "system" || job.ID == "" {
+			t.Fatalf("scheduled job = %#v", job)
+		}
+	}
+	if len(jobs) != 3 || counts[JobTypeGmailSync] != 2 || counts[JobTypeTillerSync] != 1 {
+		t.Fatalf("scheduled jobs = %#v", jobs)
+	}
+	repeat := httptest.NewRecorder()
+	repeatRequest := httptest.NewRequest(http.MethodPost, "https://kosmos-jobs-hash-ue.a.run.app"+jobsBasePath+"/schedule", nil)
+	repeatRequest.Header.Set("X-CloudScheduler-ScheduleTime", "2026-09-04T13:00:00Z")
+	mux.ServeHTTP(repeat, repeatRequest)
+	if repeat.Code != http.StatusAccepted || len(module.jobs.(*MemoryJobQueue).Jobs()) != 3 {
+		t.Fatalf("repeated schedule = %d, jobs = %#v", repeat.Code, module.jobs.(*MemoryJobQueue).Jobs())
+	}
+}
+
+func TestWorkerExecutionIsIdempotent(t *testing.T) {
+	module, mux, workspaceStore := newTestModule(t)
+	mailCalls := 0
+	module.google = fakeGoogle{mailCalls: &mailCalls, mail: []MailMetadata{{ID: "mail-1", From: "Ada <ada@example.com>", Subject: "Ready", ReceivedAt: time.Now().UTC()}}}
+	if _, err := workspaceStore.CreateContact(context.Background(), "nerds-who-fish", workspace.Contact{Name: "Ada", Email: "ada@example.com", Status: "lead"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.SaveGoogleGrant(context.Background(), Identity{Email: "owner@nerdswhofish.com"}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	job := Job{ID: "job-idempotent", Type: JobTypeGmailSync, Scope: "nerds-who-fish", ConnectionID: memberID("owner@nerdswhofish.com"), Actor: "system"}
+	body := mustJSON(t, job)
+	performJSON[map[string]string](t, mux, http.MethodPost, jobsBasePath+"/execute", body, http.StatusOK)
+	performJSON[map[string]string](t, mux, http.MethodPost, jobsBasePath+"/execute", body, http.StatusOK)
+	if mailCalls != 1 {
+		t.Fatalf("mail provider calls = %d, want 1", mailCalls)
+	}
+	var execution JobExecution
+	if err := module.store.Get(context.Background(), job.Scope, "jobExecutions", job.ID, &execution); err != nil || execution.Status != "completed" {
+		t.Fatalf("execution = %#v, err = %v", execution, err)
+	}
+}
+
+func TestWorkerFailureRemainsRetryable(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	mailCalls := 0
+	module.google = fakeGoogle{mailCalls: &mailCalls, mailErr: errors.New("google unavailable")}
+	if err := module.SaveGoogleGrant(context.Background(), Identity{Email: "owner@nerdswhofish.com"}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	job := Job{ID: "job-retry", Type: JobTypeGmailSync, Scope: "nerds-who-fish", ConnectionID: memberID("owner@nerdswhofish.com"), Actor: "system"}
+	body := mustJSON(t, job)
+	performJSON[map[string]any](t, mux, http.MethodPost, jobsBasePath+"/execute", body, http.StatusBadGateway)
+	performJSON[map[string]any](t, mux, http.MethodPost, jobsBasePath+"/execute", body, http.StatusBadGateway)
+	if mailCalls != 2 {
+		t.Fatalf("mail provider calls = %d, want 2", mailCalls)
 	}
 }
 
@@ -219,6 +343,32 @@ func TestViewerCannotMutateOperations(t *testing.T) {
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/email/templates", `{"name":"Nope","subject":"Nope","body":"Nope"}`, http.StatusForbidden)
 }
 
+func TestOperationsListsArePaginated(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	for _, actor := range []Identity{{Email: "admin@nerdswhofish.com", Name: "Admin"}, {Email: "member@nerdswhofish.com", Name: "Member"}} {
+		if _, err := module.ensureMember(context.Background(), "nerds-who-fish", actor); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := performJSON[struct {
+		Members []Member `json:"members"`
+		Page    struct {
+			Limit      int    `json:"limit"`
+			NextCursor string `json:"nextCursor"`
+		} `json:"page"`
+	}](t, mux, http.MethodGet, "/api/v1/members?limit=2", "", http.StatusOK)
+	if len(first.Members) != 2 || first.Page.Limit != 2 || first.Page.NextCursor == "" {
+		t.Fatalf("first page = %#v", first)
+	}
+	second := performJSON[struct {
+		Members []Member `json:"members"`
+	}](t, mux, http.MethodGet, "/api/v1/members?limit=2&cursor="+first.Page.NextCursor, "", http.StatusOK)
+	if len(second.Members) != 1 || second.Members[0].ID == first.Members[0].ID || second.Members[0].ID == first.Members[1].ID {
+		t.Fatalf("second page = %#v", second)
+	}
+	performJSON[map[string]any](t, mux, http.MethodGet, "/api/v1/members?cursor=broken", "", http.StatusBadRequest)
+}
+
 func performJSON[T any](t *testing.T, handler http.Handler, method, target, body string, wantStatus int) T {
 	t.Helper()
 	request := httptest.NewRequest(method, target, strings.NewReader(body))
@@ -240,4 +390,13 @@ func performJSON[T any](t *testing.T, handler http.Handler, method, target, body
 		}
 	}
 	return response
+}
+
+func mustJSON(t *testing.T, value any) string {
+	t.Helper()
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(payload)
 }

@@ -161,7 +161,6 @@ The OpenTofu stack provisions, per environment:
 - Secret Manager secrets and version references for OAuth, session signing, database, storage, Tiller, and telemetry credentials
 - Cloud Storage bucket for attachments and receipts, with uniform bucket-level access, retention, lifecycle rules, and public access prevention
 - Firestore Native mode database, indexes, backup policy, and retention configuration for the near-free default
-- optional Postgres-compatible database module for deployments that need relational reporting beyond Firestore's model
 - Cloud Tasks or Pub/Sub for retries and work that cannot depend on a live request
 - Cloud Scheduler only for explicitly required periodic jobs
 - Artifact deploy policy, revision labels, startup/readiness configuration, and rollback-safe traffic management
@@ -175,17 +174,16 @@ Cloud Run is stateless. Background work uses a queue because scale-to-zero insta
 
 Cloudflare configuration is also managed as code:
 
-- tunnel and connector configuration for `cast.nerdswhofish.com` or the eventual Kosmos hostname
+- a Cloudflare Worker proxy and custom domain for `cast.nerdswhofish.com`
 - DNS records and proxied routing
 - Access policies for administrative or staging surfaces
 - rate limiting, WAF rules, and security headers where appropriate
-- origin rules that prevent bypassing the intended edge boundary
 
 Cloudflare API tokens are supplied through the local secret manager or CI secret store, never committed to the repository.
 
 ### Observability resources
 
-Grafana Cloud dashboards, alert rules, data source configuration, and Faro application configuration are represented in `infra/observability` wherever the provider API supports it. The production stack is Grafana Cloud stack `1807923` in `prod-us-east-3`.
+Grafana Cloud dashboards and alert rules are represented in the environment module wherever the provider API supports them. The production stack is Grafana Cloud stack `1807923` in `prod-us-east-3`. The Faro application is a provider bootstrap resource created through Grafana's authenticated Frontend Observability plugin API, while its collector URL and allowed production origin are explicit deployment configuration.
 
 ## Observability and operations
 
@@ -234,7 +232,9 @@ The current release completes the seven delivery slices as one usable small-busi
 - incremental per-user Google Workspace authorization, explicit Gmail sending, reusable templates, relevant inbound message metadata, and Google Voice handoff links
 - Tiller Google Sheets import with replay-safe transaction IDs, deterministic contact matching, and an explicit ambiguity queue
 - contact-form ingestion with validation, honeypot rejection, deduplication, source attribution, and abuse throttling
-- normalized replay-safe business events, audit history, OpenTelemetry and Faro instrumentation, queue infrastructure, production alerts, and Firestore point-in-time recovery
+- normalized replay-safe business events, audit history, OpenTelemetry and active Faro browser instrumentation, production dashboards and alerts, and Firestore point-in-time recovery
+- cursor-paginated list APIs with transparent multi-page loading in the browser
+- Cloud Scheduler dispatch hourly from 9 AM through 5 PM on weekdays in `America/New_York`, backed by Cloud Tasks and a private scale-to-zero Cloud Run worker for Gmail and Tiller synchronization
 
 Operational setup, recovery, data retention, and provider behavior are documented in [docs/operations.md](docs/operations.md).
 
@@ -250,3 +250,6 @@ Releases use Quill through `.github/workflows/release.yml`. Quill owns versionin
 - Twilio-style telephony or Google Voice control.
 - A generic automation builder before the event and job contracts prove what is needed.
 - Payroll, inventory accounting, or tax filing.
+- A Postgres deployment option. Firestore remains the only persistence topology until a concrete reporting requirement justifies another database.
+- Blocking direct access to the Cloud Run origin. Google login, organization authorization, CSRF checks, and route-level access controls remain the security boundary; the Cloudflare Worker is the managed public route, not an authentication layer.
+- A Cloudflare Tunnel for Kosmos. The production hostname uses the existing Cloudflare Worker proxy because Cloud Run is already a managed HTTPS origin.

@@ -127,6 +127,49 @@ func TestWorkspaceEmptySummaryUsesArray(t *testing.T) {
 	}
 }
 
+func TestWorkspaceListsUseCursorPagination(t *testing.T) {
+	mux := http.NewServeMux()
+	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
+	firstCreated := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"First","status":"lead"}`, http.StatusCreated)
+	secondCreated := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Second","status":"lead"}`, http.StatusCreated)
+	thirdCreated := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Third","status":"lead"}`, http.StatusCreated)
+
+	type listResponse struct {
+		Contacts []Contact `json:"contacts"`
+		Page     struct {
+			Limit      int    `json:"limit"`
+			NextCursor string `json:"nextCursor"`
+		} `json:"page"`
+	}
+	firstPage := performJSON[listResponse](t, mux, http.MethodGet, "/api/v1/contacts?limit=2", "", http.StatusOK)
+	if len(firstPage.Contacts) != 2 || firstPage.Page.Limit != 2 || firstPage.Page.NextCursor == "" {
+		t.Fatalf("unexpected first page: %#v", firstPage)
+	}
+	if firstPage.Contacts[0].ID != thirdCreated.ID || firstPage.Contacts[1].ID != secondCreated.ID {
+		t.Fatalf("first page order = %q, %q", firstPage.Contacts[0].ID, firstPage.Contacts[1].ID)
+	}
+
+	secondPage := performJSON[listResponse](t, mux, http.MethodGet, "/api/v1/contacts?limit=2&cursor="+firstPage.Page.NextCursor, "", http.StatusOK)
+	if len(secondPage.Contacts) != 1 || secondPage.Contacts[0].ID != firstCreated.ID || secondPage.Page.NextCursor != "" {
+		t.Fatalf("unexpected second page: %#v", secondPage)
+	}
+}
+
+func TestWorkspaceListsRejectMalformedPagination(t *testing.T) {
+	mux := http.NewServeMux()
+	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
+
+	response := performJSON[struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}](t, mux, http.MethodGet, "/api/v1/contacts?cursor=garbage", "", http.StatusBadRequest)
+	if response.Error.Code != "invalid_pagination" || response.Error.Message != "cursor is invalid" {
+		t.Fatalf("unexpected error: %#v", response.Error)
+	}
+}
+
 func TestWorkspaceRejectsInvalidRecords(t *testing.T) {
 	mux := http.NewServeMux()
 	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)

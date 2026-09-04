@@ -161,6 +161,29 @@ variable "max_instances" {
   }
 }
 
+variable "job_max_instances" {
+  description = "Hard concurrency and cost cap for the private background worker."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.job_max_instances >= 1 && var.job_max_instances <= 3
+    error_message = "job_max_instances must be between 1 and 3."
+  }
+}
+
+variable "integration_sync_schedule" {
+  description = "Cron schedule for queueing Gmail and Tiller synchronization."
+  type        = string
+  default     = "0 9-17 * * 1-5"
+}
+
+variable "integration_sync_time_zone" {
+  description = "IANA time zone used for the integration synchronization schedule."
+  type        = string
+  default     = "America/New_York"
+}
+
 variable "container_cpu" {
   description = "Cloud Run CPU allocation."
   type        = string
@@ -247,6 +270,18 @@ variable "monitoring_notification_channels" {
   description = "Existing Monitoring notification-channel resource names for operational alerts."
   type        = set(string)
   default     = []
+}
+
+variable "manage_grafana" {
+  description = "Manage the Kosmos Grafana dashboard and application alert rules."
+  type        = bool
+  default     = false
+}
+
+variable "grafana_logs_datasource_uid" {
+  description = "Grafana Loki datasource UID used by dashboards and alert rules."
+  type        = string
+  default     = "grafanacloud-logs"
 }
 
 variable "labels" {

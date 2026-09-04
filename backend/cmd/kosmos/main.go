@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/storage"
@@ -33,17 +35,14 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", health)
-	mux.HandleFunc("GET /api/v1/config", publicConfig)
-	mux.HandleFunc("GET /api/", notFound)
-	mux.HandleFunc("/", spaFallback)
 	googleAuth := auth.NewGoogle()
-	googleAuth.RegisterRoutes(mux)
 
 	var landingStore landing.Store = landing.NewMemoryStore()
 	var workspaceStore workspace.Store = workspace.NewMemoryStore()
 	var operationsStore operations.Store = operations.NewMemoryStore()
 	var blobStore operations.BlobStore = operations.NewMemoryBlobStore()
-	if projectID := os.Getenv("KOSMOS_GCP_PROJECT"); projectID != "" {
+	projectID := os.Getenv("KOSMOS_GCP_PROJECT")
+	if projectID != "" {
 		firestoreClient, err := firestore.NewClient(context.Background(), projectID)
 		if err != nil {
 			logger.Error("workspace store setup failed", "error", err)
@@ -67,11 +66,22 @@ func main() {
 	if organizationID == "" {
 		organizationID = "local"
 	}
+	role, err := processRole(os.Getenv("KOSMOS_PROCESS_ROLE"))
+	if err != nil {
+		logger.Error("process role setup failed", "error", err)
+		os.Exit(1)
+	}
+	jobQueue, closeJobQueue, err := newJobQueue(context.Background(), projectID, role)
+	if err != nil {
+		logger.Error("background job queue setup failed", "error", err)
+		os.Exit(1)
+	}
+	defer closeJobQueue()
 	identity := func(r *http.Request) (string, operations.Identity, error) {
 		user, err := googleAuth.CurrentUser(r)
 		return organizationID, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, err
 	}
-	operationsModule := operations.NewModule(operationsStore, blobStore, workspaceStore, identity, organizationID, []byte(os.Getenv("KOSMOS_SESSION_SECRET")), operations.NewLiveGoogleProvider(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")))
+	operationsModule := operations.NewModule(operationsStore, blobStore, workspaceStore, identity, organizationID, []byte(os.Getenv("KOSMOS_SESSION_SECRET")), operations.NewLiveGoogleProvider(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")), operations.WithJobQueue(jobQueue))
 	scope := func(r *http.Request) (string, error) {
 		_, actor, err := identity(r)
 		if err != nil {
@@ -83,22 +93,30 @@ func main() {
 		}
 		return organizationID, nil
 	}
-	googleAuth.RegisterGrant("workspace", operations.GoogleScopes, func(ctx context.Context, user auth.User, token *oauth2.Token) error {
-		return operationsModule.SaveGoogleGrant(ctx, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, token)
-	})
-	registry := modules.NewRegistry(
-		landing.NewModule(landingStore, scope),
-		workspace.NewModule(workspaceStore, scope),
-		operationsModule,
-	)
-	registry.RegisterRoutes(mux)
-	mux.HandleFunc("GET /api/v1/modules", func(w http.ResponseWriter, r *http.Request) {
-		if _, err := scope(r); err != nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"modules": registry.Manifests()})
-	})
+	if role == "jobs" {
+		operationsModule.RegisterJobRoutes(mux)
+	} else {
+		mux.HandleFunc("GET /api/v1/config", publicConfig)
+		mux.HandleFunc("GET /api/", notFound)
+		mux.HandleFunc("/", spaFallback)
+		googleAuth.RegisterRoutes(mux)
+		googleAuth.RegisterGrant("workspace", operations.GoogleScopes, func(ctx context.Context, user auth.User, token *oauth2.Token) error {
+			return operationsModule.SaveGoogleGrant(ctx, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, token)
+		})
+		registry := modules.NewRegistry(
+			landing.NewModule(landingStore, scope),
+			workspace.NewModule(workspaceStore, scope),
+			operationsModule,
+		)
+		registry.RegisterRoutes(mux)
+		mux.HandleFunc("GET /api/v1/modules", func(w http.ResponseWriter, r *http.Request) {
+			if _, err := scope(r); err != nil {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"modules": registry.Manifests()})
+		})
+	}
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -111,6 +129,50 @@ func main() {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func processRole(value string) (string, error) {
+	role := strings.ToLower(strings.TrimSpace(value))
+	if role == "" {
+		return "web", nil
+	}
+	if role != "web" && role != "jobs" {
+		return "", fmt.Errorf("unsupported KOSMOS_PROCESS_ROLE %q", value)
+	}
+	return role, nil
+}
+
+func newJobQueue(ctx context.Context, projectID, role string) (operations.JobQueue, func() error, error) {
+	config := operations.CloudTasksConfig{
+		ProjectID:           normalizedEnvironment("KOSMOS_TASKS_PROJECT", projectID),
+		Location:            os.Getenv("KOSMOS_TASKS_LOCATION"),
+		Queue:               os.Getenv("KOSMOS_TASKS_QUEUE"),
+		TargetURL:           os.Getenv("KOSMOS_JOB_TARGET_URL"),
+		ServiceAccountEmail: os.Getenv("KOSMOS_JOB_INVOKER_SERVICE_ACCOUNT"),
+		Audience:            os.Getenv("KOSMOS_JOB_AUDIENCE"),
+	}
+	configured := config.Location != "" || config.Queue != "" || config.TargetURL != "" || config.ServiceAccountEmail != ""
+	if !configured {
+		if os.Getenv("KOSMOS_ENV") == "production" {
+			return nil, nil, errors.New("Cloud Tasks configuration is required in production")
+		}
+		return operations.NewMemoryJobQueue(), func() error { return nil }, nil
+	}
+	if role == "web" && strings.TrimSpace(config.TargetURL) == "" {
+		return nil, nil, errors.New("Cloud Tasks target URL is required by the web process")
+	}
+	queue, err := operations.NewCloudTasksQueue(ctx, config)
+	if err != nil {
+		return nil, nil, err
+	}
+	return queue, queue.Close, nil
+}
+
+func normalizedEnvironment(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func securityHeaders(next http.Handler) http.Handler {

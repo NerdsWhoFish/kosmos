@@ -25,6 +25,8 @@ export type AuditEntry = { id: string; actor: string; action: string; entityType
 export type ModuleManifest = { name: string; navigation: { path: string; label: string; icon: string }[]; permissions: string[]; resources: string[]; eventTypes?: string[]; backgroundJobs?: string[]; searchProviders?: string[]; documentLinkTargets?: string[] }
 
 type APIError = { error?: string | { message?: string } }
+type PageMetadata = { nextCursor?: string }
+type PaginatedBody = Record<string, unknown> & { page: PageMetadata }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase()
@@ -32,7 +34,14 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   if (!['GET', 'HEAD'].includes(method)) headers.set('X-Kosmos-CSRF', '1')
   if (method === 'POST' && !headers.has('Idempotency-Key')) headers.set('Idempotency-Key', requestID())
-  const response = await fetch(path, { ...init, headers })
+  const request = { ...init, headers }
+  const firstPage = await fetchJSON<T>(path, request)
+  if (method !== 'GET') return firstPage
+  return collectPages(path, request, firstPage)
+}
+
+async function fetchJSON<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await fetch(path, init)
   if (!response.ok) {
     let message = `Request failed with status ${response.status}`
     try {
@@ -45,6 +54,42 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
+}
+
+async function collectPages<T>(path: string, init: RequestInit, firstPage: T): Promise<T> {
+  const collection = paginatedCollection(firstPage)
+  if (!collection) return firstPage
+
+  const [key, items, page] = collection
+  let cursor = page.nextCursor
+  const seen = new Set<string>()
+  while (cursor) {
+    if (seen.has(cursor)) throw new Error('Paginated response repeated a cursor')
+    seen.add(cursor)
+    const nextPage = await fetchJSON<unknown>(withCursor(path, cursor), init)
+    const nextCollection = paginatedCollection(nextPage)
+    if (!nextCollection || nextCollection[0] !== key) throw new Error('Paginated response changed collection')
+    items.push(...nextCollection[1])
+    cursor = nextCollection[2].nextCursor
+    ;(firstPage as PaginatedBody).page = nextCollection[2]
+  }
+  return firstPage
+}
+
+function paginatedCollection(value: unknown): [string, unknown[], PageMetadata] | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const body = value as Record<string, unknown>
+  if (!body.page || typeof body.page !== 'object' || Array.isArray(body.page)) return undefined
+  const arrays = Object.entries(body).filter(([key, item]) => key !== 'page' && Array.isArray(item))
+  if (arrays.length !== 1) return undefined
+  return [arrays[0][0], arrays[0][1] as unknown[], body.page as PageMetadata]
+}
+
+function withCursor(path: string, cursor: string) {
+  const url = new URL(path, globalThis.location?.origin ?? 'http://localhost')
+  url.searchParams.set('cursor', cursor)
+  if (/^https?:\/\//i.test(path)) return url.toString()
+  return `${url.pathname}${url.search}${url.hash}`
 }
 
 function requestID() {

@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 )
 
 var errNotFound = errors.New("record not found")
@@ -47,7 +49,8 @@ func (m Module) listAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := m.store.ListAccounts(r.Context(), scope)
-	respondList(w, items, err, "accounts")
+	sortAccounts(items)
+	respondList(w, r, items, err, "accounts")
 }
 
 func (m Module) createAccount(w http.ResponseWriter, r *http.Request) {
@@ -126,7 +129,7 @@ func (m Module) listLeads(w http.ResponseWriter, r *http.Request) {
 	}
 	contacts, err := m.store.ListContacts(r.Context(), scope)
 	if err != nil {
-		respondList(w, []Contact{}, err, "leads")
+		respondList(w, r, []Contact{}, err, "leads")
 		return
 	}
 	leads := make([]Contact, 0)
@@ -135,7 +138,8 @@ func (m Module) listLeads(w http.ResponseWriter, r *http.Request) {
 			leads = append(leads, contact)
 		}
 	}
-	respondList(w, leads, nil, "leads")
+	sortContacts(leads)
+	respondList(w, r, leads, nil, "leads")
 }
 
 func (m Module) listContacts(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +148,8 @@ func (m Module) listContacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	contacts, err := m.store.ListContacts(r.Context(), scope)
-	respondList(w, contacts, err, "contacts")
+	sortContacts(contacts)
+	respondList(w, r, contacts, err, "contacts")
 }
 
 func (m Module) getContact(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +211,8 @@ func (m Module) listOpportunities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := m.store.ListOpportunities(r.Context(), scope)
-	respondList(w, items, err, "opportunities")
+	sortOpportunities(items)
+	respondList(w, r, items, err, "opportunities")
 }
 
 func (m Module) createOpportunity(w http.ResponseWriter, r *http.Request) {
@@ -254,7 +260,8 @@ func (m Module) listActivities(w http.ResponseWriter, r *http.Request) {
 	if err == nil && r.URL.Query().Get("contactId") != "" {
 		items = filterActivities(items, r.URL.Query().Get("contactId"))
 	}
-	respondList(w, items, err, "activities")
+	sortActivities(items)
+	respondList(w, r, items, err, "activities")
 }
 
 func (m Module) createActivity(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +295,8 @@ func (m Module) listReminders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := m.store.ListReminders(r.Context(), scope)
-	respondList(w, items, err, "reminders")
+	sortReminders(items)
+	respondList(w, r, items, err, "reminders")
 }
 
 func (m Module) createReminder(w http.ResponseWriter, r *http.Request) {
@@ -334,7 +342,8 @@ func (m Module) listDocuments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := m.store.ListDocuments(r.Context(), scope)
-	respondList(w, items, err, "documents")
+	sortDocuments(items)
+	respondList(w, r, items, err, "documents")
 }
 
 func (m Module) createDocument(w http.ResponseWriter, r *http.Request) {
@@ -401,7 +410,8 @@ func (m Module) documentRevisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := m.store.ListDocumentRevisions(r.Context(), scope, r.PathValue("id"))
-	respondList(w, items, err, "revisions")
+	sortDocumentRevisions(items)
+	respondList(w, r, items, err, "revisions")
 }
 
 func (m Module) listCosts(w http.ResponseWriter, r *http.Request) {
@@ -410,7 +420,8 @@ func (m Module) listCosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, err := m.store.ListCosts(r.Context(), scope)
-	respondList(w, items, err, "costs")
+	sortCosts(items)
+	respondList(w, r, items, err, "costs")
 }
 
 func (m Module) createCost(w http.ResponseWriter, r *http.Request) {
@@ -632,7 +643,7 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
 
-func respondList[T any](w http.ResponseWriter, items []T, err error, key string) {
+func respondList[T any](w http.ResponseWriter, r *http.Request, items []T, err error, key string) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, key+"_load_failed", "Could not load "+key)
 		return
@@ -640,7 +651,13 @@ func respondList[T any](w http.ResponseWriter, items []T, err error, key string)
 	if items == nil {
 		items = []T{}
 	}
-	writeJSON(w, http.StatusOK, map[string][]T{key: items})
+	page, err := pagination.Parse(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", err.Error())
+		return
+	}
+	items, metadata := pagination.Slice(items, page)
+	writeJSON(w, http.StatusOK, map[string]any{key: items, "page": metadata})
 }
 
 func respondCreated[T any](w http.ResponseWriter, item T, err error, code, message string) {
@@ -941,5 +958,65 @@ func firstNonEmpty(values ...string) string {
 }
 
 func sortActivities(items []Activity) {
-	sort.Slice(items, func(i, j int) bool { return items[i].OccurredAt.After(items[j].OccurredAt) })
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].OccurredAt.Equal(items[j].OccurredAt) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].OccurredAt.After(items[j].OccurredAt)
+	})
+}
+
+func sortAccounts(items []Account) {
+	sort.Slice(items, func(i, j int) bool {
+		return newerFirst(items[i].UpdatedAt, items[i].ID, items[j].UpdatedAt, items[j].ID)
+	})
+}
+
+func sortContacts(items []Contact) {
+	sort.Slice(items, func(i, j int) bool {
+		return newerFirst(items[i].UpdatedAt, items[i].ID, items[j].UpdatedAt, items[j].ID)
+	})
+}
+
+func sortOpportunities(items []Opportunity) {
+	sort.Slice(items, func(i, j int) bool {
+		return newerFirst(items[i].UpdatedAt, items[i].ID, items[j].UpdatedAt, items[j].ID)
+	})
+}
+
+func sortReminders(items []Reminder) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].DueAt.Equal(items[j].DueAt) {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].DueAt.Before(items[j].DueAt)
+	})
+}
+
+func sortDocuments(items []Document) {
+	sort.Slice(items, func(i, j int) bool {
+		return newerFirst(items[i].UpdatedAt, items[i].ID, items[j].UpdatedAt, items[j].ID)
+	})
+}
+
+func sortDocumentRevisions(items []DocumentRevision) {
+	sort.Slice(items, func(i, j int) bool {
+		return newerFirst(items[i].CreatedAt, items[i].ID, items[j].CreatedAt, items[j].ID)
+	})
+}
+
+func sortCosts(items []Cost) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].IncurredOn == items[j].IncurredOn {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].IncurredOn > items[j].IncurredOn
+	})
+}
+
+func newerFirst(leftTime time.Time, leftID string, rightTime time.Time, rightID string) bool {
+	if leftTime.Equal(rightTime) {
+		return leftID < rightID
+	}
+	return leftTime.After(rightTime)
 }

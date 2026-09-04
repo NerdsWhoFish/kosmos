@@ -23,6 +23,16 @@ output "service_url" {
   description = "Cloud Run origin URL."
 }
 
+output "jobs_service_url" {
+  value       = try(google_cloud_run_v2_service.jobs[0].uri, null)
+  description = "Private Cloud Run worker URL."
+}
+
+output "integration_sync_schedule" {
+  value       = try(google_cloud_scheduler_job.integration_sync[0].schedule, null)
+  description = "Weekday business-hours integration synchronization schedule."
+}
+
 output "runtime_service_account" {
   value       = google_service_account.runtime.email
   description = "Cloud Run runtime service account."

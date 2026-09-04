@@ -67,6 +67,13 @@ type GoogleConnection struct {
 	UpdatedAt      time.Time       `json:"updatedAt" firestore:"updatedAt"`
 }
 
+type JobExecution struct {
+	ID          string    `json:"id" firestore:"id"`
+	Type        string    `json:"type" firestore:"type"`
+	Status      string    `json:"status" firestore:"status"`
+	CompletedAt time.Time `json:"completedAt" firestore:"completedAt"`
+}
+
 type TillerSettings struct {
 	SpreadsheetID string `json:"spreadsheetId" firestore:"spreadsheetId"`
 	Range         string `json:"range" firestore:"range"`

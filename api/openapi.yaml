@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kosmos API
-  version: 0.2.0
+  version: 0.3.0
   description: API for the Kosmos small business workspace.
   license:
     name: MIT
@@ -147,6 +147,9 @@ paths:
   /notifications:
     get:
       operationId: listNotifications
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Notification feed
@@ -154,22 +157,31 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [notifications]
+                required: [notifications, page]
                 properties:
                   notifications:
                     type: array
                     items:
                       $ref: '#/components/schemas/Notification'
+                  page:
+                    $ref: '#/components/schemas/Page'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
   /contacts:
     get:
       operationId: listContacts
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           $ref: '#/components/responses/ContactList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
     post:
       operationId: createContact
       parameters:
@@ -194,6 +206,9 @@ paths:
   /leads:
     get:
       operationId: listLeads
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Contacts currently classified as leads
@@ -201,15 +216,20 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [leads]
+                required: [leads, page]
                 properties:
                   leads:
                     type: array
                     items:
                       $ref: '#/components/schemas/Contact'
+                  page:
+                    $ref: '#/components/schemas/Page'
   /accounts:
     get:
       operationId: listAccounts
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Prospect and customer accounts
@@ -217,12 +237,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [accounts]
+                required: [accounts, page]
                 properties:
                   accounts:
                     type: array
                     items:
                       $ref: '#/components/schemas/Account'
+                  page:
+                    $ref: '#/components/schemas/Page'
     post:
       operationId: createAccount
       parameters:
@@ -307,11 +329,16 @@ paths:
   /opportunities:
     get:
       operationId: listOpportunities
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           $ref: '#/components/responses/OpportunityList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
     post:
       operationId: createOpportunity
       parameters:
@@ -366,11 +393,15 @@ paths:
           in: query
           schema:
             type: string
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           $ref: '#/components/responses/ActivityList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
     post:
       operationId: createActivity
       parameters:
@@ -395,11 +426,16 @@ paths:
   /reminders:
     get:
       operationId: listReminders
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           $ref: '#/components/responses/ReminderList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
     post:
       operationId: createReminder
       parameters:
@@ -453,11 +489,16 @@ paths:
   /documents:
     get:
       operationId: listDocuments
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           $ref: '#/components/responses/DocumentList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
     post:
       operationId: createDocument
       parameters:
@@ -509,17 +550,24 @@ paths:
       operationId: listDocumentRevisions
       parameters:
         - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Immutable prior document revisions
   /costs:
     get:
       operationId: listCosts
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           $ref: '#/components/responses/CostList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
     post:
       operationId: createCost
       parameters:
@@ -569,6 +617,9 @@ paths:
   /members:
     get:
       operationId: listMembers
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Organization members and roles
@@ -586,6 +637,9 @@ paths:
   /pipeline-stages:
     get:
       operationId: listPipelineStages
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Ordered organization pipeline stages
@@ -634,6 +688,9 @@ paths:
   /email/templates:
     get:
       operationId: listEmailTemplates
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Reusable outbound email templates
@@ -661,11 +718,14 @@ paths:
       parameters:
         - $ref: '#/components/parameters/CSRF'
       responses:
-        '200':
-          description: Relevant inbound message metadata synchronized
+        '202':
+          description: Relevant inbound message metadata synchronization queued
   /email/messages:
     get:
       operationId: listRelevantMail
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Metadata for mail from known contacts
@@ -690,11 +750,14 @@ paths:
         - $ref: '#/components/parameters/CSRF'
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
-        '200':
-          description: Idempotent Tiller import completed
+        '202':
+          description: Idempotent Tiller import queued
   /transactions:
     get:
       operationId: listTransactions
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Imported transactions and match states
@@ -710,6 +773,9 @@ paths:
   /attachments:
     get:
       operationId: listAttachments
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Private attachment metadata with expiring download links
@@ -759,6 +825,9 @@ paths:
   /audit:
     get:
       operationId: listAuditHistory
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
           description: Security-sensitive and externally visible changes
@@ -790,13 +859,69 @@ paths:
       responses:
         '200':
           description: Google Voice, native call, and native SMS links
+  /jobs/schedule:
+    post:
+      operationId: scheduleIntegrationJobs
+      description: Private Cloud Scheduler target that queues integration work for every connected account.
+      security:
+        - cloudRunOIDC: []
+      responses:
+        '202':
+          description: Integration jobs queued
+        '500':
+          description: Connections could not be loaded
+        '503':
+          description: At least one integration job could not be queued
+  /jobs/execute:
+    post:
+      operationId: executeIntegrationJob
+      description: Private Cloud Tasks target that performs one idempotent provider synchronization.
+      security:
+        - cloudRunOIDC: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntegrationJob'
+      responses:
+        '200':
+          description: Job completed or had already completed
+        '204':
+          description: Connection no longer exists and the job was safely skipped
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '502':
+          description: Provider synchronization failed and Cloud Tasks should retry
 components:
   securitySchemes:
     sessionCookie:
       type: apiKey
       in: cookie
       name: kosmos_session
+    cloudRunOIDC:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Google-signed OIDC token accepted by Cloud Run IAM.
   parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Number of records to return. Defaults to 50 and is capped at 100.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from the prior response page.
+      schema:
+        type: string
     RecordID:
       name: id
       in: path
@@ -842,73 +967,110 @@ components:
         application/json:
           schema:
             type: object
-            required: [contacts]
+            required: [contacts, page]
             properties:
               contacts:
                 type: array
                 items:
                   $ref: '#/components/schemas/Contact'
+              page:
+                $ref: '#/components/schemas/Page'
     OpportunityList:
       description: Opportunities
       content:
         application/json:
           schema:
             type: object
-            required: [opportunities]
+            required: [opportunities, page]
             properties:
               opportunities:
                 type: array
                 items:
                   $ref: '#/components/schemas/Opportunity'
+              page:
+                $ref: '#/components/schemas/Page'
     ActivityList:
       description: Activities
       content:
         application/json:
           schema:
             type: object
-            required: [activities]
+            required: [activities, page]
             properties:
               activities:
                 type: array
                 items:
                   $ref: '#/components/schemas/Activity'
+              page:
+                $ref: '#/components/schemas/Page'
     ReminderList:
       description: Reminders
       content:
         application/json:
           schema:
             type: object
-            required: [reminders]
+            required: [reminders, page]
             properties:
               reminders:
                 type: array
                 items:
                   $ref: '#/components/schemas/Reminder'
+              page:
+                $ref: '#/components/schemas/Page'
     DocumentList:
       description: Documents
       content:
         application/json:
           schema:
             type: object
-            required: [documents]
+            required: [documents, page]
             properties:
               documents:
                 type: array
                 items:
                   $ref: '#/components/schemas/Document'
+              page:
+                $ref: '#/components/schemas/Page'
     CostList:
       description: Costs
       content:
         application/json:
           schema:
             type: object
-            required: [costs]
+            required: [costs, page]
             properties:
               costs:
                 type: array
                 items:
                   $ref: '#/components/schemas/Cost'
+              page:
+                $ref: '#/components/schemas/Page'
   schemas:
+    Page:
+      type: object
+      required: [limit, nextCursor]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        nextCursor:
+          type: string
+    IntegrationJob:
+      type: object
+      required: [id, type, scope, connectionId]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [gmail.sync, tiller.sync]
+        scope:
+          type: string
+        connectionId:
+          type: string
+        actor:
+          type: string
     Error:
       type: object
       required: [error]

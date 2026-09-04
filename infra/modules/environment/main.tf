@@ -5,6 +5,8 @@ locals {
   attachments_bucket      = coalesce(var.attachments_bucket_name, "${var.project_id}-attachments")
   runtime_service_account = "${local.name_prefix}-runtime"
   release_service_account = "${local.name_prefix}-releaser"
+  job_invoker_account     = "${local.name_prefix}-job-invoker"
+  operations_runbook_url  = "https://github.com/NerdsWhoFish/kosmos/blob/main/docs/operations.md"
   labels = merge({
     application = "kosmos"
     environment = var.environment
@@ -33,10 +35,17 @@ locals {
     var.faro_url == null ? {} : { KOSMOS_FARO_URL = var.faro_url },
     var.otel_exporter_otlp_endpoint == null ? {} : { OTEL_EXPORTER_OTLP_ENDPOINT = var.otel_exporter_otlp_endpoint },
   )
+  job_environment_variables = merge(local.environment_variables, {
+    KOSMOS_PROCESS_ROLE   = "jobs"
+    KOSMOS_TASKS_PROJECT  = var.project_id
+    KOSMOS_TASKS_LOCATION = var.region
+    KOSMOS_TASKS_QUEUE    = google_cloud_tasks_queue.jobs.name
+  })
   required_services = toset([
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
     "cloudtasks.googleapis.com",
+    "cloudscheduler.googleapis.com",
     "firestore.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
@@ -59,8 +68,6 @@ resource "google_project_service" "required" {
 
 data "google_project" "current" {
   project_id = var.project_id
-
-  depends_on = [google_project_service.required]
 }
 
 resource "google_artifact_registry_repository" "kosmos" {
@@ -142,6 +149,12 @@ resource "google_service_account" "runtime" {
   display_name = "Kosmos ${var.environment} runtime"
 }
 
+resource "google_service_account" "job_invoker" {
+  project      = var.project_id
+  account_id   = local.job_invoker_account
+  display_name = "Kosmos ${var.environment} job invoker"
+}
+
 resource "google_project_iam_member" "runtime_firestore" {
   project = var.project_id
   role    = "roles/datastore.user"
@@ -152,6 +165,12 @@ resource "google_project_iam_member" "runtime_tasks" {
   project = var.project_id
   role    = "roles/cloudtasks.enqueuer"
   member  = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_service_account_iam_member" "runtime_job_invoker" {
+  service_account_id = google_service_account.job_invoker.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.runtime.email}"
 }
 
 resource "google_storage_bucket_iam_member" "runtime_attachments" {
@@ -257,7 +276,15 @@ resource "google_cloud_run_v2_service" "kosmos" {
       }
 
       dynamic "env" {
-        for_each = local.environment_variables
+        for_each = merge(local.environment_variables, {
+          KOSMOS_PROCESS_ROLE                = "web"
+          KOSMOS_TASKS_PROJECT               = var.project_id
+          KOSMOS_TASKS_LOCATION              = var.region
+          KOSMOS_TASKS_QUEUE                 = google_cloud_tasks_queue.jobs.name
+          KOSMOS_JOB_TARGET_URL              = google_cloud_run_v2_service.jobs[0].uri
+          KOSMOS_JOB_AUDIENCE                = google_cloud_run_v2_service.jobs[0].uri
+          KOSMOS_JOB_INVOKER_SERVICE_ACCOUNT = google_service_account.job_invoker.email
+        })
         content {
           name  = env.key
           value = env.value
@@ -283,6 +310,117 @@ resource "google_cloud_run_v2_service" "kosmos" {
     google_project_iam_member.runtime_firestore,
     google_secret_manager_secret_iam_member.runtime,
     google_storage_bucket_iam_member.runtime_attachments,
+  ]
+}
+
+resource "google_cloud_run_v2_service" "jobs" {
+  count = local.deploy_service ? 1 : 0
+
+  project  = var.project_id
+  name     = "${var.service_name}-jobs"
+  location = var.region
+
+  deletion_protection = true
+
+  template {
+    service_account = google_service_account.runtime.email
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = var.job_max_instances
+    }
+
+    containers {
+      image = var.image_digest
+
+      resources {
+        limits = {
+          cpu    = var.container_cpu
+          memory = var.container_memory
+        }
+        cpu_idle = true
+      }
+
+      dynamic "env" {
+        for_each = merge(local.job_environment_variables, {
+          KOSMOS_JOB_INVOKER_SERVICE_ACCOUNT = google_service_account.job_invoker.email
+        })
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+
+      dynamic "env" {
+        for_each = local.secret_environment
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.runtime[env.value].secret_id
+              version = "latest"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_project_iam_member.runtime_firestore,
+    google_project_iam_member.runtime_tasks,
+    google_service_account_iam_member.runtime_job_invoker,
+    google_secret_manager_secret_iam_member.runtime,
+    google_storage_bucket_iam_member.runtime_attachments,
+  ]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "jobs" {
+  count = local.deploy_service ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.jobs[0].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.job_invoker.email}"
+}
+
+resource "google_cloud_scheduler_job" "integration_sync" {
+  count = local.deploy_service ? 1 : 0
+
+  project          = var.project_id
+  region           = var.region
+  name             = "${local.name_prefix}-integration-sync"
+  description      = "Queue Gmail and Tiller synchronization during business hours"
+  schedule         = var.integration_sync_schedule
+  time_zone        = var.integration_sync_time_zone
+  attempt_deadline = "180s"
+
+  retry_config {
+    retry_count          = 3
+    min_backoff_duration = "30s"
+    max_backoff_duration = "300s"
+    max_doublings        = 3
+  }
+
+  http_target {
+    uri         = "${google_cloud_run_v2_service.jobs[0].uri}/api/v1/jobs/schedule"
+    http_method = "POST"
+    body        = base64encode("{}")
+
+    headers = {
+      "Content-Type" = "application/json"
+    }
+
+    oidc_token {
+      service_account_email = google_service_account.job_invoker.email
+      audience              = google_cloud_run_v2_service.jobs[0].uri
+    }
+  }
+
+  depends_on = [
+    google_cloud_run_v2_service_iam_member.jobs,
+    google_project_service.required,
   ]
 }
 
@@ -352,6 +490,11 @@ resource "google_monitoring_alert_policy" "server_errors" {
   display_name = "Kosmos ${var.environment} HTTP 5xx"
   combiner     = "OR"
   enabled      = true
+
+  documentation {
+    content   = "Kosmos web requests are returning server errors. Follow ${local.operations_runbook_url}."
+    mime_type = "text/markdown"
+  }
 
   conditions {
     display_name = "Cloud Run returned 5xx"

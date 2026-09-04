@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/operations"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,6 +32,36 @@ func TestPublicConfigReturnsRuntimeFaroSettings(t *testing.T) {
 	}
 	if config["faroURL"] != "https://faro.example.com/collect/test" || config["faroAppName"] != "kosmos" {
 		t.Fatalf("unexpected config: %#v", config)
+	}
+}
+
+func TestProcessRole(t *testing.T) {
+	for input, want := range map[string]string{"": "web", "WEB": "web", " jobs ": "jobs"} {
+		got, err := processRole(input)
+		if err != nil || got != want {
+			t.Fatalf("processRole(%q) = %q, %v, want %q", input, got, err, want)
+		}
+	}
+	if _, err := processRole("scheduler"); err == nil {
+		t.Fatal("unsupported role should fail")
+	}
+}
+
+func TestUnconfiguredJobQueueUsesMemory(t *testing.T) {
+	for _, name := range []string{"KOSMOS_TASKS_PROJECT", "KOSMOS_TASKS_LOCATION", "KOSMOS_TASKS_QUEUE", "KOSMOS_JOB_TARGET_URL", "KOSMOS_JOB_INVOKER_SERVICE_ACCOUNT", "KOSMOS_JOB_AUDIENCE"} {
+		t.Setenv(name, "")
+	}
+	queue, closeQueue, err := newJobQueue(context.Background(), "", "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeQueue()
+	if _, ok := queue.(*operations.MemoryJobQueue); !ok {
+		t.Fatalf("queue type = %T", queue)
+	}
+	t.Setenv("KOSMOS_ENV", "production")
+	if _, _, err := newJobQueue(context.Background(), "project-1", "web"); err == nil {
+		t.Fatal("production should require Cloud Tasks configuration")
 	}
 }
 
