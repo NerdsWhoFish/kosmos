@@ -629,6 +629,10 @@ resource "google_monitoring_alert_policy" "server_errors" {
 resource "google_monitoring_uptime_check_config" "health" {
   count = local.deploy_service && var.public_url != null ? 1 : 0
 
+  lifecycle {
+    create_before_destroy = true
+  }
+
   project      = var.project_id
   display_name = "Kosmos ${var.environment} health"
   timeout      = "10s"
