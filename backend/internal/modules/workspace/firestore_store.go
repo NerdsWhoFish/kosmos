@@ -196,6 +196,134 @@ func (s *FirestoreStore) UpdateAccount(ctx context.Context, scope, id string, pa
 	return updateRecord(ctx, s, scope, "accounts", id, updates, func(item *Account, id string) { item.ID = id })
 }
 
+func (s *FirestoreStore) DeleteAccount(ctx context.Context, scope, id string) ([]Contact, error) {
+	accountRef := s.collection(scope, "accounts").Doc(id)
+	if _, err := accountRef.Get(ctx); status.Code(err) == codes.NotFound {
+		return nil, errNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	contacts, err := s.ListContacts(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	opportunities, err := s.ListOpportunities(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	activities, err := s.ListActivities(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	reminders, err := s.ListReminders(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	documents, err := s.ListDocuments(ctx, scope)
+	if err != nil {
+		return nil, err
+	}
+	revisions, err := listRecords(ctx, s, scope, "documentRevisions", "createdAt", firestore.Desc, func(item *DocumentRevision, documentID string) { item.ID = documentID })
+	if err != nil {
+		return nil, err
+	}
+
+	deletedContacts := make([]Contact, 0)
+	contactIDs := make(map[string]struct{})
+	deleteRefs := make([]*firestore.DocumentRef, 0)
+	for _, contact := range contacts {
+		if contact.AccountID == id {
+			deletedContacts = append(deletedContacts, contact)
+			contactIDs[contact.ID] = struct{}{}
+			deleteRefs = append(deleteRefs, s.collection(scope, "contacts").Doc(contact.ID))
+		}
+	}
+	opportunityIDs := make(map[string]struct{})
+	for _, opportunity := range opportunities {
+		if opportunity.AccountID == id {
+			opportunityIDs[opportunity.ID] = struct{}{}
+			deleteRefs = append(deleteRefs, s.collection(scope, "opportunities").Doc(opportunity.ID))
+		}
+	}
+	for _, activity := range activities {
+		_, contactDeleted := contactIDs[activity.ContactID]
+		_, opportunityDeleted := opportunityIDs[activity.OpportunityID]
+		if contactDeleted || opportunityDeleted {
+			deleteRefs = append(deleteRefs, s.collection(scope, "activities").Doc(activity.ID))
+		}
+	}
+	for _, reminder := range reminders {
+		_, contactDeleted := contactIDs[reminder.ContactID]
+		if reminder.AccountID == id || contactDeleted {
+			deleteRefs = append(deleteRefs, s.collection(scope, "reminders").Doc(reminder.ID))
+		}
+	}
+
+	type documentUpdate struct {
+		ref   *firestore.DocumentRef
+		links []RecordLink
+	}
+	updates := make([]documentUpdate, 0)
+	deletedDocuments := make(map[string]struct{})
+	for _, document := range documents {
+		links := remainingAccountLinks(document.Links, id, contactIDs, opportunityIDs)
+		if len(links) == len(document.Links) {
+			continue
+		}
+		ref := s.collection(scope, "documents").Doc(document.ID)
+		if len(links) == 0 {
+			deletedDocuments[document.ID] = struct{}{}
+			deleteRefs = append(deleteRefs, ref)
+			continue
+		}
+		updates = append(updates, documentUpdate{ref: ref, links: links})
+	}
+	for _, revision := range revisions {
+		if _, deleted := deletedDocuments[revision.DocumentID]; deleted {
+			deleteRefs = append(deleteRefs, s.collection(scope, "documentRevisions").Doc(revision.ID))
+		}
+	}
+
+	const batchLimit = 450
+	writeCount := 0
+	batch := s.client.Batch()
+	commit := func() error {
+		if writeCount == 0 {
+			return nil
+		}
+		if _, err := batch.Commit(ctx); err != nil {
+			return err
+		}
+		batch = s.client.Batch()
+		writeCount = 0
+		return nil
+	}
+	for _, update := range updates {
+		batch.Update(update.ref, []firestore.Update{{Path: "links", Value: update.links}, {Path: "updatedAt", Value: time.Now().UTC()}})
+		writeCount++
+		if writeCount == batchLimit {
+			if err := commit(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	for _, ref := range deleteRefs {
+		batch.Delete(ref)
+		writeCount++
+		if writeCount == batchLimit {
+			if err := commit(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	batch.Delete(accountRef)
+	writeCount++
+	if err := commit(); err != nil {
+		return nil, err
+	}
+	return deletedContacts, nil
+}
+
 func (s *FirestoreStore) LinkWebsiteRenewal(ctx context.Context, scope, id string, website Website, reminders []Reminder) (Account, []Reminder, error) {
 	accountRef := s.collection(scope, "accounts").Doc(id)
 	reminderCollection := s.collection(scope, "reminders")

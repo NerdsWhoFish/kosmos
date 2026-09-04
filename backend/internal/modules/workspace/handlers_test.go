@@ -139,6 +139,52 @@ func TestContactMutationsPublishGoogleSyncEvents(t *testing.T) {
 	}
 }
 
+func TestDeleteAccountCascadesLinkedWorkspaceRecords(t *testing.T) {
+	type mutation struct {
+		contact Contact
+		action  string
+	}
+	mutations := make([]mutation, 0)
+	mux := http.NewServeMux()
+	NewModule(
+		NewMemoryStore(),
+		func(*http.Request) (string, error) { return "nerds-who-fish", nil },
+		WithContactMutation(func(_ context.Context, _ string, contact Contact, action string) error {
+			mutations = append(mutations, mutation{contact: contact, action: action})
+			return nil
+		}),
+	).RegisterRoutes(mux)
+	created := performJSON[struct {
+		Account Account `json:"account"`
+		Contact Contact `json:"contact"`
+	}](t, mux, http.MethodPost, "/api/v1/accounts", `{"name":"River Labs","status":"prospect","primaryContact":{"name":"Ada Angler","email":"ada@example.com"}}`, http.StatusCreated)
+	opportunity := performJSON[Opportunity](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","accountId":"`+created.Account.ID+`","stage":"qualified"}`, http.StatusCreated)
+	performJSON[Activity](t, mux, http.MethodPost, "/api/v1/activities", `{"contactId":"`+created.Contact.ID+`","opportunityId":"`+opportunity.ID+`","kind":"note","body":"Interested"}`, http.StatusCreated)
+	performJSON[Reminder](t, mux, http.MethodPost, "/api/v1/reminders", `{"accountId":"`+created.Account.ID+`","contactId":"`+created.Contact.ID+`","title":"Follow up","dueAt":"`+time.Now().UTC().Add(time.Hour).Format(time.RFC3339)+`"}`, http.StatusCreated)
+	document := performJSON[Document](t, mux, http.MethodPost, "/api/v1/documents", `{"title":"Account notes","body":"Details","links":[{"type":"account","id":"`+created.Account.ID+`"}]}`, http.StatusCreated)
+	performJSON[Document](t, mux, http.MethodPatch, "/api/v1/documents/"+document.ID, `{"body":"More details"}`, http.StatusOK)
+
+	performNoContent(t, mux, http.MethodDelete, "/api/v1/accounts/"+created.Account.ID)
+	performJSON[map[string]any](t, mux, http.MethodGet, "/api/v1/accounts/"+created.Account.ID, "", http.StatusNotFound)
+	for path, key := range map[string]string{
+		"/api/v1/accounts":      "accounts",
+		"/api/v1/contacts":      "contacts",
+		"/api/v1/opportunities": "opportunities",
+		"/api/v1/activities":    "activities",
+		"/api/v1/reminders":     "reminders",
+		"/api/v1/documents":     "documents",
+	} {
+		response := performJSON[map[string]any](t, mux, http.MethodGet, path, "", http.StatusOK)
+		items, ok := response[key].([]any)
+		if !ok || len(items) != 0 {
+			t.Fatalf("%s after account deletion = %#v", key, response[key])
+		}
+	}
+	if len(mutations) != 2 || mutations[1].action != "delete" || mutations[1].contact.ID != created.Contact.ID {
+		t.Fatalf("unexpected contact mutations: %#v", mutations)
+	}
+}
+
 func TestContactSourcesCombineDefaultsAndOrganizationChoices(t *testing.T) {
 	mux := http.NewServeMux()
 	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)

@@ -25,6 +25,7 @@ func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/accounts", m.createAccount)
 	mux.HandleFunc("GET /api/v1/accounts/{id}", m.getAccount)
 	mux.HandleFunc("PATCH /api/v1/accounts/{id}", m.updateAccount)
+	mux.HandleFunc("DELETE /api/v1/accounts/{id}", m.deleteAccount)
 	mux.HandleFunc("GET /api/v1/leads", m.listLeads)
 	mux.HandleFunc("GET /api/v1/contacts", m.listContacts)
 	mux.HandleFunc("POST /api/v1/contacts", m.createContact)
@@ -177,6 +178,26 @@ func (m Module) updateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := m.store.UpdateAccount(r.Context(), scope, r.PathValue("id"), patch)
 	respondUpdated(w, updated, err, "account_not_found", "Account not found", "account_save_failed", "Could not save account")
+}
+
+func (m Module) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	contacts, err := m.store.DeleteAccount(r.Context(), scope, r.PathValue("id"))
+	if errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "account_not_found", "Account not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "account_delete_failed", "Could not delete account")
+		return
+	}
+	for _, contact := range contacts {
+		m.publishContactMutation(r.Context(), scope, contact, "delete")
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m Module) listLeads(w http.ResponseWriter, r *http.Request) {

@@ -48,6 +48,7 @@ export function Accounts({
   const [domains, setDomains] = useState<CloudflareDomain[]>([]);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [linking, setLinking] = useState(false);
   const [websiteFields, setWebsiteFields] = useState([""]);
   const [editWebsiteFields, setEditWebsiteFields] = useState([""]);
@@ -263,6 +264,29 @@ export function Accounts({
     }
   }
 
+  async function deleteAccount() {
+    if (!selected) return;
+    setSaving(true);
+    setFormError("");
+    try {
+      await api(`/api/v1/accounts/${selected.account.id}`, {
+        method: "DELETE",
+      });
+      setItems((current) =>
+        current.filter((item) => item.id !== selected.account.id),
+      );
+      setDeleting(false);
+      setSelected(null);
+      navigate("/accounts");
+    } catch (reason) {
+      setFormError(
+        reason instanceof Error ? reason.message : "Could not delete account",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function resetCreateForm() {
     setWebsiteFields([""]);
     setIncludeContact(true);
@@ -290,6 +314,7 @@ export function Accounts({
           onSubmitDomain={linkDomain}
           onCloseDomain={() => setLinking(false)}
           onEdit={openEdit}
+          onDelete={() => setDeleting(true)}
         />
         {editing && (
           <Modal
@@ -398,6 +423,41 @@ export function Accounts({
                 </button>
               </div>
             </form>
+          </Modal>
+        )}
+        {deleting && (
+          <Modal
+            eyebrow="Relationships"
+            title="Delete this account?"
+            onClose={() => setDeleting(false)}
+          >
+            <p className="muted-copy">
+              {selected.account.name}, its contacts, opportunities, follow-up
+              reminders, activities, and records linked only to this account
+              will be permanently removed. Shared documents keep their other
+              links.
+            </p>
+            {formError && (
+              <p className="form-error" role="alert">
+                {formError}
+              </p>
+            )}
+            <div className="form-actions">
+              <button
+                className="secondary-button"
+                onClick={() => setDeleting(false)}
+              >
+                Keep account
+              </button>
+              <button
+                className="danger-button"
+                onClick={deleteAccount}
+                disabled={saving}
+              >
+                <Trash2 size={16} />
+                {saving ? "Deleting..." : "Delete account"}
+              </button>
+            </div>
           </Modal>
         )}
       </>
@@ -614,6 +674,7 @@ function AccountView({
   onSubmitDomain,
   onCloseDomain,
   onEdit,
+  onDelete,
 }: {
   detail: AccountDetail;
   cloudflare: CloudflareStatus | null;
@@ -630,6 +691,7 @@ function AccountView({
   onSubmitDomain: (event: FormEvent<HTMLFormElement>) => void;
   onCloseDomain: () => void;
   onEdit: () => void;
+  onDelete: () => void;
 }) {
   const websites = accountWebsites(detail.account);
   const domain = useMemo(
@@ -712,12 +774,14 @@ function AccountView({
             </p>
           )}
         </div>
-        <button
-          className="secondary-button account-hero-action"
-          onClick={onEdit}
-        >
-          <Pencil size={16} /> Edit account
-        </button>
+        <div className="button-row account-hero-action">
+          <button className="secondary-button" onClick={onEdit}>
+            <Pencil size={16} /> Edit account
+          </button>
+          <button className="danger-button" onClick={onDelete}>
+            <Trash2 size={16} /> Delete account
+          </button>
+        </div>
       </header>
       <section className="stats-row">
         <div className="stat-card blue">

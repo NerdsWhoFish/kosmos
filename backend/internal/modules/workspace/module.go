@@ -220,6 +220,7 @@ type Store interface {
 	CreateAccount(context.Context, string, Account) (Account, error)
 	CreateAccountWithContact(context.Context, string, Account, Contact) (Account, Contact, error)
 	UpdateAccount(context.Context, string, string, AccountPatch) (Account, error)
+	DeleteAccount(context.Context, string, string) ([]Contact, error)
 	LinkWebsiteRenewal(context.Context, string, string, Website, []Reminder) (Account, []Reminder, error)
 	ListContacts(context.Context, string) ([]Contact, error)
 	GetContact(context.Context, string, string) (Contact, error)

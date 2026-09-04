@@ -7,6 +7,7 @@ import {
   Mail,
   Pencil,
   Plus,
+  ScanLine,
   Trash2,
   Users,
 } from "lucide-react";
@@ -228,6 +229,22 @@ export function Overview({
             )}
           </div>
           <div className="shortcut-grid">
+            <article className="shortcut-card">
+              <button
+                className="shortcut-main"
+                type="button"
+                onClick={() => navigate("/lead")}
+              >
+                <span className="shortcut-icon">
+                  <ScanLine size={20} />
+                </span>
+                <span>
+                  <strong>Quick lead</strong>
+                  <small>Capture a prospect and qualified opportunity.</small>
+                </span>
+                <ArrowUpRight className="shortcut-arrow" size={17} />
+              </button>
+            </article>
             {landing.buttons.map((button) => {
               const Icon = iconMap[button.icon] ?? Globe2;
               const link = (

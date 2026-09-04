@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { ArrowRight, BadgeCheck, ScanLine } from "lucide-react";
-import { Account, Activity, api, Contact } from "../api";
+import { Account, Activity, api, Contact, Opportunity } from "../api";
 import { ContactSourcePicker } from "../components/ContactSourcePicker";
 import { ErrorState, LoadingState } from "../components/States";
 
@@ -26,42 +26,51 @@ export function LeadIntake({ navigate }: { navigate: (path: string) => void }) {
     setSaving(true);
     setError("");
     const form = new FormData(event.currentTarget);
+    const name = String(form.get("name") ?? "").trim();
     const business = String(form.get("business") ?? "").trim();
+    const accountName = business || name;
     const contactInput = {
-      name: form.get("name"),
+      name,
       email: form.get("email"),
       phone: form.get("phone"),
       source: form.get("source"),
     };
     try {
       const existing = accounts.find(
-        (account) => account.name.toLowerCase() === business.toLowerCase(),
+        (account) => account.name.toLowerCase() === accountName.toLowerCase(),
       );
       let contact: Contact;
+      let leadAccount: Account;
       if (existing) {
+        leadAccount = existing;
         contact = await api<Contact>("/api/v1/contacts", {
           method: "POST",
           body: JSON.stringify({ ...contactInput, accountId: existing.id }),
         });
-      } else if (business) {
+      } else {
         const created = await api<AccountCreation>("/api/v1/accounts", {
           method: "POST",
           body: JSON.stringify({
-            name: business,
+            name: accountName,
             status: "prospect",
             primaryContact: contactInput,
           }),
         });
         if (!created.contact)
           throw new Error("The lead contact was not created");
+        leadAccount = created.account;
         contact = created.contact;
         setAccounts((current) => [created.account, ...current]);
-      } else {
-        contact = await api<Contact>("/api/v1/contacts", {
-          method: "POST",
-          body: JSON.stringify(contactInput),
-        });
       }
+
+      await api<Opportunity>("/api/v1/opportunities", {
+        method: "POST",
+        body: JSON.stringify({
+          name: `${leadAccount.name} opportunity`,
+          accountId: leadAccount.id,
+          stage: "qualified",
+        }),
+      });
 
       const notes = String(form.get("notes") ?? "").trim();
       if (notes) {

@@ -323,6 +323,8 @@ function mockAPI(authenticated = true) {
         );
       if (url.pathname === "/api/v1/accounts/account-1" && method === "PATCH")
         return Promise.resolve(json({ ...account, ...body }));
+      if (url.pathname === "/api/v1/accounts/account-1" && method === "DELETE")
+        return Promise.resolve(new Response(null, { status: 204 }));
       if (url.pathname === "/api/v1/accounts/account-2")
         return Promise.resolve(
           json({
@@ -956,6 +958,22 @@ describe("Kosmos application", () => {
     expect(new Headers(request?.[1]?.headers).get("X-Kosmos-CSRF")).toBe("1");
   });
 
+  it("shows Quick Lead as a fixed overview action", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /quick lead/i }));
+    expect(
+      await screen.findByRole("heading", { name: /capture the conversation/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /edit quick lead/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("lets an administrator edit and confirm deletion of a shortcut", async () => {
     mockAPI();
     render(<App />);
@@ -1047,6 +1065,47 @@ describe("Kosmos application", () => {
       name: "Grace Hopper",
       email: "grace@compiler.example",
     });
+  });
+
+  it("deletes an account only after confirmation", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Accounts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /river labs/i }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^delete account$/i }),
+    );
+    expect(
+      screen.getByRole("heading", { name: /delete this account/i }),
+    ).toBeInTheDocument();
+    expect(
+      vi.mocked(fetch).mock.calls.some(
+        ([input, init]) =>
+          String(input) === "/api/v1/accounts/account-1" &&
+          init?.method === "DELETE",
+      ),
+    ).toBe(false);
+
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: /^delete account$/i,
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        vi.mocked(fetch).mock.calls.some(
+          ([input, init]) =>
+            String(input) === "/api/v1/accounts/account-1" &&
+            init?.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Accounts" }),
+    ).toBeInTheDocument();
   });
 
   it("opens and edits a contact LinkedIn profile", async () => {
@@ -1168,7 +1227,7 @@ describe("Kosmos application", () => {
     });
   });
 
-  it("captures a mobile event lead with a new organization source", async () => {
+  it("captures a mobile event lead with a qualified opportunity", async () => {
     window.innerWidth = 390;
     window.history.replaceState({}, "", "/lead");
     mockAPI();
@@ -1187,15 +1246,29 @@ describe("Kosmos application", () => {
     expect(
       await screen.findByText(/lin fisher is in kosmos/i),
     ).toBeInTheDocument();
-    const request = vi
+    const accountRequest = vi
       .mocked(fetch)
       .mock.calls.find(
         ([input, init]) =>
-          String(input) === "/api/v1/contacts" && init?.method === "POST",
+          String(input) === "/api/v1/accounts" && init?.method === "POST",
       );
-    expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+    expect(JSON.parse(String(accountRequest?.[1]?.body))).toMatchObject({
       name: "Lin Fisher",
-      source: "Fly fishing expo",
+      primaryContact: {
+        name: "Lin Fisher",
+        source: "Fly fishing expo",
+      },
+    });
+    const opportunityRequest = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([input, init]) =>
+          String(input) === "/api/v1/opportunities" && init?.method === "POST",
+      );
+    expect(JSON.parse(String(opportunityRequest?.[1]?.body))).toMatchObject({
+      name: "Lin Fisher opportunity",
+      accountId: "account-2",
+      stage: "qualified",
     });
   });
 

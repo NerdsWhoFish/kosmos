@@ -95,6 +95,100 @@ func (s *MemoryStore) UpdateAccount(_ context.Context, scope, id string, patch A
 	return Account{}, errNotFound
 }
 
+func (s *MemoryStore) DeleteAccount(_ context.Context, scope, id string) ([]Contact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspace(scope)
+	accountIndex := -1
+	for index := range workspace.accounts {
+		if workspace.accounts[index].ID == id {
+			accountIndex = index
+			break
+		}
+	}
+	if accountIndex < 0 {
+		return nil, errNotFound
+	}
+
+	deletedContacts := make([]Contact, 0)
+	contactIDs := make(map[string]struct{})
+	keptContacts := workspace.contacts[:0]
+	for _, contact := range workspace.contacts {
+		if contact.AccountID == id {
+			deletedContacts = append(deletedContacts, contact)
+			contactIDs[contact.ID] = struct{}{}
+			continue
+		}
+		keptContacts = append(keptContacts, contact)
+	}
+	workspace.contacts = keptContacts
+
+	opportunityIDs := make(map[string]struct{})
+	keptOpportunities := workspace.opportunities[:0]
+	for _, opportunity := range workspace.opportunities {
+		if opportunity.AccountID == id {
+			opportunityIDs[opportunity.ID] = struct{}{}
+			continue
+		}
+		keptOpportunities = append(keptOpportunities, opportunity)
+	}
+	workspace.opportunities = keptOpportunities
+
+	keptActivities := workspace.activities[:0]
+	for _, activity := range workspace.activities {
+		_, contactDeleted := contactIDs[activity.ContactID]
+		_, opportunityDeleted := opportunityIDs[activity.OpportunityID]
+		if !contactDeleted && !opportunityDeleted {
+			keptActivities = append(keptActivities, activity)
+		}
+	}
+	workspace.activities = keptActivities
+
+	keptReminders := workspace.reminders[:0]
+	for _, reminder := range workspace.reminders {
+		_, contactDeleted := contactIDs[reminder.ContactID]
+		if reminder.AccountID != id && !contactDeleted {
+			keptReminders = append(keptReminders, reminder)
+		}
+	}
+	workspace.reminders = keptReminders
+
+	deletedDocuments := make(map[string]struct{})
+	keptDocuments := workspace.documents[:0]
+	for _, document := range workspace.documents {
+		links := remainingAccountLinks(document.Links, id, contactIDs, opportunityIDs)
+		if len(links) == 0 && len(links) != len(document.Links) {
+			deletedDocuments[document.ID] = struct{}{}
+			continue
+		}
+		document.Links = links
+		keptDocuments = append(keptDocuments, document)
+	}
+	workspace.documents = keptDocuments
+	keptRevisions := workspace.documentRevisions[:0]
+	for _, revision := range workspace.documentRevisions {
+		if _, deleted := deletedDocuments[revision.DocumentID]; !deleted {
+			keptRevisions = append(keptRevisions, revision)
+		}
+	}
+	workspace.documentRevisions = keptRevisions
+	workspace.accounts = append(workspace.accounts[:accountIndex], workspace.accounts[accountIndex+1:]...)
+	return deletedContacts, nil
+}
+
+func remainingAccountLinks(links []RecordLink, accountID string, contactIDs, opportunityIDs map[string]struct{}) []RecordLink {
+	kept := make([]RecordLink, 0, len(links))
+	for _, link := range links {
+		_, deletedContact := contactIDs[link.ID]
+		_, deletedOpportunity := opportunityIDs[link.ID]
+		if (link.Type == "account" && link.ID == accountID) || (link.Type == "contact" && deletedContact) || (link.Type == "opportunity" && deletedOpportunity) {
+			continue
+		}
+		kept = append(kept, link)
+	}
+	return kept
+}
+
 func (s *MemoryStore) LinkWebsiteRenewal(_ context.Context, scope, id string, website Website, reminders []Reminder) (Account, []Reminder, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
