@@ -16,6 +16,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -881,11 +882,26 @@ func (m *Module) exportRecords(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) voiceLink(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := m.authorize(w, r); !ok {
+	scope, _, ok := m.authorize(w, r)
+	if !ok {
+		return
+	}
+	var connection VoiceContactsConnection
+	if err := m.store.Get(r.Context(), scope, "voiceContactsConnections", voiceContactsConnectionID, &connection); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusConflict, "google_voice_not_connected", "Ask an administrator to connect the shared Google Voice account")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "google_voice_load_failed", "Could not load the shared Google Voice account")
 		return
 	}
 	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
-	writeJSON(w, http.StatusOK, map[string]string{"googleVoiceUrl": "https://voice.google.com/u/0/messages", "callUrl": "tel:" + phone, "smsUrl": "sms:" + phone})
+	path := "messages"
+	if r.URL.Query().Get("mode") == "call" {
+		path = "calls"
+	}
+	voiceURL := "https://voice.google.com/" + path + "?" + url.Values{"authuser": {connection.GoogleEmail}}.Encode()
+	chooserURL := "https://accounts.google.com/AccountChooser?" + url.Values{"Email": {connection.GoogleEmail}, "continue": {voiceURL}}.Encode()
+	writeJSON(w, http.StatusOK, map[string]string{"googleVoiceUrl": chooserURL, "googleAccount": connection.GoogleEmail, "callUrl": "tel:" + phone, "smsUrl": "sms:" + phone})
 }
 
 func (m *Module) intakeContact(w http.ResponseWriter, r *http.Request) {

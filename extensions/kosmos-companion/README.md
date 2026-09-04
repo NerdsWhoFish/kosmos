@@ -1,12 +1,13 @@
 # Kosmos Companion
 
-Kosmos Companion is a Manifest V3 WebExtension for Chrome and Safari. It opens Google Voice and prepares a Kosmos contact's phone number for a call or message. You still review and start the communication yourself.
+Kosmos Companion is a Manifest V3 WebExtension for Chrome and Safari. It opens Google Voice with the shared account connected by a Kosmos administrator and prepares a contact's phone number for a call or message. You still review and start the communication yourself.
 
 ## Chrome
 
 1. Download this folder.
 2. Open `chrome://extensions`, enable Developer mode, and choose **Load unpacked**.
 3. Select `extensions/kosmos-companion`.
+4. After updating the extension files, use the reload button on its `chrome://extensions` card.
 
 ## Safari
 

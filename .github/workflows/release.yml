@@ -47,6 +47,10 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund && npm test
 
+      - name: Test browser extension
+        working-directory: extensions/kosmos-companion
+        run: npm test
+
       - name: Build frontend
         working-directory: frontend
         run: npm run build

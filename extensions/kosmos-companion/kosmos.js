@@ -8,6 +8,7 @@ window.addEventListener("message", (event) => {
       type: "prepare",
       phone: event.data.phone,
       mode: event.data.mode,
+      launchUrl: event.data.launchUrl,
     });
 });
 window.dispatchEvent(new CustomEvent("kosmos-companion-ready"));

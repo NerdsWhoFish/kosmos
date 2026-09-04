@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -136,6 +137,33 @@ func TestOrganizationMustKeepAnActiveOwner(t *testing.T) {
 func TestEmailTemplateRequiresBody(t *testing.T) {
 	_, mux, _ := newTestModule(t)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/email/templates", `{"name":"Introduction","subject":"Hello","body":"  "}`, http.StatusBadRequest)
+}
+
+func TestVoiceLinkSelectsSharedGoogleAccount(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	const googleEmail = "shared.voice@gmail.com"
+	if err := module.store.Put(context.Background(), "nerds-who-fish", "voiceContactsConnections", voiceContactsConnectionID, VoiceContactsConnection{ID: voiceContactsConnectionID, GoogleEmail: googleEmail}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := performJSON[map[string]string](t, mux, http.MethodGet, "/api/v1/voice/link?phone=%2B15551234567&mode=call", "", http.StatusOK)
+	chooser, err := url.Parse(response["googleVoiceUrl"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chooser.Host != "accounts.google.com" || chooser.Path != "/AccountChooser" || chooser.Query().Get("Email") != googleEmail {
+		t.Fatalf("unexpected account chooser URL: %s", chooser)
+	}
+	destination, err := url.Parse(chooser.Query().Get("continue"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destination.Host != "voice.google.com" || destination.Path != "/calls" || destination.Query().Get("authuser") != googleEmail {
+		t.Fatalf("unexpected Voice destination: %s", destination)
+	}
+	if response["googleAccount"] != googleEmail {
+		t.Fatalf("google account = %q", response["googleAccount"])
+	}
 }
 
 func TestGoogleMailAndTillerFlow(t *testing.T) {

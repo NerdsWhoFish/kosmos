@@ -21,6 +21,12 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 17. Let users attach a receipt while recording a business cost and show its download link with the cost.
 - [x] 18. Let users edit existing accounts, including adding, editing, and removing the domains tied to an account.
 - [x] 19. Let an administrator connect the shared Google account used for Google Voice, then create, update, and optionally delete that account's Google Contacts when Kosmos contacts change.
+- [ ] 20. Preserve email-template variables in the composer and preview, then merge them from the selected contact and account before sending.
+- [ ] 21. Open Google Voice with the shared Google account connected by an administrator instead of the browser's default account.
+- [ ] 22. Let users delete an account after explicit confirmation without leaving linked workspace records orphaned.
+- [ ] 23. Put Quick Lead on the overview as a fixed action outside managed shortcuts and create every captured lead's opportunity in Qualified.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
-- [x] Release with Quill and deploy the complete checklist to production through the pinned Spacelift module. Version `v0.3.0` and module `0.6.0` are deployed.
+- [ ] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 23.
+- [ ] Re-run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests for items 20 through 23.
+- [ ] Release with Quill and deploy items 20 through 23 to production through the pinned Spacelift module.

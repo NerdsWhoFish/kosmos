@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Account, Contact } from "../api";
-import { mergeTemplate } from "./Communications";
+import { hasTemplateVariables, mergeTemplate } from "./Communications";
 
 describe("email template variables", () => {
   it("merges contact, account, and domain values", () => {
@@ -22,5 +22,13 @@ describe("email template variables", () => {
     ).toBe(
       "Hi Ada Angler at River Labs. Domains: river.example, shop.river.example.",
     );
+  });
+
+  it("keeps unresolved variables visible until a contact is selected", () => {
+    const value = "Hi {{name}} at {{company}}. Domains: {{domains}}.";
+
+    expect(mergeTemplate(value)).toBe(value);
+    expect(hasTemplateVariables(mergeTemplate(value))).toBe(true);
+    expect(hasTemplateVariables("Hi Ada at River Labs.")).toBe(false);
   });
 });

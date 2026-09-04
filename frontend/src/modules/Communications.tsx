@@ -29,15 +29,19 @@ export function mergeTemplate(
   account?: Account,
 ) {
   return value
-    .replaceAll("{{name}}", contact?.name ?? "")
-    .replaceAll("{{company}}", account?.name ?? "")
+    .replaceAll("{{name}}", contact?.name || "{{name}}")
+    .replaceAll("{{company}}", account?.name || "{{company}}")
     .replaceAll(
       "{{domains}}",
       account?.websites
         ?.map((website) => website.domain || website.url)
         .filter(Boolean)
-        .join(", ") ?? "",
+        .join(", ") || "{{domains}}",
     );
+}
+
+export function hasTemplateVariables(value: string) {
+  return /{{(?:name|company|domains)}}/.test(value);
 }
 
 export function Communications() {
@@ -56,6 +60,9 @@ export function Communications() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [draft, setDraft] = useState({ to: "", subject: "", body: "" });
+  const [activeTemplate, setActiveTemplate] = useState<EmailTemplate | null>(
+    null,
+  );
 
   const load = useCallback(() => {
     setLoading(true);
@@ -93,6 +100,12 @@ export function Communications() {
 
   async function sendEmail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (hasTemplateVariables(`${draft.subject}\n${draft.body}`)) {
+      setNotice(
+        "Choose a known contact or replace the remaining template variables before sending.",
+      );
+      return;
+    }
     const formElement = event.currentTarget;
     setSending(true);
     setNotice("");
@@ -108,6 +121,7 @@ export function Communications() {
       });
       formElement.reset();
       setDraft({ to: "", subject: "", body: "" });
+      setActiveTemplate(null);
       setNotice("Email sent through your Google account.");
       load();
     } catch (reason) {
@@ -170,6 +184,7 @@ export function Communications() {
       (item) => item.email.toLowerCase() === draft.to.toLowerCase(),
     );
     const account = accounts.find((item) => item.id === contact?.accountId);
+    setActiveTemplate(template);
     setDraft((current) => ({
       ...current,
       subject: mergeTemplate(template.subject, contact, account),
@@ -178,8 +193,25 @@ export function Communications() {
     setNotice(
       contact
         ? `Template “${template.name}” is ready to review.`
-        : `Template “${template.name}” is ready. Choose a known contact to merge name and company.`,
+        : `Template “${template.name}” is ready. Choose a known contact to fill its variables.`,
     );
+  }
+
+  function updateRecipient(to: string) {
+    const contact = contacts.find(
+      (item) => item.email.toLowerCase() === to.toLowerCase(),
+    );
+    const account = accounts.find((item) => item.id === contact?.accountId);
+    setDraft((current) => ({
+      ...current,
+      to,
+      ...(activeTemplate
+        ? {
+            subject: mergeTemplate(activeTemplate.subject, contact, account),
+            body: mergeTemplate(activeTemplate.body, contact, account),
+          }
+        : {}),
+    }));
   }
 
   function chooseVoiceContact(contactID: string) {
@@ -255,12 +287,7 @@ export function Communications() {
                 required
                 placeholder="customer@example.com"
                 value={draft.to}
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    to: event.target.value,
-                  }))
-                }
+                onChange={(event) => updateRecipient(event.target.value)}
               />
             </label>
             <datalist id="known-contacts">
@@ -279,12 +306,13 @@ export function Communications() {
                 required
                 maxLength={200}
                 value={draft.subject}
-                onChange={(event) =>
+                onChange={(event) => {
+                  setActiveTemplate(null);
                   setDraft((current) => ({
                     ...current,
                     subject: event.target.value,
-                  }))
-                }
+                  }));
+                }}
               />
             </label>
             <label>
@@ -294,12 +322,13 @@ export function Communications() {
                 required
                 rows={9}
                 value={draft.body}
-                onChange={(event) =>
+                onChange={(event) => {
+                  setActiveTemplate(null);
                   setDraft((current) => ({
                     ...current,
                     body: event.target.value,
-                  }))
-                }
+                  }));
+                }}
               />
             </label>
             {(draft.subject || draft.body) && (

@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -231,8 +232,24 @@ const responses: Record<string, unknown> = {
     endpoint: "/api/v1/webhooks/tiller",
   },
   "/api/v1/integrations/tiller/product-mappings": { mappings: [] },
-  "/api/v1/email/templates": { templates: [] },
+  "/api/v1/email/templates": {
+    templates: [
+      {
+        id: "template-1",
+        name: "Welcome note",
+        subject: "Welcome {{name}}",
+        body: "Hi {{name}} at {{company}}. Domains: {{domains}}.",
+        createdAt: "2026-09-03T12:00:00Z",
+        updatedAt: "2026-09-03T12:00:00Z",
+      },
+    ],
+  },
   "/api/v1/email/messages": { messages: [] },
+  "/api/v1/voice/link": {
+    googleVoiceUrl:
+      "https://accounts.google.com/AccountChooser?Email=shared.voice%40gmail.com&continue=https%3A%2F%2Fvoice.google.com%2Fmessages%3Fauthuser%3Dshared.voice%2540gmail.com",
+    googleAccount: "shared.voice@gmail.com",
+  },
   "/api/v1/notifications": { notifications: [] },
   "/api/v1/transactions": {
     transactions: [
@@ -1316,13 +1333,60 @@ describe("Kosmos application", () => {
     ).toBeInTheDocument();
     fireEvent(window, new CustomEvent("kosmos-companion-ready"));
     fireEvent.click(screen.getByRole("button", { name: /google voice/i }));
-    expect(postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "KOSMOS_VOICE_PREPARE",
-        phone: contact.phone,
-      }),
-      window.location.origin,
+    await waitFor(() =>
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "KOSMOS_VOICE_PREPARE",
+          phone: contact.phone,
+          launchUrl: expect.stringContaining("accounts.google.com"),
+        }),
+        window.location.origin,
+      ),
     );
+  });
+
+  it("keeps template variables visible and fills them for a known contact", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Inbox" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /welcome note/i }),
+    );
+
+    const preview = screen.getByRole("region", { name: /email preview/i });
+    expect(within(preview).getByText("Welcome {{name}}"))
+      .toBeInTheDocument();
+    expect(within(preview).getByText(/Hi {{name}} at {{company}}/))
+      .toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox", { name: /^to$/i }), {
+      target: { value: contact.email },
+    });
+    expect(within(preview).getByText("Welcome Ada Angler"))
+      .toBeInTheDocument();
+    expect(
+      within(preview).getByText(
+        "Hi Ada Angler at River Labs. Domains: river.example.",
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /send with gmail/i }));
+    await waitFor(() => {
+      const request = vi
+        .mocked(fetch)
+        .mock.calls.find(
+          ([input, init]) =>
+            String(input) === "/api/v1/email/send" && init?.method === "POST",
+        );
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        to: contact.email,
+        subject: "Welcome Ada Angler",
+        body: "Hi Ada Angler at River Labs. Domains: river.example.",
+      });
+    });
   });
 
   it("creates an account document with the account link", async () => {
