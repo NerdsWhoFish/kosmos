@@ -71,8 +71,8 @@ run "bootstrap_defaults" {
   }
 
   assert {
-    condition     = google_cloud_tasks_queue.jobs.rate_limits[0].max_concurrent_dispatches == 2
-    error_message = "the async queue must keep a conservative near-free concurrency cap"
+    condition     = google_cloud_tasks_queue.jobs.rate_limits[0].max_concurrent_dispatches == 1
+    error_message = "the async queue must serialize Google Contacts mutations and preserve the near-free cost cap"
   }
 
   assert {
@@ -83,6 +83,11 @@ run "bootstrap_defaults" {
   assert {
     condition     = google_project_service.required["gmail.googleapis.com"].service == "gmail.googleapis.com"
     error_message = "the environment must enable the Gmail API used by Google Workspace jobs"
+  }
+
+  assert {
+    condition     = google_project_service.required["people.googleapis.com"].service == "people.googleapis.com"
+    error_message = "the environment must enable the People API used by shared Google Contacts sync"
   }
 }
 

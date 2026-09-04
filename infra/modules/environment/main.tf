@@ -100,6 +100,7 @@ locals {
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",
     "monitoring.googleapis.com",
+    "people.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
     "storage.googleapis.com",
@@ -166,7 +167,7 @@ resource "google_cloud_tasks_queue" "jobs" {
   location = var.region
 
   rate_limits {
-    max_concurrent_dispatches = 2
+    max_concurrent_dispatches = 1
     max_dispatches_per_second = 1
   }
 
