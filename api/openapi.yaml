@@ -54,6 +54,24 @@ paths:
                 $ref: '#/components/schemas/User'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /modules:
+    get:
+      operationId: listModules
+      responses:
+        '200':
+          description: Enabled module capabilities and navigation metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [modules]
+                properties:
+                  modules:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ModuleManifest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /summary:
     get:
       operationId: getWorkspaceSummary
@@ -502,6 +520,27 @@ paths:
           $ref: '#/components/responses/CostList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createCost
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CostInput'
+      responses:
+        '201':
+          description: Cost created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cost'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /costs/{id}:
     patch:
       operationId: updateCost
@@ -527,27 +566,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
-    post:
-      operationId: createCost
-      parameters:
-        - $ref: '#/components/parameters/CSRF'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CostInput'
-      responses:
-        '201':
-          description: Cost created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Cost'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /members:
     get:
       operationId: listMembers
@@ -919,6 +937,48 @@ components:
         picture:
           type: string
           format: uri
+    ModuleManifest:
+      type: object
+      required: [name, navigation, permissions, resources, eventTypes, backgroundJobs, searchProviders, documentLinkTargets]
+      properties:
+        name:
+          type: string
+        navigation:
+          type: array
+          items:
+            type: object
+            required: [path, label, icon]
+            properties:
+              path:
+                type: string
+              label:
+                type: string
+              icon:
+                type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        resources:
+          type: array
+          items:
+            type: string
+        eventTypes:
+          type: array
+          items:
+            type: string
+        backgroundJobs:
+          type: array
+          items:
+            type: string
+        searchProviders:
+          type: array
+          items:
+            type: string
+        documentLinkTargets:
+          type: array
+          items:
+            type: string
     ButtonInput:
       type: object
       required: [label, href]
