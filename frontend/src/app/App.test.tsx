@@ -91,9 +91,10 @@ describe('Kosmos application', () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { name: /good (morning|afternoon|evening), joey/i })).toBeInTheDocument()
-    for (const destination of ['Overview', 'Contacts', 'Accounts', 'Opportunities', 'Documents', 'Costs', 'Inbox', 'Operations', 'Settings']) {
+    for (const destination of ['Overview', 'Contacts', 'Accounts', 'Opportunities', 'Documents', 'Inbox', 'Operations', 'Settings']) {
       expect(screen.getByRole('link', { name: destination })).toBeInTheDocument()
     }
+    expect(screen.queryByRole('link', { name: 'Costs' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('link', { name: 'Contacts' }))
     expect(await screen.findByRole('heading', { name: 'Contacts' })).toBeInTheDocument()
@@ -135,7 +136,8 @@ describe('Kosmos application', () => {
     expect(await screen.findByRole('heading', { name: 'Before launch' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /contact · ada angler/i })).toHaveAttribute('href', `/contacts/${contact.id}`)
 
-    fireEvent.click(screen.getByRole('link', { name: 'Costs' }))
+    fireEvent.click(screen.getByRole('link', { name: 'Operations' }))
+    expect(await screen.findByRole('heading', { name: 'Business operations' })).toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'Business costs' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /record a cost/i }))
     const now = new Date()

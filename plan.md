@@ -84,6 +84,7 @@ Buttons and dashboard cards are registered by modules, so adding a capability do
 
 ### Costs and lightweight ERP
 
+- Costs are presented inside the single Business Operations workspace rather than as a separate top-level destination.
 - One-time and recurring business costs.
 - Subscriptions, registration costs, renewals, vendors, categories, tax notes, and payment methods.
 - Receipt attachment and retention metadata.

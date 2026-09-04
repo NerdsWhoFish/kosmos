@@ -91,12 +91,35 @@ func TestWorkspaceSearchesRecords(t *testing.T) {
 	mux := http.NewServeMux()
 	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
 	performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Grace Hopper","company":"Compiler Co","status":"customer"}`, http.StatusCreated)
+	performJSON[Cost](t, mux, http.MethodPost, "/api/v1/costs", `{"vendor":"Google","description":"Workspace","amountCents":1800,"incurredOn":"2026-09-04"}`, http.StatusCreated)
 
 	response := performJSON[struct {
 		Results []searchResult `json:"results"`
 	}](t, mux, http.MethodGet, "/api/v1/search?q=compiler", "", http.StatusOK)
 	if len(response.Results) != 1 || response.Results[0].Title != "Grace Hopper" || response.Results[0].Href != "/contacts/"+response.Results[0].ID {
 		t.Fatalf("unexpected search results: %#v", response.Results)
+	}
+	costResponse := performJSON[struct {
+		Results []searchResult `json:"results"`
+	}](t, mux, http.MethodGet, "/api/v1/search?q=workspace", "", http.StatusOK)
+	if len(costResponse.Results) != 1 || costResponse.Results[0].Href != "/operations" {
+		t.Fatalf("unexpected cost search results: %#v", costResponse.Results)
+	}
+}
+
+func TestWorkspaceManifestKeepsCostsInsideBusinessOperations(t *testing.T) {
+	manifest := (Module{}).Manifest()
+	for _, navigation := range manifest.Navigation {
+		if navigation.Path == "/costs" {
+			t.Fatal("costs must not be a separate top-level destination")
+		}
+	}
+	found := false
+	for _, resource := range manifest.Resources {
+		found = found || resource == "costs"
+	}
+	if !found {
+		t.Fatal("costs resource must remain owned by the workspace module")
 	}
 }
 

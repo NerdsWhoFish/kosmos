@@ -6,7 +6,6 @@ import { LoadingState } from '../components/States'
 const Activity = lazy(() => import('../modules/Activity').then((module) => ({ default: module.Activity })))
 const Accounts = lazy(() => import('../modules/Accounts').then((module) => ({ default: module.Accounts })))
 const Contacts = lazy(() => import('../modules/Contacts').then((module) => ({ default: module.Contacts })))
-const Costs = lazy(() => import('../modules/Costs').then((module) => ({ default: module.Costs })))
 const Documents = lazy(() => import('../modules/Documents').then((module) => ({ default: module.Documents })))
 const Opportunities = lazy(() => import('../modules/Opportunities').then((module) => ({ default: module.Opportunities })))
 const Overview = lazy(() => import('../modules/Overview').then((module) => ({ default: module.Overview })))
@@ -71,7 +70,7 @@ function Route({ location, user, navigate }: { location: LocationState; user: Us
   if (path === '/accounts') return <Accounts initialID={recordID(location.path, '/accounts')} navigate={navigate} />
   if (path === '/opportunities') return <Opportunities />
   if (path === '/documents') return <Documents />
-  if (path === '/costs') return <Costs />
+  if (path === '/costs') return <Operations />
   if (path === '/activity') return <Activity />
   if (path === '/communications') return <Communications />
   if (path === '/operations') return <Operations />

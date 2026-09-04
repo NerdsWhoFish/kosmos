@@ -23,7 +23,7 @@ func NewModule(store Store, scope ScopeFunc) Module {
 func (Module) Name() string { return "workspace" }
 
 func (Module) Manifest() platformmodules.Manifest {
-	return platformmodules.Manifest{Name: "workspace", Navigation: []platformmodules.Navigation{{Path: "/contacts", Label: "Contacts", Icon: "contacts"}, {Path: "/accounts", Label: "Accounts", Icon: "accounts"}, {Path: "/opportunities", Label: "Opportunities", Icon: "pipeline"}, {Path: "/documents", Label: "Documents", Icon: "documents"}, {Path: "/costs", Label: "Costs", Icon: "costs"}}, Permissions: []string{"workspace.read", "workspace.write"}, Resources: []string{"accounts", "contacts", "leads", "opportunities", "activities", "reminders", "documents", "costs"}, EventTypes: []string{"contact.created", "opportunity.changed", "reminder.created", "activity.created", "cost.created"}, SearchProviders: []string{"workspace"}, DocumentLinkTargets: []string{"account", "contact", "opportunity", "cost", "document"}}
+	return platformmodules.Manifest{Name: "workspace", Navigation: []platformmodules.Navigation{{Path: "/contacts", Label: "Contacts", Icon: "contacts"}, {Path: "/accounts", Label: "Accounts", Icon: "accounts"}, {Path: "/opportunities", Label: "Opportunities", Icon: "pipeline"}, {Path: "/documents", Label: "Documents", Icon: "documents"}}, Permissions: []string{"workspace.read", "workspace.write"}, Resources: []string{"accounts", "contacts", "leads", "opportunities", "activities", "reminders", "documents", "costs"}, EventTypes: []string{"contact.created", "opportunity.changed", "reminder.created", "activity.created", "cost.created"}, SearchProviders: []string{"workspace"}, DocumentLinkTargets: []string{"account", "contact", "opportunity", "cost", "document"}}
 }
 
 type Contact struct {

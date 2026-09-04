@@ -6,7 +6,7 @@ type Navigate = (path: string) => void
 
 const icons = { overview: LayoutGrid, contacts: Users, accounts: Building2, pipeline: CircleDollarSign, documents: FileText, costs: CheckCircle2, inbox: Inbox, operations: SlidersHorizontal, settings: Settings2 }
 const fallbackNavigation = [
-  { path: '/', label: 'Overview', icon: 'overview' }, { path: '/contacts', label: 'Contacts', icon: 'contacts' }, { path: '/accounts', label: 'Accounts', icon: 'accounts' }, { path: '/opportunities', label: 'Opportunities', icon: 'pipeline' }, { path: '/documents', label: 'Documents', icon: 'documents' }, { path: '/costs', label: 'Costs', icon: 'costs' }, { path: '/communications', label: 'Inbox', icon: 'inbox' }, { path: '/operations', label: 'Operations', icon: 'operations' }, { path: '/settings', label: 'Settings', icon: 'settings' },
+  { path: '/', label: 'Overview', icon: 'overview' }, { path: '/contacts', label: 'Contacts', icon: 'contacts' }, { path: '/accounts', label: 'Accounts', icon: 'accounts' }, { path: '/opportunities', label: 'Opportunities', icon: 'pipeline' }, { path: '/documents', label: 'Documents', icon: 'documents' }, { path: '/communications', label: 'Inbox', icon: 'inbox' }, { path: '/operations', label: 'Operations', icon: 'operations' }, { path: '/settings', label: 'Settings', icon: 'settings' },
 ]
 
 export function Shell({ user, modules, path, navigate, logout, children }: { user: User; modules: ModuleManifest[]; path: string; navigate: Navigate; logout: () => void; children: ReactNode }) {

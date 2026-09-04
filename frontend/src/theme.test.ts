@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const styles = readFileSync('src/styles.css', 'utf8')
+const indexHTML = readFileSync('index.html', 'utf8')
 
 function cssColor(name: string) {
   const match = styles.match(new RegExp(`--${name}:\\s*(#[0-9A-Fa-f]{6})`))
@@ -41,5 +42,18 @@ describe('Dracula theme accessibility', () => {
     for (const surface of surfaces) {
       expect(contrast(muted, surface)).toBeGreaterThanOrEqual(4.5)
     }
+  })
+})
+
+describe('mobile form accessibility', () => {
+  it('keeps browser zoom available while preventing iOS focus zoom', () => {
+    expect(indexHTML).toContain('width=device-width, initial-scale=1, viewport-fit=cover')
+    expect(indexHTML).not.toMatch(/maximum-scale|user-scalable/)
+    expect(styles).toContain(".app-shell input:not([type='checkbox']), .app-shell select, .app-shell textarea { font-size: 16px; }")
+  })
+
+  it('stacks panel labels and actions instead of squeezing fields together', () => {
+    expect(styles).toContain('.panel form label { min-width: 0; display: grid;')
+    expect(styles).toContain('.panel .form-actions { grid-template-columns: 1fr; }')
   })
 })

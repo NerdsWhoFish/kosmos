@@ -131,6 +131,19 @@ func TestGoogleMailAndTillerFlow(t *testing.T) {
 	if len(transactions.Transactions) != 1 || transactions.Transactions[0].MatchStatus != "matched" {
 		t.Fatalf("unexpected transactions: %#v", transactions.Transactions)
 	}
+	notifications := performJSON[struct {
+		Notifications []Notification `json:"notifications"`
+	}](t, mux, http.MethodGet, "/api/v1/notifications", "", http.StatusOK)
+	var tillerNotification *Notification
+	for index := range notifications.Notifications {
+		if notifications.Notifications[index].Kind == "transaction" {
+			tillerNotification = &notifications.Notifications[index]
+			break
+		}
+	}
+	if tillerNotification == nil || tillerNotification.Href != "/operations" {
+		t.Fatalf("unexpected business operation notifications: %#v", notifications.Notifications)
+	}
 }
 
 func TestGoogleConnectionSecretMigration(t *testing.T) {

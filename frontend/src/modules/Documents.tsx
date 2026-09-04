@@ -107,7 +107,7 @@ function recordHref(link: RecordLink) {
   if (link.type === 'account') return `/accounts/${link.id}`
   if (link.type === 'contact') return `/contacts/${link.id}`
   if (link.type === 'opportunity') return '/opportunities'
-  if (link.type === 'cost') return '/costs'
+  if (link.type === 'cost') return '/operations'
   return '/documents'
 }
 

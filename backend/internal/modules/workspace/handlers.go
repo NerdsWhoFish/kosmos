@@ -569,7 +569,7 @@ func (m Module) search(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range costs {
 		if matches(query, item.Vendor, item.Description, item.Category) {
-			results = append(results, searchResult{ID: item.ID, Kind: "cost", Title: item.Description, Subtitle: item.Vendor, Href: "/costs"})
+			results = append(results, searchResult{ID: item.ID, Kind: "cost", Title: item.Description, Subtitle: item.Vendor, Href: "/operations"})
 		}
 	}
 	if len(results) > 25 {

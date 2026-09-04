@@ -940,7 +940,7 @@ func (m *Module) syncTillerConnection(ctx context.Context, scope, connectionID, 
 	if len(createdIDs) > 0 {
 		sort.Strings(createdIDs)
 		effectKey := "tiller:" + strings.Join(createdIDs, "|")
-		if err := m.notify(ctx, scope, "Tiller import ready", fmt.Sprintf("%d new transactions imported", len(createdIDs)), "transaction", "/costs", effectKey); err != nil {
+		if err := m.notify(ctx, scope, "Tiller import ready", fmt.Sprintf("%d new transactions imported", len(createdIDs)), "transaction", "/operations", effectKey); err != nil {
 			return len(createdIDs), len(transactions), err
 		}
 		if err := m.auditJob(ctx, scope, actor, "tiller.synced", "integration", connection.ID, fmt.Sprintf("Imported %d transactions", len(createdIDs)), effectKey); err != nil {

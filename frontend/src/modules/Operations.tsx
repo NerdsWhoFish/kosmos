@@ -3,11 +3,13 @@ import { Download, FileUp, RefreshCw, Sheet, UploadCloud } from 'lucide-react'
 import { AcceptedJob, api, Attachment, Contact, Cost, Document, GoogleStatus, money, Opportunity, Transaction } from '../api'
 import { Page } from '../components/Page'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
+import { Costs } from './Costs'
 
 export function Operations() {
   const [google, setGoogle] = useState<GoogleStatus | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [costs, setCosts] = useState<Cost[]>([])
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -17,7 +19,7 @@ export function Operations() {
 
   const load = useCallback(() => {
     Promise.all([api<GoogleStatus>('/api/v1/integrations/google'), api<{ transactions: Transaction[] }>('/api/v1/transactions'), api<{ attachments: Attachment[] }>('/api/v1/attachments'), api<{ documents: Document[] }>('/api/v1/documents'), api<{ costs: Cost[] }>('/api/v1/costs'), api<{ contacts: Contact[] }>('/api/v1/contacts'), api<{ opportunities: Opportunity[] }>('/api/v1/opportunities')])
-      .then(([connection, imported, files, documents, costs, contacts, opportunities]) => { setGoogle(connection); setTransactions(imported.transactions); setAttachments(files.attachments); setRecords({ document: documents.documents.map((item) => ({ id: item.id, label: item.title })), cost: costs.costs.map((item) => ({ id: item.id, label: `${item.description} (${item.vendor || 'No vendor'})` })), contact: contacts.contacts.map((item) => ({ id: item.id, label: item.name })), opportunity: opportunities.opportunities.map((item) => ({ id: item.id, label: item.name })) }); setError('') })
+      .then(([connection, imported, files, documents, costsResponse, contacts, opportunities]) => { setGoogle(connection); setTransactions(imported.transactions); setAttachments(files.attachments); setCosts(costsResponse.costs); setRecords({ document: documents.documents.map((item) => ({ id: item.id, label: item.title })), cost: costsResponse.costs.map((item) => ({ id: item.id, label: `${item.description} (${item.vendor || 'No vendor'})` })), contact: contacts.contacts.map((item) => ({ id: item.id, label: item.name })), opportunity: opportunities.opportunities.map((item) => ({ id: item.id, label: item.name })) }); setError('') })
       .catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false))
   }, [])
   useEffect(load, [load])
@@ -69,8 +71,9 @@ export function Operations() {
   if (error) return <ErrorState message={error} retry={load} />
 
   const reviewCount = transactions.filter((item) => item.matchStatus === 'review').length
-  return <Page eyebrow="Back office" title="Business operations" detail="Bring in transactions, keep receipts and files private, and export clean records when your accountant asks.">
+  return <Page eyebrow="Back office" title="Business operations" detail="Manage costs, transactions, receipts, private files, and accounting exports in one place.">
     {notice && <p className="inline-notice" role="status">{notice}</p>}
+    <Costs embedded initialItems={costs} />
     <section className="split-grid">
       <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Tiller</p><h2>Transaction import</h2></div>{google?.connection?.tiller && <button className="text-button" onClick={syncTiller} disabled={syncing}><RefreshCw size={15} /> {syncing ? 'Queueing...' : 'Sync now'}</button>}</div>
         {!google?.connected ? <EmptyState title="Connect Google first" detail="Tiller lives in Google Sheets, so the Google Workspace connection provides read-only access." /> : <form onSubmit={configureTiller}><label>Spreadsheet ID<input name="spreadsheetId" defaultValue={google.connection?.tiller?.spreadsheetId} required placeholder="From the Google Sheets URL" /></label><label>Sheet range<input name="range" defaultValue={google.connection?.tiller?.range ?? 'Transactions!A:Z'} required /></label><button className="primary-button"><Sheet size={16} /> Save Tiller connection</button></form>}
