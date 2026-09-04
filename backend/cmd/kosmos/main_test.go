@@ -26,8 +26,9 @@ type openAPIContract struct {
 }
 
 type openAPIPathItem struct {
-	Get  openAPIOperation `yaml:"get"`
-	Post openAPIOperation `yaml:"post"`
+	Get    openAPIOperation `yaml:"get"`
+	Post   openAPIOperation `yaml:"post"`
+	Delete openAPIOperation `yaml:"delete"`
 }
 
 type openAPIOperation struct {
@@ -85,6 +86,36 @@ func TestProcessRole(t *testing.T) {
 	}
 	if _, err := processRole("scheduler"); err == nil {
 		t.Fatal("unsupported role should fail")
+	}
+}
+
+func TestReleaseBuildsArtifactsBeforeTheContainer(t *testing.T) {
+	repositoryRoot := filepath.Join("..", "..", "..")
+	files := map[string]string{}
+	for _, path := range []string{".github/workflows/release.yml", ".goreleaser.yaml", "Dockerfile"} {
+		contents, err := os.ReadFile(filepath.Join(repositoryRoot, path))
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		files[path] = string(contents)
+	}
+
+	if !strings.Contains(files[".github/workflows/release.yml"], "publish: goreleaser,docker") {
+		t.Fatal("release must run GoReleaser before Docker")
+	}
+	if !strings.Contains(files[".goreleaser.yaml"], "main: ./backend/cmd/kosmos") {
+		t.Fatal("GoReleaser must build the Kosmos server")
+	}
+	dockerfile := files["Dockerfile"]
+	for _, forbidden := range []string{"FROM golang:", "FROM node:", "go build", "npm run build"} {
+		if strings.Contains(dockerfile, forbidden) {
+			t.Fatalf("Dockerfile recompiles application artifacts with %q", forbidden)
+		}
+	}
+	for _, required := range []string{"COPY dist/kosmos_linux_${TARGETARCH}*/kosmos /kosmos", "COPY frontend/dist /web"} {
+		if !strings.Contains(dockerfile, required) {
+			t.Fatalf("Dockerfile missing artifact copy %q", required)
+		}
 	}
 }
 

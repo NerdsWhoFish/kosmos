@@ -1,0 +1,21 @@
+version: 2
+
+project_name: kosmos
+
+builds:
+  - id: kosmos
+    main: ./backend/cmd/kosmos
+    binary: kosmos
+    env:
+      - CGO_ENABLED=0
+      - GOWORK=off
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+changelog:
+  use: github-native

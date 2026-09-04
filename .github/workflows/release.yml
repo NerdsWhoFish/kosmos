@@ -62,7 +62,7 @@ jobs:
         with:
           bump: ${{ inputs.bump }}
           scope: ${{ inputs.scope }}
-          publish: docker
+          publish: goreleaser,docker
           docker-registry: us-east1-docker.pkg.dev
           docker-images: us-east1-docker.pkg.dev/nwf-kosmos-prod/kosmos/kosmos
           docker-username: oauth2accesstoken
