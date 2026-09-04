@@ -37,6 +37,9 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 33. Restyle document attachments as a clear, responsive upload section that remains usable with long documents.
 - [x] 34. Let email templates define custom questionnaire inputs with defaults, merge their values into custom variables, and block sending until every answer is filled.
 - [x] 35. Open a contact's Google Voice search through Google Account Chooser for the administrator-connected shared account without hardcoding a browser-local `/u/N` slot.
+- [ ] 36. Record identifiable account events, show the five newest events on each account, and provide a dedicated filterable history page.
+- [ ] 37. Preserve authored email line breaks without adding visible transport wrapping to sent Gmail messages.
+- [ ] 38. Keep unread notification text and its Mark read action in the same responsive layout as read notifications without collisions.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
@@ -46,3 +49,5 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] Release v0.3.2 and deploy items 28 through 30 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.6.0.
 - [x] Run backend and frontend verification for items 31 through 35 across phone, tablet, laptop, and desktop viewports.
 - [x] Release v0.3.3 and deploy items 31 through 35 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.6.0.
+- [ ] Run backend and frontend verification for items 36 through 38 across phone, tablet, laptop, and desktop viewports.
+- [ ] Release v0.3.4 and deploy items 36 through 38 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.6.0.
