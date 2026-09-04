@@ -2,7 +2,7 @@
 
 Kosmos is an MIT-licensed, extensible small business management platform. It gives a small business one friendly landing zone for links, relationships, follow-ups, documents, costs, integrations, and notifications.
 
-The application is a Go API with a responsive React frontend, packaged as one stateless Cloud Run service that scales to zero. It includes Google login, roles, accounts and relationship management, Markdown knowledge, reminders, Gmail actions, Google Voice handoffs, Tiller imports, costs and receipts, notifications, audit history, exports, and configurable landing-zone shortcuts. See [plan.md](plan.md) for the product contract.
+The application is a Go API with a responsive React frontend, packaged as one stateless Cloud Run service that scales to zero. It includes Google login, roles, accounts and relationship management, Markdown knowledge, reminders, Gmail actions, shared Google Voice contact synchronization, Google Voice handoffs, Tiller imports, costs and receipts, notifications, audit history, exports, and configurable landing-zone shortcuts. See [plan.md](plan.md) for the product contract.
 
 ## Local development
 
