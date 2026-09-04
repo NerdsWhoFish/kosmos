@@ -58,6 +58,11 @@ run "bootstrap_defaults" {
   }
 
   assert {
+    condition     = length(google_iam_workload_identity_pool.github.display_name) <= 32
+    error_message = "the workload identity pool display name must fit GCP's limit"
+  }
+
+  assert {
     condition     = var.min_instances == 0 && var.max_instances == 3
     error_message = "Cloud Run defaults must preserve scale-to-zero and the cost cap"
   }

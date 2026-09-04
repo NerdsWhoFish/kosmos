@@ -130,7 +130,7 @@ resource "google_storage_bucket_iam_member" "runtime_attachments" {
 resource "google_iam_workload_identity_pool" "github" {
   project                   = var.project_id
   workload_identity_pool_id = "${local.name_prefix}-github"
-  display_name              = "Kosmos ${var.environment} GitHub releases"
+  display_name              = "Kosmos ${var.environment} GitHub"
 
   depends_on = [google_project_service.required]
 }
