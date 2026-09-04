@@ -18,7 +18,7 @@
   --theme-surface-dark: #21222C;
   --theme-border: #44475A;
   --theme-text: var(--dracula-foreground);
-  --theme-muted: var(--dracula-comment);
+  --theme-muted: #B5BCD0;
   --theme-accent: var(--dracula-purple);
   --theme-link: var(--dracula-cyan);
   --theme-success: var(--dracula-green);
@@ -72,13 +72,14 @@ body { background: var(--theme-background); color: var(--theme-text); }
 .sidebar { background: var(--theme-surface-dark); color: var(--theme-text); }
 .brand { color: var(--theme-text); }
 .brand-mark { background: var(--theme-accent); color: var(--theme-surface-dark); }
-.sidebar .eyebrow, .nav-item { color: var(--theme-muted); }
+.eyebrow, .sidebar .eyebrow, .nav-item, .user-chip small { color: var(--theme-muted); }
 .nav-item:hover, .nav-item.active { color: var(--theme-text); background: var(--theme-surface); }
 .nav-item.active { box-shadow: inset 3px 0 var(--theme-accent); }
 .nav-count { background: var(--theme-surface-raised); color: var(--theme-text); }
 .user-chip { border-color: var(--theme-border); }
 .topbar { border-color: var(--theme-border); }
 .search, .subhead, .stat-label, .stat-card small, .shortcut-card small, .activity-item small, .activity-item time { color: var(--theme-muted); }
+.text-button { color: var(--theme-link); }
 .search input { color: var(--theme-text); }
 .notification-dot { background: var(--theme-danger); border-color: var(--theme-background); }
 .primary-button { background: var(--theme-accent); color: var(--theme-surface-dark); }
