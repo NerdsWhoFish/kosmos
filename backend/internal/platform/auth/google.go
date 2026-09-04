@@ -39,8 +39,18 @@ type Google struct {
 }
 
 type grant struct {
-	scopes  []string
-	handler func(context.Context, User, *oauth2.Token) error
+	scopes                []string
+	allowDifferentAccount bool
+	authorize             func(context.Context, User) error
+	handler               func(context.Context, User, User, *oauth2.Token) error
+}
+
+func (g grant) authCodeOptions() []oauth2.AuthCodeOption {
+	options := []oauth2.AuthCodeOption{oauth2.AccessTypeOffline, oauth2.ApprovalForce}
+	if g.allowDifferentAccount {
+		options = append(options, oauth2.SetAuthURLParam("prompt", "consent select_account"))
+	}
+	return options
 }
 
 type User struct {
@@ -78,7 +88,18 @@ func (g *Google) RegisterRoutes(mux *http.ServeMux) {
 func (g *Google) RegisterGrant(name string, scopes []string, handler func(context.Context, User, *oauth2.Token) error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.grants[name] = grant{scopes: append([]string(nil), scopes...), handler: handler}
+	g.grants[name] = grant{
+		scopes: append([]string(nil), scopes...),
+		handler: func(ctx context.Context, actor, _ User, token *oauth2.Token) error {
+			return handler(ctx, actor, token)
+		},
+	}
+}
+
+func (g *Google) RegisterDelegatedGrant(name string, scopes []string, authorize func(context.Context, User) error, handler func(context.Context, User, User, *oauth2.Token) error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.grants[name] = grant{scopes: append([]string(nil), scopes...), allowDifferentAccount: true, authorize: authorize, handler: handler}
 }
 
 func (g *Google) login(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +132,10 @@ func (g *Google) connect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown Google connection", http.StatusNotFound)
 		return
 	}
+	if registered.authorize != nil && registered.authorize(r.Context(), current) != nil {
+		http.Error(w, "This Google connection requires an owner or administrator", http.StatusForbidden)
+		return
+	}
 	config, err := g.oauthConfig(r.Context(), r, registered.scopes)
 	if err != nil {
 		http.Error(w, "Google connection is not configured", http.StatusServiceUnavailable)
@@ -123,7 +148,7 @@ func (g *Google) connect(w http.ResponseWriter, r *http.Request) {
 	}
 	state := name + ":" + current.Subject + ":" + nonce
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state, Path: "/", MaxAge: 600, HttpOnly: true, Secure: g.secureCookies(), SameSite: http.SameSiteLaxMode})
-	http.Redirect(w, r, config.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce), http.StatusFound)
+	http.Redirect(w, r, config.AuthCodeURL(state, registered.authCodeOptions()...), http.StatusFound)
 }
 
 func (g *Google) callback(w http.ResponseWriter, r *http.Request) {
@@ -132,14 +157,16 @@ func (g *Google) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid login state", http.StatusBadRequest)
 		return
 	}
-	purpose, _, ok := strings.Cut(r.URL.Query().Get("state"), ":")
-	if !ok {
+	stateParts := strings.SplitN(r.URL.Query().Get("state"), ":", 3)
+	if len(stateParts) < 2 {
 		http.Error(w, "invalid login state", http.StatusBadRequest)
 		return
 	}
+	purpose := stateParts[0]
 	var registered grant
 	if purpose != "login" {
 		g.mu.Lock()
+		var ok bool
 		registered, ok = g.grants[purpose]
 		g.mu.Unlock()
 		if !ok {
@@ -178,22 +205,31 @@ func (g *Google) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Google identity was incomplete", http.StatusUnauthorized)
 		return
 	}
-	if !g.allowsEmail(claims.Email) {
-		http.Error(w, "This Google account is not allowed to use Kosmos", http.StatusForbidden)
-		return
-	}
 	if purpose != "login" {
 		current, sessionErr := g.CurrentUser(r)
-		if sessionErr != nil || current.Subject != claims.Subject {
+		if sessionErr != nil || len(stateParts) != 3 || current.Subject != stateParts[1] {
+			http.Error(w, "Google connection session changed", http.StatusForbidden)
+			return
+		}
+		if registered.authorize != nil && registered.authorize(r.Context(), current) != nil {
+			http.Error(w, "This Google connection requires an owner or administrator", http.StatusForbidden)
+			return
+		}
+		if !registered.allowDifferentAccount && current.Subject != claims.Subject {
 			http.Error(w, "Google connection must use your signed-in account", http.StatusForbidden)
 			return
 		}
-		if err := registered.handler(r.Context(), current, token); err != nil {
+		connected := User{Subject: claims.Subject, Email: claims.Email, Name: claims.Name, Picture: claims.Picture}
+		if err := registered.handler(r.Context(), current, connected, token); err != nil {
 			http.Error(w, "could not save Google connection", http.StatusInternalServerError)
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: g.secureCookies(), SameSite: http.SameSiteLaxMode})
-		http.Redirect(w, r, "/settings?connected=1", http.StatusFound)
+		http.Redirect(w, r, "/settings?connected="+purpose, http.StatusFound)
+		return
+	}
+	if !g.allowsEmail(claims.Email) {
+		http.Error(w, "This Google account is not allowed to use Kosmos", http.StatusForbidden)
 		return
 	}
 	if len(g.sessionKey) < 32 {

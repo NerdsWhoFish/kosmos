@@ -1,10 +1,15 @@
 package auth
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 func TestMeRequiresASession(t *testing.T) {
@@ -136,5 +141,53 @@ func TestProductionLoginRequiresDomainPolicy(t *testing.T) {
 	}
 	if _, err := server.oauthConfig(t.Context(), httptest.NewRequest(http.MethodGet, "/auth/login", nil)); err == nil {
 		t.Fatal("production login was configured without an allowed domain")
+	}
+}
+
+func TestDelegatedGrantChecksTheCurrentAdministratorBeforeOAuth(t *testing.T) {
+	server := &Google{
+		clientID:       "client-id",
+		clientSecret:   "client-secret",
+		sessionKey:     []byte("01234567890123456789012345678901"),
+		allowedDomains: parseDomains("nerdswhofish.com"),
+		grants:         make(map[string]grant),
+	}
+	server.RegisterDelegatedGrant(
+		"voice-contacts",
+		[]string{"https://www.googleapis.com/auth/contacts"},
+		func(_ context.Context, actor User) error {
+			if actor.Email != "owner@nerdswhofish.com" {
+				return errors.New("administrator required")
+			}
+			return nil
+		},
+		func(context.Context, User, User, *oauth2.Token) error { return nil },
+	)
+	registered := server.grants["voice-contacts"]
+	if !registered.allowDifferentAccount || len(registered.scopes) != 1 {
+		t.Fatalf("registered grant = %#v", registered)
+	}
+	authorizationURL, err := url.Parse((&oauth2.Config{Endpoint: oauth2.Endpoint{AuthURL: "https://accounts.example/auth"}}).AuthCodeURL("state", registered.authCodeOptions()...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authorizationURL.Query().Get("access_type") != "offline" || authorizationURL.Query().Get("prompt") != "consent select_account" {
+		t.Fatalf("authorization query = %q", authorizationURL.RawQuery)
+	}
+
+	value, err := server.signSession(session{
+		User:      User{Subject: "member-subject", Email: "member@nerdswhofish.com"},
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/auth/connect/voice-contacts", nil)
+	request.SetPathValue("provider", "voice-contacts")
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: value})
+	record := httptest.NewRecorder()
+	server.connect(record, request)
+	if record.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", record.Code, http.StatusForbidden)
 	}
 }

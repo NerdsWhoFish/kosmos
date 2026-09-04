@@ -104,8 +104,39 @@ func TestWorkspaceCoreFlow(t *testing.T) {
 	}
 	performNoContent(t, mux, http.MethodDelete, "/api/v1/opportunities/"+opportunity.ID)
 	performNoContent(t, mux, http.MethodDelete, "/api/v1/documents/"+document.ID)
+	performNoContent(t, mux, http.MethodDelete, "/api/v1/contacts/"+contact.ID)
 	performJSON[map[string]any](t, mux, http.MethodDelete, "/api/v1/opportunities/"+opportunity.ID, "", http.StatusNotFound)
 	performJSON[map[string]any](t, mux, http.MethodDelete, "/api/v1/documents/"+document.ID, "", http.StatusNotFound)
+	performJSON[map[string]any](t, mux, http.MethodDelete, "/api/v1/contacts/"+contact.ID, "", http.StatusNotFound)
+}
+
+func TestContactMutationsPublishGoogleSyncEvents(t *testing.T) {
+	type mutation struct {
+		contact Contact
+		action  string
+	}
+	mutations := []mutation{}
+	mux := http.NewServeMux()
+	NewModule(
+		NewMemoryStore(),
+		func(*http.Request) (string, error) { return "nerds-who-fish", nil },
+		WithContactMutation(func(_ context.Context, scope string, contact Contact, action string) error {
+			if scope != "nerds-who-fish" {
+				t.Fatalf("scope = %q", scope)
+			}
+			mutations = append(mutations, mutation{contact: contact, action: action})
+			return nil
+		}),
+	).RegisterRoutes(mux)
+	created := performJSON[Contact](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"Ada","phone":"+15551234567"}`, http.StatusCreated)
+	performJSON[Contact](t, mux, http.MethodPatch, "/api/v1/contacts/"+created.ID, `{"phone":"+15557654321"}`, http.StatusOK)
+	performNoContent(t, mux, http.MethodDelete, "/api/v1/contacts/"+created.ID)
+	if len(mutations) != 3 || mutations[0].action != "upsert" || mutations[1].action != "upsert" || mutations[2].action != "delete" {
+		t.Fatalf("mutations = %#v", mutations)
+	}
+	if mutations[1].contact.Phone != "+15557654321" || mutations[2].contact.ID != created.ID {
+		t.Fatalf("mutation contacts = %#v", mutations)
+	}
 }
 
 func TestContactSourcesCombineDefaultsAndOrganizationChoices(t *testing.T) {

@@ -379,6 +379,17 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteContact
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Contact deleted and shared Google Contacts deletion queued when connected
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /opportunities:
     get:
       operationId: listOpportunities
@@ -860,6 +871,52 @@ paths:
       responses:
         '200':
           description: Current user's Google Workspace connection status
+  /integrations/google-contacts:
+    get:
+      operationId: getSharedGoogleContactsConnection
+      responses:
+        '200':
+          description: Shared Google Contacts connection and synchronization status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoogleContactsStatus'
+        '403':
+          description: Owner or administrator role required
+    delete:
+      operationId: disconnectSharedGoogleContacts
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Shared Google Contacts account disconnected
+        '403':
+          description: Owner or administrator role required
+  /integrations/google-contacts/sync:
+    post:
+      operationId: syncSharedGoogleContacts
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '202':
+          description: All Kosmos contacts queued for synchronization
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, queued]
+                properties:
+                  status:
+                    type: string
+                    const: accepted
+                  queued:
+                    type: integer
+                    minimum: 0
+        '403':
+          description: Owner or administrator role required
+        '409':
+          description: Shared Google Contacts account is not connected
   /integrations/cloudflare:
     get:
       operationId: getCloudflareConnection
@@ -1558,13 +1615,38 @@ components:
           type: string
         type:
           type: string
-          enum: [gmail.sync, tiller.sync]
+          enum: [gmail.sync, tiller.sync, google-contact.sync]
         scope:
           type: string
         connectionId:
           type: string
+        contactId:
+          type: string
+        action:
+          type: string
+          enum: [upsert, delete]
         actor:
           type: string
+    GoogleContactsStatus:
+      type: object
+      additionalProperties: false
+      required: [connected, googleEmail, connectUrl, pending, failed, synced]
+      properties:
+        connected:
+          type: boolean
+        googleEmail:
+          type: string
+        connectUrl:
+          type: string
+        pending:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        synced:
+          type: integer
+          minimum: 0
     Error:
       type: object
       required: [error]

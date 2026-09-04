@@ -25,9 +25,10 @@ import (
 )
 
 const (
-	JobTypeGmailSync  = "gmail.sync"
-	JobTypeTillerSync = "tiller.sync"
-	jobsBasePath      = "/api/v1/jobs"
+	JobTypeGmailSync         = "gmail.sync"
+	JobTypeTillerSync        = "tiller.sync"
+	JobTypeGoogleContactSync = "google-contact.sync"
+	jobsBasePath             = "/api/v1/jobs"
 )
 
 var (
@@ -40,6 +41,8 @@ type Job struct {
 	Type         string `json:"type"`
 	Scope        string `json:"scope"`
 	ConnectionID string `json:"connectionId"`
+	ContactID    string `json:"contactId,omitempty"`
+	Action       string `json:"action,omitempty"`
 	Actor        string `json:"actor,omitempty"`
 }
 
@@ -194,7 +197,7 @@ func (m *Module) enqueueJob(ctx context.Context, job Job, targetOverrides ...str
 	ctx, span := jobsTracer.Start(ctx, "jobs.enqueue")
 	defer span.End()
 	span.SetAttributes(attribute.String("job.type", job.Type))
-	if job.ID == "" || job.Scope == "" || job.ConnectionID == "" || !oneOf(job.Type, JobTypeGmailSync, JobTypeTillerSync) {
+	if !validJob(job) {
 		span.SetStatus(codes.Error, "invalid job")
 		return errors.New("job payload is invalid")
 	}
@@ -275,7 +278,7 @@ func (m *Module) executeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	span.SetAttributes(attribute.String("job.type", job.Type))
-	if job.ID == "" || job.Scope != m.publicScope || job.ConnectionID == "" || !oneOf(job.Type, JobTypeGmailSync, JobTypeTillerSync) {
+	if job.Scope != m.publicScope || !validJob(job) {
 		span.SetStatus(codes.Error, "invalid job")
 		writeError(w, http.StatusBadRequest, "invalid_job", "Job payload is invalid")
 		return
@@ -292,6 +295,8 @@ func (m *Module) executeJob(w http.ResponseWriter, r *http.Request) {
 		_, err = m.syncEmailConnection(ctx, job.Scope, job.ConnectionID, job.Actor, job.ID)
 	case JobTypeTillerSync:
 		_, _, err = m.syncTillerConnection(ctx, job.Scope, job.ConnectionID, job.Actor, job.ID)
+	case JobTypeGoogleContactSync:
+		err = m.syncGoogleContact(ctx, job)
 	}
 	if errors.Is(err, errNotFound) {
 		slog.InfoContext(ctx, "background job skipped", "job.type", job.Type, "job.status", "connection_missing")
@@ -315,4 +320,18 @@ func (m *Module) executeJob(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.InfoContext(ctx, "background job completed", "job.type", job.Type, "job.status", "completed")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
+}
+
+func validJob(job Job) bool {
+	if job.ID == "" || job.Scope == "" || job.ConnectionID == "" {
+		return false
+	}
+	switch job.Type {
+	case JobTypeGmailSync, JobTypeTillerSync:
+		return job.ContactID == "" && job.Action == ""
+	case JobTypeGoogleContactSync:
+		return job.ContactID != "" && oneOf(job.Action, "upsert", "delete")
+	default:
+		return false
+	}
 }

@@ -30,6 +30,10 @@ type fakeGoogle struct {
 	sentFrom    *string
 	mailErr     error
 	tillerErr   error
+	upserted    *[]GoogleContact
+	deleted     *[]string
+	upsertErr   error
+	deleteErr   error
 }
 
 func (f fakeGoogle) Send(_ context.Context, _ *oauth2.Token, from, _, _, _ string) (string, error) {
@@ -58,6 +62,26 @@ func (f fakeGoogle) TillerRows(context.Context, *oauth2.Token, TillerSettings) (
 		(*f.tillerCalls)++
 	}
 	return f.rows, f.tillerErr
+}
+
+func (f fakeGoogle) UpsertContact(_ context.Context, _ *oauth2.Token, contact GoogleContact, resourceName string) (GoogleContactReference, error) {
+	if f.upserted != nil {
+		*f.upserted = append(*f.upserted, contact)
+	}
+	if f.upsertErr != nil {
+		return GoogleContactReference{}, f.upsertErr
+	}
+	if resourceName == "" {
+		resourceName = "people/" + contact.ID
+	}
+	return GoogleContactReference{ResourceName: resourceName, ETag: "etag-" + contact.ID}, nil
+}
+
+func (f fakeGoogle) DeleteContact(_ context.Context, _ *oauth2.Token, contactID, _ string) error {
+	if f.deleted != nil {
+		*f.deleted = append(*f.deleted, contactID)
+	}
+	return f.deleteErr
 }
 
 func newTestModule(t *testing.T) (*Module, *http.ServeMux, *workspace.MemoryStore) {

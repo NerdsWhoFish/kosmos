@@ -67,6 +67,42 @@ type GoogleConnection struct {
 	UpdatedAt      time.Time       `json:"updatedAt" firestore:"updatedAt"`
 }
 
+type VoiceContactsConnection struct {
+	ID             string    `json:"id" firestore:"id"`
+	GoogleEmail    string    `json:"googleEmail" firestore:"googleEmail"`
+	GoogleSubject  string    `json:"-" firestore:"googleSubject"`
+	EncryptedToken string    `json:"-" firestore:"encryptedToken"`
+	CreatedBy      string    `json:"createdBy" firestore:"createdBy"`
+	CreatedAt      time.Time `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt" firestore:"updatedAt"`
+}
+
+type GoogleContactMapping struct {
+	ID           string     `json:"id" firestore:"id"`
+	ContactID    string     `json:"contactId" firestore:"contactId"`
+	ResourceName string     `json:"resourceName,omitempty" firestore:"resourceName,omitempty"`
+	ETag         string     `json:"-" firestore:"etag,omitempty"`
+	Status       string     `json:"status" firestore:"status"`
+	LastError    string     `json:"lastError,omitempty" firestore:"lastError,omitempty"`
+	LastSyncedAt *time.Time `json:"lastSyncedAt,omitempty" firestore:"lastSyncedAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt" firestore:"updatedAt"`
+}
+
+type GoogleContact struct {
+	ID           string
+	Name         string
+	Email        string
+	Phone        string
+	Organization string
+	LinkedInURL  string
+}
+
+type GoogleContactReference struct {
+	ResourceName string
+	ETag         string
+}
+
 type SendAsMapping struct {
 	ID          string    `json:"id" firestore:"id"`
 	MemberID    string    `json:"memberId" firestore:"memberId"`

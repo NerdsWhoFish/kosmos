@@ -10,14 +10,26 @@ import (
 )
 
 type ScopeFunc func(*http.Request) (string, error)
+type ContactMutationFunc func(context.Context, string, Contact, string) error
 
 type Module struct {
-	store Store
-	scope ScopeFunc
+	store           Store
+	scope           ScopeFunc
+	contactMutation ContactMutationFunc
 }
 
-func NewModule(store Store, scope ScopeFunc) Module {
-	return Module{store: store, scope: scope}
+type ModuleOption func(*Module)
+
+func WithContactMutation(handler ContactMutationFunc) ModuleOption {
+	return func(module *Module) { module.contactMutation = handler }
+}
+
+func NewModule(store Store, scope ScopeFunc, options ...ModuleOption) Module {
+	module := Module{store: store, scope: scope}
+	for _, option := range options {
+		option(&module)
+	}
+	return module
 }
 
 func (Module) Name() string { return "workspace" }
@@ -213,6 +225,7 @@ type Store interface {
 	GetContact(context.Context, string, string) (Contact, error)
 	CreateContact(context.Context, string, Contact) (Contact, error)
 	UpdateContact(context.Context, string, string, ContactPatch) (Contact, error)
+	DeleteContact(context.Context, string, string) error
 	ListContactSources(context.Context, string) ([]ContactSource, error)
 	CreateContactSource(context.Context, string, ContactSource) (ContactSource, error)
 	ListOpportunities(context.Context, string) ([]Opportunity, error)

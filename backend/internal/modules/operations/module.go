@@ -39,6 +39,8 @@ var GoogleScopes = []string{
 	"https://www.googleapis.com/auth/spreadsheets.readonly",
 }
 
+var GoogleContactsScopes = []string{"https://www.googleapis.com/auth/contacts"}
+
 type IdentityFunc func(*http.Request) (string, Identity, error)
 
 type Workspace interface {
@@ -47,6 +49,7 @@ type Workspace interface {
 	CreateAccountWithContact(context.Context, string, workspace.Account, workspace.Contact) (workspace.Account, workspace.Contact, error)
 	LinkWebsiteRenewal(context.Context, string, string, workspace.Website, []workspace.Reminder) (workspace.Account, []workspace.Reminder, error)
 	ListContacts(context.Context, string) ([]workspace.Contact, error)
+	GetContact(context.Context, string, string) (workspace.Contact, error)
 	CreateContact(context.Context, string, workspace.Contact) (workspace.Contact, error)
 	ListCosts(context.Context, string) ([]workspace.Cost, error)
 }
@@ -110,7 +113,7 @@ func (m *Module) MigrateGoogleConnectionSecrets(ctx context.Context, legacyKey [
 func (*Module) Name() string { return "operations" }
 
 func (*Module) Manifest() platformmodules.Manifest {
-	return platformmodules.Manifest{Name: "operations", Navigation: []platformmodules.Navigation{{Path: "/communications", Label: "Inbox", Icon: "inbox"}, {Path: "/operations", Label: "Operations", Icon: "operations"}, {Path: "/settings", Label: "Settings", Icon: "settings"}}, Permissions: []string{"communications.send", "integrations.manage", "members.manage", "records.export"}, Resources: []string{"members", "pipelineStages", "notifications", "emailTemplates", "mailMetadata", "transactions", "attachments", "audit", "cloudflareConnections", "sendAsMappings", "tillerWebhookConnections", "tillerProductMappings"}, EventTypes: []string{"lead.created", "email.received", "email.sent", "transaction.imported", "cloudflare.domain_linked", "tiller.purchase_imported"}, BackgroundJobs: []string{"gmail.sync", "tiller.sync"}, SearchProviders: []string{"mail", "transactions"}, DocumentLinkTargets: []string{"attachment"}}
+	return platformmodules.Manifest{Name: "operations", Navigation: []platformmodules.Navigation{{Path: "/communications", Label: "Inbox", Icon: "inbox"}, {Path: "/operations", Label: "Operations", Icon: "operations"}, {Path: "/settings", Label: "Settings", Icon: "settings"}}, Permissions: []string{"communications.send", "integrations.manage", "members.manage", "records.export"}, Resources: []string{"members", "pipelineStages", "notifications", "emailTemplates", "mailMetadata", "transactions", "attachments", "audit", "cloudflareConnections", "sendAsMappings", "tillerWebhookConnections", "tillerProductMappings", "voiceContactsConnections", "googleContactMappings"}, EventTypes: []string{"lead.created", "email.received", "email.sent", "transaction.imported", "cloudflare.domain_linked", "tiller.purchase_imported", "google_contact.synced"}, BackgroundJobs: []string{"gmail.sync", "tiller.sync", "google-contact.sync"}, SearchProviders: []string{"mail", "transactions"}, DocumentLinkTargets: []string{"attachment"}}
 }
 
 func (m *Module) RegisterRoutes(mux *http.ServeMux) {
@@ -127,6 +130,9 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/email/templates", m.emailTemplates)
 	mux.HandleFunc("POST /api/v1/email/templates", m.createEmailTemplate)
 	mux.HandleFunc("GET /api/v1/integrations/google", m.googleStatus)
+	mux.HandleFunc("GET /api/v1/integrations/google-contacts", m.voiceContactsStatus)
+	mux.HandleFunc("DELETE /api/v1/integrations/google-contacts", m.disconnectVoiceContacts)
+	mux.HandleFunc("POST /api/v1/integrations/google-contacts/sync", m.syncVoiceContacts)
 	mux.HandleFunc("POST /api/v1/email/send", m.sendEmail)
 	mux.HandleFunc("POST /api/v1/email/sync", m.syncEmail)
 	mux.HandleFunc("GET /api/v1/email/messages", m.mailMessages)

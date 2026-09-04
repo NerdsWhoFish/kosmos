@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -29,6 +30,7 @@ func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/contacts", m.createContact)
 	mux.HandleFunc("GET /api/v1/contacts/{id}", m.getContact)
 	mux.HandleFunc("PATCH /api/v1/contacts/{id}", m.updateContact)
+	mux.HandleFunc("DELETE /api/v1/contacts/{id}", m.deleteContact)
 	mux.HandleFunc("GET /api/v1/contact-sources", m.listContactSources)
 	mux.HandleFunc("POST /api/v1/contact-sources", m.createContactSource)
 	mux.HandleFunc("GET /api/v1/opportunities", m.listOpportunities)
@@ -93,6 +95,9 @@ func (m Module) createAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	account, contact, err := m.store.CreateAccountWithContact(r.Context(), scope, request.Account, *request.PrimaryContact)
+	if err == nil {
+		m.publishContactMutation(r.Context(), scope, contact, "upsert")
+	}
 	respondCreated(w, map[string]any{"account": account, "contact": contact}, err, "account_save_failed", "Could not save account and contact")
 }
 
@@ -232,6 +237,9 @@ func (m Module) createContact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := m.store.CreateContact(r.Context(), scope, contact)
+	if err == nil {
+		m.publishContactMutation(r.Context(), scope, created, "upsert")
+	}
 	respondCreated(w, created, err, "contact_save_failed", "Could not save contact")
 }
 
@@ -262,7 +270,44 @@ func (m Module) updateContact(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	updated, err := m.store.UpdateContact(r.Context(), scope, r.PathValue("id"), patch)
+	if err == nil {
+		m.publishContactMutation(r.Context(), scope, updated, "upsert")
+	}
 	respondUpdated(w, updated, err, "contact_not_found", "Contact not found", "contact_save_failed", "Could not save contact")
+}
+
+func (m Module) deleteContact(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	contact, err := m.store.GetContact(r.Context(), scope, r.PathValue("id"))
+	if errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "contact_not_found", "Contact not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "contact_delete_failed", "Could not delete contact")
+		return
+	}
+	if err := m.store.DeleteContact(r.Context(), scope, contact.ID); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "contact_not_found", "Contact not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "contact_delete_failed", "Could not delete contact")
+		return
+	}
+	m.publishContactMutation(r.Context(), scope, contact, "delete")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (m Module) publishContactMutation(ctx context.Context, scope string, contact Contact, action string) {
+	if m.contactMutation == nil {
+		return
+	}
+	if err := m.contactMutation(ctx, scope, contact, action); err != nil {
+		slog.ErrorContext(ctx, "Google contact mutation enqueue failed", "contact.id", contact.ID, "contact.action", action)
+	}
 }
 
 func (m Module) listContactSources(w http.ResponseWriter, r *http.Request) {

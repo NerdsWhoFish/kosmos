@@ -273,6 +273,20 @@ func (s *MemoryStore) UpdateContact(_ context.Context, scope, id string, patch C
 	return Contact{}, errNotFound
 }
 
+func (s *MemoryStore) DeleteContact(_ context.Context, scope, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspace(scope)
+	for index := range workspace.contacts {
+		if workspace.contacts[index].ID != id {
+			continue
+		}
+		workspace.contacts = append(workspace.contacts[:index], workspace.contacts[index+1:]...)
+		return nil
+	}
+	return errNotFound
+}
+
 func (s *MemoryStore) ListOpportunities(_ context.Context, scope string) ([]Opportunity, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

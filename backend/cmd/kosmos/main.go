@@ -120,9 +120,26 @@ func main() {
 		googleAuth.RegisterGrant("workspace", operations.GoogleScopes, func(ctx context.Context, user auth.User, token *oauth2.Token) error {
 			return operationsModule.SaveGoogleGrant(ctx, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, token)
 		})
+		googleAuth.RegisterDelegatedGrant(
+			"voice-contacts",
+			operations.GoogleContactsScopes,
+			func(ctx context.Context, user auth.User) error {
+				return operationsModule.AuthorizeVoiceContacts(ctx, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name})
+			},
+			func(ctx context.Context, actor, connected auth.User, token *oauth2.Token) error {
+				return operationsModule.SaveVoiceContactsGrant(
+					ctx,
+					operations.Identity{Subject: actor.Subject, Email: actor.Email, Name: actor.Name},
+					operations.Identity{Subject: connected.Subject, Email: connected.Email, Name: connected.Name},
+					token,
+				)
+			},
+		)
 		registry := modules.NewRegistry(
 			landing.NewModule(landingStore, scope, manageLanding),
-			workspace.NewModule(workspaceStore, scope),
+			workspace.NewModule(workspaceStore, scope, workspace.WithContactMutation(func(ctx context.Context, scope string, contact workspace.Contact, action string) error {
+				return operationsModule.EnqueueGoogleContactMutation(ctx, scope, contact, action, "workspace")
+			})),
 			operationsModule,
 		)
 		registry.RegisterRoutes(mux)

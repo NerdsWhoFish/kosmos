@@ -308,6 +308,14 @@ func (s *FirestoreStore) UpdateContact(ctx context.Context, scope, id string, pa
 	return updateRecord(ctx, s, scope, "contacts", id, updates, func(item *Contact, id string) { item.ID = id })
 }
 
+func (s *FirestoreStore) DeleteContact(ctx context.Context, scope, id string) error {
+	_, err := s.collection(scope, "contacts").Doc(id).Delete(ctx, firestore.Exists)
+	if status.Code(err) == codes.NotFound || status.Code(err) == codes.FailedPrecondition {
+		return errNotFound
+	}
+	return err
+}
+
 func (s *FirestoreStore) ListContactSources(ctx context.Context, scope string) ([]ContactSource, error) {
 	return listRecords(ctx, s, scope, "contactSources", "name", firestore.Asc, func(item *ContactSource, id string) { item.ID = id })
 }
