@@ -2,26 +2,877 @@ openapi: 3.1.0
 info:
   title: Kosmos API
   version: 0.1.0
+  description: API for the Kosmos small business workspace.
   license:
     name: MIT
 servers:
   - url: /api/v1
+security:
+  - sessionCookie: []
 paths:
   /health:
     get:
       operationId: getHealth
+      security: []
       responses:
         '200':
           description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    const: ok
+  /config:
+    get:
+      operationId: getPublicConfig
+      security: []
+      responses:
+        '200':
+          description: Public browser runtime configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [faroURL, faroAppName]
+                properties:
+                  faroURL:
+                    type: string
+                  faroAppName:
+                    type: string
+  /me:
+    get:
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: Authenticated Google identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /summary:
+    get:
+      operationId: getWorkspaceSummary
+      responses:
+        '200':
+          description: Current workspace totals and recent activity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Summary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /search:
+    get:
+      operationId: searchWorkspace
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '200':
+          description: Matching workspace records
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    maxItems: 25
+                    items:
+                      $ref: '#/components/schemas/SearchResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /landing:
     get:
       operationId: getLanding
       responses:
         '200':
-          description: Landing zone configuration and notifications
+          description: Landing zone shortcuts and notifications
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Landing'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /landing/buttons:
+    post:
+      operationId: createLandingButton
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ButtonInput'
+      responses:
+        '201':
+          description: Shortcut created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Button'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /notifications:
     get:
       operationId: listNotifications
       responses:
         '200':
           description: Notification feed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications]
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /contacts:
+    get:
+      operationId: listContacts
+      responses:
+        '200':
+          $ref: '#/components/responses/ContactList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createContact
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactInput'
+      responses:
+        '201':
+          description: Contact created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /contacts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/RecordID'
+    get:
+      operationId: getContact
+      responses:
+        '200':
+          description: Contact
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateContact
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactPatch'
+      responses:
+        '200':
+          description: Contact updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /opportunities:
+    get:
+      operationId: listOpportunities
+      responses:
+        '200':
+          $ref: '#/components/responses/OpportunityList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createOpportunity
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpportunityInput'
+      responses:
+        '201':
+          description: Opportunity created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Opportunity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /opportunities/{id}:
+    patch:
+      operationId: updateOpportunity
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpportunityPatch'
+      responses:
+        '200':
+          description: Opportunity updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Opportunity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /activities:
+    get:
+      operationId: listActivities
+      parameters:
+        - name: contactId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/ActivityList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createActivity
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivityInput'
+      responses:
+        '201':
+          description: Activity created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Activity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /reminders:
+    get:
+      operationId: listReminders
+      responses:
+        '200':
+          $ref: '#/components/responses/ReminderList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createReminder
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReminderInput'
+      responses:
+        '201':
+          description: Reminder created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reminder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /reminders/{id}:
+    patch:
+      operationId: updateReminder
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [completed]
+              properties:
+                completed:
+                  type: boolean
+      responses:
+        '200':
+          description: Reminder updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reminder'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /documents:
+    get:
+      operationId: listDocuments
+      responses:
+        '200':
+          $ref: '#/components/responses/DocumentList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createDocument
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentInput'
+      responses:
+        '201':
+          description: Document created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /documents/{id}:
+    patch:
+      operationId: updateDocument
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentPatch'
+      responses:
+        '200':
+          description: Document updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /costs:
+    get:
+      operationId: listCosts
+      responses:
+        '200':
+          $ref: '#/components/responses/CostList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createCost
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CostInput'
+      responses:
+        '201':
+          description: Cost created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cost'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: kosmos_session
+  parameters:
+    RecordID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    CSRF:
+      name: X-Kosmos-CSRF
+      in: header
+      required: true
+      schema:
+        type: string
+        const: '1'
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: A valid, currently allowed Google session is required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Record not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ContactList:
+      description: Contacts
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [contacts]
+            properties:
+              contacts:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Contact'
+    OpportunityList:
+      description: Opportunities
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [opportunities]
+            properties:
+              opportunities:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Opportunity'
+    ActivityList:
+      description: Activities
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [activities]
+            properties:
+              activities:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Activity'
+    ReminderList:
+      description: Reminders
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reminders]
+            properties:
+              reminders:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Reminder'
+    DocumentList:
+      description: Documents
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [documents]
+            properties:
+              documents:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Document'
+    CostList:
+      description: Costs
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [costs]
+            properties:
+              costs:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Cost'
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          oneOf:
+            - type: string
+            - type: object
+              required: [code, message]
+              properties:
+                code:
+                  type: string
+                message:
+                  type: string
+    User:
+      type: object
+      required: [subject, email, name]
+      properties:
+        subject:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        picture:
+          type: string
+          format: uri
+    ButtonInput:
+      type: object
+      required: [label, href]
+      properties:
+        label:
+          type: string
+          maxLength: 80
+        description:
+          type: string
+          maxLength: 180
+        href:
+          type: string
+    Button:
+      allOf:
+        - $ref: '#/components/schemas/ButtonInput'
+        - type: object
+          required: [id, icon]
+          properties:
+            id:
+              type: string
+            icon:
+              type: string
+    Notification:
+      type: object
+      required: [id, title, summary, kind, createdAt, href]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        kind:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        href:
+          type: string
+    Landing:
+      type: object
+      required: [buttons, notifications]
+      properties:
+        buttons:
+          type: array
+          items:
+            $ref: '#/components/schemas/Button'
+        notifications:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+    ContactInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        company:
+          type: string
+          maxLength: 160
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          maxLength: 40
+        status:
+          type: string
+          enum: [lead, prospect, customer]
+          default: lead
+    ContactPatch:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        company:
+          type: string
+          maxLength: 160
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          maxLength: 40
+        status:
+          type: string
+          enum: [lead, prospect, customer]
+    Contact:
+      allOf:
+        - $ref: '#/components/schemas/ContactInput'
+        - $ref: '#/components/schemas/AuditedRecord'
+    OpportunityInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        contactId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+          minimum: 0
+        stage:
+          type: string
+          enum: [new, qualified, proposal, won, lost]
+          default: new
+        nextStep:
+          type: string
+          maxLength: 500
+        closeDate:
+          type: string
+          format: date
+    OpportunityPatch:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        contactId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+          minimum: 0
+        stage:
+          type: string
+          enum: [new, qualified, proposal, won, lost]
+        nextStep:
+          type: string
+          maxLength: 500
+        closeDate:
+          type: string
+          format: date
+    Opportunity:
+      allOf:
+        - $ref: '#/components/schemas/OpportunityInput'
+        - $ref: '#/components/schemas/AuditedRecord'
+    ActivityInput:
+      type: object
+      required: [body]
+      properties:
+        contactId:
+          type: string
+        opportunityId:
+          type: string
+        kind:
+          type: string
+          enum: [note, call, email, meeting]
+          default: note
+        body:
+          type: string
+          maxLength: 4000
+        occurredAt:
+          type: string
+          format: date-time
+    Activity:
+      allOf:
+        - $ref: '#/components/schemas/ActivityInput'
+        - type: object
+          required: [id, createdAt]
+          properties:
+            id:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+    ReminderInput:
+      type: object
+      required: [title, dueAt]
+      properties:
+        contactId:
+          type: string
+        title:
+          type: string
+          maxLength: 160
+        dueAt:
+          type: string
+          format: date-time
+    Reminder:
+      allOf:
+        - $ref: '#/components/schemas/ReminderInput'
+        - $ref: '#/components/schemas/AuditedRecord'
+        - type: object
+          required: [completed]
+          properties:
+            completed:
+              type: boolean
+    DocumentInput:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        body:
+          type: string
+          maxLength: 100000
+    DocumentPatch:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        body:
+          type: string
+          maxLength: 100000
+    Document:
+      allOf:
+        - $ref: '#/components/schemas/DocumentInput'
+        - $ref: '#/components/schemas/AuditedRecord'
+    CostInput:
+      type: object
+      required: [description, amountCents, incurredOn]
+      properties:
+        vendor:
+          type: string
+          maxLength: 160
+        description:
+          type: string
+          maxLength: 240
+        amountCents:
+          type: integer
+          format: int64
+          minimum: 0
+        category:
+          type: string
+          maxLength: 80
+        incurredOn:
+          type: string
+          format: date
+        recurring:
+          type: boolean
+        recurrence:
+          type: string
+          enum: ['', monthly, quarterly, yearly]
+        taxDeductible:
+          type: boolean
+        notes:
+          type: string
+          maxLength: 2000
+    Cost:
+      allOf:
+        - $ref: '#/components/schemas/CostInput'
+        - $ref: '#/components/schemas/AuditedRecord'
+    Summary:
+      type: object
+      required: [contacts, openOpportunities, pipelineAmountCents, followUpsDue, currentMonthCostCents, recentActivities]
+      properties:
+        contacts:
+          type: integer
+        openOpportunities:
+          type: integer
+        pipelineAmountCents:
+          type: integer
+          format: int64
+        followUpsDue:
+          type: integer
+        currentMonthCostCents:
+          type: integer
+          format: int64
+        recentActivities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Activity'
+    SearchResult:
+      type: object
+      required: [id, kind, title, subtitle, href]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [contact, opportunity, document, cost]
+        title:
+          type: string
+        subtitle:
+          type: string
+        href:
+          type: string
+    AuditedRecord:
+      type: object
+      required: [id, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time

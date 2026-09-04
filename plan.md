@@ -219,6 +219,24 @@ Grafana Cloud dashboards, alert rules, data source configuration, and Faro appli
 6. Money and integrations: costs, recurring costs, tax receipt records, Tiller import, deterministic customer matching with review queue.
 7. Hardening: audit history, rate limits, job retries, exports, backups, accessibility, and tenant isolation tests.
 
+### Current release state
+
+The first usable release completes the foundation and the secure core of slices two through four:
+
+- Google OAuth login with verified-domain admission and session revalidation
+- a public sign-in screen that returns no customer, pipeline, activity, or cost data
+- shared, organization-scoped Firestore persistence
+- responsive navigation and equivalent desktop and mobile workflows
+- working landing-zone shortcuts and quick actions
+- contacts with prospect and customer status, account details, activities, notes, and reminders
+- opportunities with amounts, next steps, close dates, and pipeline stage movement
+- Markdown documents with browser editing and rendered reading mode
+- one-time and recurring business cost tracking
+- private workspace summary, follow-up queue, activity feed, and cross-module search
+- CSRF protection for mutations and OpenTelemetry coverage for HTTP and Firestore operations
+
+The release intentionally does not claim the remaining roadmap items. Roles beyond the shared organization boundary, file and receipt uploads, contact-form ingestion, Gmail actions and notifications, Google Voice links, Tiller imports, audit history, and full notification event projection remain future delivery slices.
+
 Every delivery slice requires backend tests and frontend tests. A release cannot be tagged or published until both suites and the production frontend build pass.
 
 Frontend acceptance tests cover the primary workflows at representative desktop and mobile viewport sizes. Tests must verify that navigation, search, notifications, shortcuts, quick actions, account controls, and module links remain reachable at both sizes.
