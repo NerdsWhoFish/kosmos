@@ -89,3 +89,52 @@ func TestDevelopmentAllowsVerifiedGoogleIdentityWithoutDomainConfig(t *testing.T
 		t.Fatal("development should allow a Google identity when no domains are configured")
 	}
 }
+
+func TestCurrentUserRequiresSameOriginMutationHeader(t *testing.T) {
+	server := &Google{sessionKey: []byte("01234567890123456789012345678901")}
+	value, err := server.signSession(session{
+		User:      User{Subject: "google-subject", Email: "owner@example.com"},
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("sign session: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/contacts", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: value})
+	if _, err := server.CurrentUser(request); err == nil {
+		t.Fatal("CurrentUser accepted a mutation without the browser CSRF header")
+	}
+	request.Header.Set("X-Kosmos-CSRF", "1")
+	if _, err := server.CurrentUser(request); err != nil {
+		t.Fatalf("CurrentUser rejected a protected mutation: %v", err)
+	}
+}
+
+func TestLogoutRequiresSameOriginMutationHeader(t *testing.T) {
+	server := &Google{}
+	record := httptest.NewRecorder()
+	server.logout(record, httptest.NewRequest(http.MethodPost, "/auth/logout", nil))
+	if record.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", record.Code, http.StatusBadRequest)
+	}
+
+	record = httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	request.Header.Set("X-Kosmos-CSRF", "1")
+	server.logout(record, request)
+	if record.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", record.Code, http.StatusNoContent)
+	}
+}
+
+func TestProductionLoginRequiresDomainPolicy(t *testing.T) {
+	server := &Google{
+		clientID:     "client-id",
+		clientSecret: "client-secret",
+		sessionKey:   []byte("01234567890123456789012345678901"),
+		production:   true,
+	}
+	if _, err := server.oauthConfig(t.Context(), httptest.NewRequest(http.MethodGet, "/auth/login", nil)); err == nil {
+		t.Fatal("production login was configured without an allowed domain")
+	}
+}

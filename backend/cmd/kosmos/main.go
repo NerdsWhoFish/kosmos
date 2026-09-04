@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"cloud.google.com/go/firestore"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/landing"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/workspace"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/auth"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/modules"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/observability"
@@ -35,19 +37,32 @@ func main() {
 	googleAuth.RegisterRoutes(mux)
 
 	var landingStore landing.Store = landing.NewMemoryStore()
+	var workspaceStore workspace.Store = workspace.NewMemoryStore()
 	if projectID := os.Getenv("KOSMOS_GCP_PROJECT"); projectID != "" {
-		firestoreStore, err := landing.NewFirestoreStore(context.Background(), projectID)
+		firestoreClient, err := firestore.NewClient(context.Background(), projectID)
 		if err != nil {
-			logger.Error("landing store setup failed", "error", err)
+			logger.Error("workspace store setup failed", "error", err)
 			os.Exit(1)
 		}
-		defer firestoreStore.Close()
-		landingStore = firestoreStore
+		defer firestoreClient.Close()
+		landingStore = landing.NewFirestoreStore(firestoreClient)
+		workspaceStore = workspace.NewFirestoreStore(firestoreClient)
 	}
-	modules.NewRegistry(landing.NewModule(landingStore, func(r *http.Request) (string, error) {
-		user, err := googleAuth.CurrentUser(r)
-		return user.Subject, err
-	})).RegisterRoutes(mux)
+	organizationID := os.Getenv("KOSMOS_ORGANIZATION_ID")
+	if organizationID == "" {
+		organizationID = "local"
+	}
+	scope := func(r *http.Request) (string, error) {
+		_, err := googleAuth.CurrentUser(r)
+		if err != nil {
+			return "", err
+		}
+		return organizationID, nil
+	}
+	modules.NewRegistry(
+		landing.NewModule(landingStore, scope),
+		workspace.NewModule(workspaceStore, scope),
+	).RegisterRoutes(mux)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -78,7 +93,10 @@ func notFound(w http.ResponseWriter, _ *http.Request) {
 }
 
 func spaFallback(w http.ResponseWriter, r *http.Request) {
-	webRoot := "/web"
+	webRoot := os.Getenv("KOSMOS_WEB_ROOT")
+	if webRoot == "" {
+		webRoot = "/web"
+	}
 	requested := filepath.Join(webRoot, filepath.Clean("/"+r.URL.Path))
 	if info, err := os.Stat(requested); err == nil && !info.IsDir() {
 		http.ServeFile(w, r, requested)

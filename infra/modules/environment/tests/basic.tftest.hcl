@@ -78,6 +78,7 @@ run "production_service" {
     public_url                  = "https://cast.nerdswhofish.com"
     google_client_id            = "client.apps.googleusercontent.com"
     allowed_google_domains      = ["nerdswhofish.com", "theoutdoorprogrammer.com", "apollorion.com"]
+    organization_id             = "nerds-who-fish"
     faro_url                    = "https://faro.example.com/collect"
     otel_exporter_otlp_endpoint = "https://otlp.example.com/otlp"
     billing_account_id          = "000000-000000-000000"
@@ -107,6 +108,11 @@ run "production_service" {
   assert {
     condition     = contains([for env in google_cloud_run_v2_service.kosmos[0].template[0].containers[0].env : env.value if env.name == "KOSMOS_ALLOWED_GOOGLE_DOMAINS"], "apollorion.com,nerdswhofish.com,theoutdoorprogrammer.com")
     error_message = "production must pass the sorted Google domain allowlist to Cloud Run"
+  }
+
+  assert {
+    condition     = contains([for env in google_cloud_run_v2_service.kosmos[0].template[0].containers[0].env : env.value if env.name == "KOSMOS_ORGANIZATION_ID"], "nerds-who-fish")
+    error_message = "production must pass the shared organization scope to Cloud Run"
   }
 
   assert {

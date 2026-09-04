@@ -21,8 +21,9 @@ locals {
   )
   environment_variables = merge(
     {
-      KOSMOS_ENV         = var.environment
-      KOSMOS_GCP_PROJECT = var.project_id
+      KOSMOS_ENV             = var.environment
+      KOSMOS_GCP_PROJECT     = var.project_id
+      KOSMOS_ORGANIZATION_ID = var.organization_id
     },
     var.public_url == null ? {} : { KOSMOS_PUBLIC_URL = var.public_url },
     var.google_client_id == null ? {} : { GOOGLE_CLIENT_ID = var.google_client_id },

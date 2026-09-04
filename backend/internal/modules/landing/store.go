@@ -66,16 +66,8 @@ type FirestoreStore struct {
 	client *firestore.Client
 }
 
-func NewFirestoreStore(ctx context.Context, projectID string) (*FirestoreStore, error) {
-	client, err := firestore.NewClient(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	return &FirestoreStore{client: client}, nil
-}
-
-func (s *FirestoreStore) Close() error {
-	return s.client.Close()
+func NewFirestoreStore(client *firestore.Client) *FirestoreStore {
+	return &FirestoreStore{client: client}
 }
 
 func (s *FirestoreStore) ListButtons(ctx context.Context, owner string) ([]Button, error) {

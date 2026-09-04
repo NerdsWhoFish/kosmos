@@ -37,7 +37,9 @@ func TestModuleCreatesPersistentShortcut(t *testing.T) {
 
 	body := bytes.NewBufferString(`{"label":"Fishing reports","description":"Open the latest reports.","href":"https://example.com/reports"}`)
 	create := httptest.NewRecorder()
-	mux.ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/api/v1/landing/buttons", body))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/landing/buttons", body)
+	request.Header.Set("X-Kosmos-CSRF", "1")
+	mux.ServeHTTP(create, request)
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, want %d: %s", create.Code, http.StatusCreated, create.Body.String())
 	}

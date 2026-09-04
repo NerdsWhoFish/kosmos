@@ -1,0 +1,75 @@
+import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { ArrowUpRight, BookOpen, CalendarDays, CircleDollarSign, Clock3, Globe2, Mail, Plus, Users } from 'lucide-react'
+import { Activity, api, Landing, money, Summary } from '../api'
+import { Modal } from '../components/Modal'
+import { ErrorState, LoadingState } from '../components/States'
+
+const emptySummary: Summary = { contacts: 0, openOpportunities: 0, pipelineAmountCents: 0, followUpsDue: 0, currentMonthCostCents: 0, recentActivities: [] }
+const iconMap: Record<string, typeof Globe2> = { globe: Globe2, calendar: CalendarDays, users: Users }
+
+export function Overview({ firstName, navigate }: { firstName: string; navigate: (path: string) => void }) {
+  const [summary, setSummary] = useState(emptySummary)
+  const [landing, setLanding] = useState<Landing>({ buttons: [], notifications: [] })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [shortcutOpen, setShortcutOpen] = useState(false)
+  const [shortcutError, setShortcutError] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    setError('')
+    Promise.all([api<Summary>('/api/v1/summary'), api<Landing>('/api/v1/landing')])
+      .then(([nextSummary, nextLanding]) => { setSummary(nextSummary); setLanding(nextLanding) })
+      .catch((reason: Error) => setError(reason.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(load, [load])
+
+  async function createShortcut(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSaving(true)
+    setShortcutError('')
+    const form = new FormData(event.currentTarget)
+    try {
+      await api('/api/v1/landing/buttons', { method: 'POST', body: JSON.stringify({ label: form.get('label'), description: form.get('description'), href: form.get('href') }) })
+      setShortcutOpen(false)
+      load()
+    } catch (reason) {
+      setShortcutError(reason instanceof Error ? reason.message : 'Could not save shortcut')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const today = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+  if (loading) return <LoadingState />
+  if (error) return <ErrorState message={error} retry={load} />
+
+  return <>
+    <section className="welcome-row"><div><p className="eyebrow">{today}</p><h1>{greeting}, {firstName}.</h1><p className="subhead">Here is what needs your attention.</p></div><button className="primary-button" onClick={() => navigate('/contacts?new=1')}><Plus size={17} /> Add a contact</button></section>
+    <section className="stats-row">
+      <Stat label="Open opportunities" value={String(summary.openOpportunities)} detail={`${money(summary.pipelineAmountCents)} in the pipeline`} tone="blue" onClick={() => navigate('/opportunities')} />
+      <Stat label="Follow-ups due" value={String(summary.followUpsDue)} detail="Keep the next conversation moving" tone="gold" onClick={() => navigate('/activity')} />
+      <Stat label="This month's costs" value={money(summary.currentMonthCostCents)} detail="Recorded business spending" tone="green" onClick={() => navigate('/costs')} />
+    </section>
+    <section className="dashboard-grid">
+      <div className="panel quick-panel"><div className="panel-heading"><div><p className="eyebrow">Your shortcuts</p><h2>Landing zone</h2></div><button className="text-button" onClick={() => setShortcutOpen(true)}><Plus size={15} /> Customize</button></div><div className="shortcut-grid">{landing.buttons.map((button) => { const Icon = iconMap[button.icon] ?? Globe2; return <a className="shortcut-card" href={button.href} key={button.id}><span className="shortcut-icon"><Icon size={20} /></span><span><strong>{button.label}</strong><small>{button.description}</small></span><ArrowUpRight className="shortcut-arrow" size={17} /></a> })}<button className="shortcut-card add-card" onClick={() => setShortcutOpen(true)}><span className="shortcut-icon muted"><Plus size={20} /></span><span><strong>Add a shortcut</strong><small>Put your most-used link here.</small></span></button></div></div>
+      <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Stay in the loop</p><h2>Recent activity</h2></div><button className="text-button" onClick={() => navigate('/activity')}>View all <ArrowUpRight size={15} /></button></div><div className="activity-list">{summary.recentActivities.length ? summary.recentActivities.map((item) => <ActivityRow key={item.id} item={item} />) : <div className="activity-item"><span className="activity-icon lavender"><BookOpen size={16} /></span><span><strong>A clean slate</strong><small>Notes, calls, meetings, and emails will show up here.</small><time>Add your first contact to begin</time></span></div>}</div></div>
+    </section>
+    <section className="tip-banner"><span className="tip-icon"><Clock3 size={20} /></span><span><strong>{summary.contacts ? `${summary.contacts} relationship${summary.contacts === 1 ? '' : 's'} in Kosmos` : 'Start with one real relationship.'}</strong><small>Keep the person, the opportunity, and the next step together.</small></span><button className="banner-button" onClick={() => navigate('/contacts?new=1')}>Add a contact <ArrowUpRight size={15} /></button></section>
+    {shortcutOpen && <Modal eyebrow="Landing zone" title="Add a shortcut" onClose={() => setShortcutOpen(false)}><form onSubmit={createShortcut}><label>Button name<input name="label" maxLength={80} required autoFocus /></label><label>Link<input name="href" inputMode="url" placeholder="https://example.com" required /></label><label>Description<textarea name="description" maxLength={180} rows={3} /></label>{shortcutError && <p className="form-error" role="alert">{shortcutError}</p>}<div className="form-actions"><button type="button" className="secondary-button" onClick={() => setShortcutOpen(false)}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving...' : 'Save shortcut'}</button></div></form></Modal>}
+  </>
+}
+
+function ActivityRow({ item }: { item: Activity }) {
+  const Icon = item.kind === 'email' ? Mail : item.kind === 'meeting' ? CalendarDays : BookOpen
+  return <div className="activity-item"><span className="activity-icon"><Icon size={16} /></span><span><strong>{item.kind === 'note' ? 'Note added' : item.kind}</strong><small>{item.body}</small><time>{new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(Math.round((new Date(item.occurredAt).getTime() - Date.now()) / 86400000), 'day')}</time></span></div>
+}
+
+function Stat({ label, value, detail, tone, onClick }: { label: string; value: string; detail: string; tone: string; onClick: () => void }) {
+  return <button className={`stat-card ${tone}`} onClick={onClick}><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong><small>{detail}</small></button>
+}

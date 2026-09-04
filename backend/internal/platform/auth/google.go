@@ -136,7 +136,11 @@ func (g *Google) callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
-func (g *Google) logout(w http.ResponseWriter, _ *http.Request) {
+func (g *Google) logout(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Kosmos-CSRF") != "1" {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: g.secureCookies(), SameSite: http.SameSiteLaxMode})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -151,6 +155,9 @@ func (g *Google) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Google) CurrentUser(r *http.Request) (User, error) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Kosmos-CSRF") != "1" {
+		return User{}, errors.New("invalid mutation request")
+	}
 	cookie, err := r.Cookie(sessionCookie)
 	if err != nil || cookie.Value == "" {
 		return User{}, errors.New("missing session")
@@ -217,7 +224,7 @@ func (g *Google) verifySession(value string, target *session) error {
 	return json.Unmarshal(payload, target)
 }
 
-func (g *Google) secureCookies() bool { return os.Getenv("KOSMOS_ENV") == "production" }
+func (g *Google) secureCookies() bool { return g.production }
 
 func (g *Google) allowsEmail(email string) bool {
 	if len(g.allowedDomains) == 0 {

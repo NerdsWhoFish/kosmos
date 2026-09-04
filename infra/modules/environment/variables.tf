@@ -18,6 +18,17 @@ variable "environment" {
   }
 }
 
+variable "organization_id" {
+  description = "Stable organization scope used for shared workspace records."
+  type        = string
+  default     = "default"
+
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{1,62}$", var.organization_id))
+    error_message = "organization_id must contain 2 to 63 lowercase letters, numbers, or hyphens."
+  }
+}
+
 variable "region" {
   description = "Cloud Run and Artifact Registry region."
   type        = string
