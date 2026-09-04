@@ -44,7 +44,7 @@ jobs:
 
       - name: Test frontend
         working-directory: frontend
-        run: npm ci && npm test
+        run: npm ci --no-audit --no-fund && npm test
 
       - name: Build frontend
         working-directory: frontend

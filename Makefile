@@ -18,4 +18,4 @@ test:
 
 build:
 	go build ./backend/cmd/kosmos
-	cd frontend && npm ci && npm run build
+	cd frontend && npm ci --no-audit --no-fund && npm run build
