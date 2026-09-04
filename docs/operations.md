@@ -24,6 +24,6 @@ Production buckets prevent public access, use uniform access control, retain obj
 
 ## Deployment and observability
 
-Publish `infra/modules/environment` to the Spacelift private module registry, then consume its pinned version from the configurations repository. Quill is the only release path. It versions, signs, and publishes the application image before Spacelift deploys it.
+Publish `infra/modules/environment` to the Spacelift private module registry, then consume the latest active module version from the configurations repository. The production stack intentionally floats within the private registry, matching Tiller's release model, so a deployment must review the resolved module version and complete plan before approval. Quill is the only application release path. It versions, signs, and publishes the application image before Spacelift deploys it.
 
-Backend tracing uses standard `OTEL_EXPORTER_OTLP_*` variables. Browser telemetry uses `KOSMOS_FARO_URL`. Telemetry must never include tokens, message bodies, receipt contents, or raw customer data. Production verification checks health, anonymous access denial, responsive login behavior, Cloud Run logs, and a Grafana trace before accepting the release.
+Backend tracing uses standard `OTEL_EXPORTER_OTLP_*` variables. The secret value for `OTEL_EXPORTER_OTLP_HEADERS` must use the full environment-header format, including the header name, such as `Authorization=Basic <credential>`. Browser telemetry uses `KOSMOS_FARO_URL`. Telemetry must never include tokens, message bodies, receipt contents, or raw customer data. Production verification checks health, anonymous access denial, responsive login behavior, Cloud Run logs, and a Grafana trace before accepting the release.
