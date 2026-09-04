@@ -24,4 +24,4 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 20. Let contacts store, edit, and open that person's LinkedIn profile.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive desktop/mobile, accessibility, and production-build tests.
-- [ ] Release with Quill and deploy the complete checklist to production.
+- [x] Release with Quill and deploy the complete checklist to production.
