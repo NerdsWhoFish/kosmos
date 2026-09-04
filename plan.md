@@ -40,6 +40,7 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 36. Record identifiable account events, show the five newest events on each account, and provide a dedicated filterable history page.
 - [x] 37. Preserve authored email line breaks without adding visible transport wrapping to sent Gmail messages.
 - [x] 38. Keep unread notification text and its Mark read action in the same responsive layout as read notifications without collisions.
+- [ ] 39. Let owners and administrators create, copy once, list, and revoke named read-only or read-and-write API credentials for external workflows.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
@@ -51,3 +52,5 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] Release v0.3.3 and deploy items 31 through 35 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.6.0.
 - [x] Run backend and frontend verification for items 36 through 38 across phone, tablet, laptop, and desktop viewports.
 - [x] Release v0.3.4 and deploy items 36 through 38 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.7.0.
+- [ ] Run backend, API-contract, security, frontend, accessibility, and responsive browser verification for item 39.
+- [ ] Release v0.3.5 and deploy item 39 to production with Quill's GoReleaser-then-Docker artifact flow through a pinned Spacelift module.
