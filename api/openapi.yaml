@@ -1296,6 +1296,7 @@ paths:
       parameters:
         - name: phone
           in: query
+          required: true
           schema:
             type: string
         - name: mode
@@ -1303,6 +1304,12 @@ paths:
           schema:
             type: string
             enum: [call, message]
+        - name: redirect
+          in: query
+          description: Set to 1 to redirect through Google Account Chooser into the shared account's Voice search.
+          schema:
+            type: string
+            enum: ['1']
       responses:
         '200':
           description: Shared-account Google Voice, native call, and native SMS links
@@ -1322,6 +1329,10 @@ paths:
                     type: string
                   smsUrl:
                     type: string
+        '303':
+          description: Redirect through Google Account Chooser to the contact's Google Voice search
+        '400':
+          description: Phone number is missing
         '409':
           description: Shared Google Voice account is not connected
   /jobs/schedule:
@@ -2455,6 +2466,11 @@ components:
         body:
           type: string
           maxLength: 100000
+        inputs:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/EmailTemplateCustomInput'
         createdAt:
           type: string
           format: date-time
@@ -2472,6 +2488,25 @@ components:
         body:
           type: string
           maxLength: 100000
+        inputs:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/EmailTemplateCustomInput'
+    EmailTemplateCustomInput:
+      type: object
+      required: [key, label, defaultValue]
+      properties:
+        key:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          maxLength: 64
+        label:
+          type: string
+          maxLength: 160
+        defaultValue:
+          type: string
+          maxLength: 2000
     MailMetadata:
       type: object
       required: [id, from, subject, snippet, receivedAt, threadId, createdAt]

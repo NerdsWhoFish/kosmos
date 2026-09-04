@@ -21,8 +21,9 @@ import {
   Summary,
   User,
 } from "../api";
-import { Modal } from "../components/Modal";
 import { ErrorState, LoadingState } from "../components/States";
+import { WorkflowPage } from "../components/WorkflowPage";
+import { ResourceRoute } from "../routing";
 
 const emptySummary: Summary = {
   contacts: 0,
@@ -45,9 +46,11 @@ const iconMap: Record<string, typeof Globe2> = {
 export function Overview({
   user,
   navigate,
+  route,
 }: {
   user: User;
   navigate: (path: string) => void;
+  route: ResourceRoute;
 }) {
   const [summary, setSummary] = useState(emptySummary);
   const [landing, setLanding] = useState<Landing>({
@@ -56,11 +59,6 @@ export function Overview({
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [shortcutOpen, setShortcutOpen] = useState(false);
-  const [editingShortcut, setEditingShortcut] = useState<Shortcut | null>(null);
-  const [deletingShortcut, setDeletingShortcut] = useState<Shortcut | null>(
-    null,
-  );
   const [shortcutError, setShortcutError] = useState("");
   const [saving, setSaving] = useState(false);
   const [canManageLanding, setCanManageLanding] = useState(false);
@@ -102,11 +100,11 @@ export function Overview({
     const form = new FormData(event.currentTarget);
     try {
       await api(
-        editingShortcut
-          ? `/api/v1/landing/buttons/${editingShortcut.id}`
+        route.action === "edit"
+          ? `/api/v1/landing/buttons/${route.id}`
           : "/api/v1/landing/buttons",
         {
-          method: editingShortcut ? "PATCH" : "POST",
+          method: route.action === "edit" ? "PATCH" : "POST",
           body: JSON.stringify({
             label: form.get("label"),
             description: form.get("description"),
@@ -114,9 +112,8 @@ export function Overview({
           }),
         },
       );
-      setShortcutOpen(false);
-      setEditingShortcut(null);
-      load();
+      await load();
+      navigate("/");
     } catch (reason) {
       setShortcutError(
         reason instanceof Error ? reason.message : "Could not save shortcut",
@@ -127,15 +124,15 @@ export function Overview({
   }
 
   async function deleteShortcut() {
-    if (!deletingShortcut) return;
+    if (!route.id) return;
     setSaving(true);
     setShortcutError("");
     try {
-      await api(`/api/v1/landing/buttons/${deletingShortcut.id}`, {
+      await api(`/api/v1/landing/buttons/${route.id}`, {
         method: "DELETE",
       });
-      setDeletingShortcut(null);
-      load();
+      await load();
+      navigate("/");
     } catch (reason) {
       setShortcutError(
         reason instanceof Error ? reason.message : "Could not delete shortcut",
@@ -143,11 +140,6 @@ export function Overview({
     } finally {
       setSaving(false);
     }
-  }
-
-  function openNewShortcut() {
-    setEditingShortcut(null);
-    setShortcutOpen(true);
   }
 
   const today = new Intl.DateTimeFormat("en-US", {
@@ -160,6 +152,116 @@ export function Overview({
     hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} retry={load} />;
+
+  const selectedShortcut = landing.buttons.find(
+    (button) => button.id === route.id,
+  );
+  if (route.action === "new" || route.action === "edit") {
+    if (!canManageLanding)
+      return (
+        <ErrorState message="Only owners and admins can manage team shortcuts." />
+      );
+    if (route.action === "edit" && !selectedShortcut)
+      return <ErrorState message="That shortcut could not be found." />;
+    return (
+      <WorkflowPage
+        eyebrow="Landing zone"
+        title={selectedShortcut ? "Edit shortcut" : "Add a shortcut"}
+        detail="Everyone in your organization will see this shortcut."
+        backLabel="Back to overview"
+        onBack={() => navigate("/")}
+      >
+        <form onSubmit={saveShortcut}>
+          <label>
+            Button name
+            <input
+              name="label"
+              maxLength={80}
+              defaultValue={selectedShortcut?.label}
+              required
+              autoFocus
+            />
+          </label>
+          <label>
+            Link
+            <input
+              name="href"
+              inputMode="url"
+              placeholder="https://example.com"
+              defaultValue={selectedShortcut?.href}
+              required
+            />
+          </label>
+          <label>
+            Description
+            <textarea
+              name="description"
+              maxLength={180}
+              rows={3}
+              defaultValue={selectedShortcut?.description}
+            />
+          </label>
+          {shortcutError && (
+            <p className="form-error" role="alert">
+              {shortcutError}
+            </p>
+          )}
+          <div className="form-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => navigate("/")}
+            >
+              Cancel
+            </button>
+            <button className="primary-button" disabled={saving}>
+              {saving
+                ? "Saving..."
+                : selectedShortcut
+                  ? "Save changes"
+                  : "Save shortcut"}
+            </button>
+          </div>
+        </form>
+      </WorkflowPage>
+    );
+  }
+  if (route.action === "delete") {
+    if (!canManageLanding)
+      return (
+        <ErrorState message="Only owners and admins can manage team shortcuts." />
+      );
+    if (!selectedShortcut)
+      return <ErrorState message="That shortcut could not be found." />;
+    return (
+      <WorkflowPage
+        eyebrow="Landing zone"
+        title="Delete this shortcut?"
+        detail={`${selectedShortcut.label} will disappear for everyone in the organization.`}
+        backLabel="Keep shortcut"
+        onBack={() => navigate("/")}
+        tone="danger"
+      >
+        {shortcutError && (
+          <p className="form-error" role="alert">
+            {shortcutError}
+          </p>
+        )}
+        <div className="form-actions">
+          <button className="secondary-button" onClick={() => navigate("/")}>
+            Keep shortcut
+          </button>
+          <button
+            className="danger-button"
+            onClick={deleteShortcut}
+            disabled={saving}
+          >
+            <Trash2 size={16} /> {saving ? "Deleting..." : "Delete shortcut"}
+          </button>
+        </div>
+      </WorkflowPage>
+    );
+  }
 
   return (
     <>
@@ -177,7 +279,7 @@ export function Overview({
           </button>
           <button
             className="secondary-button"
-            onClick={() => navigate("/contacts?new=1")}
+            onClick={() => navigate("/contacts/new")}
           >
             <Plus size={17} /> Add a contact
           </button>
@@ -228,7 +330,10 @@ export function Overview({
               <h2>Landing zone</h2>
             </div>
             {canManageLanding && (
-              <button className="text-button" onClick={openNewShortcut}>
+              <button
+                className="text-button"
+                onClick={() => navigate("/landing-zone/new")}
+              >
                 <Plus size={15} /> Customize
               </button>
             )}
@@ -257,16 +362,17 @@ export function Overview({
                   <span className="shortcut-actions">
                     <button
                       aria-label={`Edit ${button.label}`}
-                      onClick={() => {
-                        setEditingShortcut(button);
-                        setShortcutOpen(true);
-                      }}
+                      onClick={() =>
+                        navigate(`/landing-zone/${button.id}/edit`)
+                      }
                     >
                       <Pencil size={15} />
                     </button>
                     <button
                       aria-label={`Delete ${button.label}`}
-                      onClick={() => setDeletingShortcut(button)}
+                      onClick={() =>
+                        navigate(`/landing-zone/${button.id}/delete`)
+                      }
                     >
                       <Trash2 size={15} />
                     </button>
@@ -281,7 +387,7 @@ export function Overview({
             {canManageLanding && (
               <button
                 className="shortcut-card add-card"
-                onClick={openNewShortcut}
+                onClick={() => navigate("/landing-zone/new")}
               >
                 <span className="shortcut-icon muted">
                   <Plus size={20} />
@@ -372,104 +478,6 @@ export function Overview({
             ))}
           </div>
         </section>
-      )}
-      {shortcutOpen && (
-        <Modal
-          eyebrow="Landing zone"
-          title={editingShortcut ? "Edit shortcut" : "Add a shortcut"}
-          onClose={() => {
-            setShortcutOpen(false);
-            setEditingShortcut(null);
-          }}
-        >
-          <form onSubmit={saveShortcut}>
-            <label>
-              Button name
-              <input
-                name="label"
-                maxLength={80}
-                defaultValue={editingShortcut?.label}
-                required
-                autoFocus
-              />
-            </label>
-            <label>
-              Link
-              <input
-                name="href"
-                inputMode="url"
-                placeholder="https://example.com"
-                defaultValue={editingShortcut?.href}
-                required
-              />
-            </label>
-            <label>
-              Description
-              <textarea
-                name="description"
-                maxLength={180}
-                rows={3}
-                defaultValue={editingShortcut?.description}
-              />
-            </label>
-            {shortcutError && (
-              <p className="form-error" role="alert">
-                {shortcutError}
-              </p>
-            )}
-            <div className="form-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => {
-                  setShortcutOpen(false);
-                  setEditingShortcut(null);
-                }}
-              >
-                Cancel
-              </button>
-              <button className="primary-button" disabled={saving}>
-                {saving
-                  ? "Saving..."
-                  : editingShortcut
-                    ? "Save changes"
-                    : "Save shortcut"}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-      {deletingShortcut && (
-        <Modal
-          eyebrow="Landing zone"
-          title="Delete this shortcut?"
-          onClose={() => setDeletingShortcut(null)}
-        >
-          <p className="muted-copy">
-            {deletingShortcut.label} will disappear for everyone in the
-            organization.
-          </p>
-          {shortcutError && (
-            <p className="form-error" role="alert">
-              {shortcutError}
-            </p>
-          )}
-          <div className="form-actions">
-            <button
-              className="secondary-button"
-              onClick={() => setDeletingShortcut(null)}
-            >
-              Keep shortcut
-            </button>
-            <button
-              className="danger-button"
-              onClick={deleteShortcut}
-              disabled={saving}
-            >
-              <Trash2 size={16} /> {saving ? "Deleting..." : "Delete shortcut"}
-            </button>
-          </div>
-        </Modal>
       )}
     </>
   );

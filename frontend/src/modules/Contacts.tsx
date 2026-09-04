@@ -21,20 +21,19 @@ import {
   Reminder,
   shortDate,
 } from "../api";
-import { Modal } from "../components/Modal";
 import { ContactSourcePicker } from "../components/ContactSourcePicker";
 import { GoogleVoiceButton } from "../components/GoogleVoiceButton";
 import { RecordPhoto } from "../components/RecordPhoto";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
+import { WorkflowPage } from "../components/WorkflowPage";
+import { ResourceRoute } from "../routing";
 
 export function Contacts({
-  initialID,
-  openNew,
+  route,
   navigate,
 }: {
-  initialID: string;
-  openNew: boolean;
+  route: ResourceRoute;
   navigate: (path: string) => void;
 }) {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -42,10 +41,6 @@ export function Contacts({
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [selectedID, setSelectedID] = useState(initialID);
-  const [creating, setCreating] = useState(openNew);
-  const [editing, setEditing] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
@@ -82,12 +77,7 @@ export function Contacts({
   }, []);
 
   useEffect(load, [load]);
-  useEffect(() => {
-    if (openNew) setCreating(true);
-  }, [openNew]);
-  useEffect(() => setSelectedID(initialID), [initialID]);
-
-  const selected = contacts.find((contact) => contact.id === selectedID);
+  const selected = contacts.find((contact) => contact.id === route.id);
 
   async function createContact(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -107,8 +97,6 @@ export function Contacts({
         }),
       });
       setContacts((current) => [contact, ...current]);
-      setSelectedID(contact.id);
-      setCreating(false);
       navigate(`/contacts/${contact.id}`);
     } catch (reason) {
       setFormError(
@@ -140,7 +128,7 @@ export function Contacts({
       setContacts((current) =>
         current.map((item) => (item.id === contact.id ? contact : item)),
       );
-      setEditing(false);
+      navigate(`/contacts/${contact.id}`);
     } catch (reason) {
       setFormError(
         reason instanceof Error ? reason.message : "Could not update contact",
@@ -183,8 +171,6 @@ export function Contacts({
       setContacts((current) =>
         current.filter((contact) => contact.id !== selected.id),
       );
-      setDeleting(false);
-      setSelectedID("");
       navigate("/contacts");
     } catch (reason) {
       setFormError(
@@ -221,165 +207,161 @@ export function Contacts({
 
   if (loading) return <LoadingState label="Loading your people" />;
   if (error) return <ErrorState message={error} retry={load} />;
+
+  if (route.action === "new")
+    return (
+      <WorkflowPage
+        eyebrow="Relationships"
+        title="Add a contact"
+        detail="Capture the person and connect them to their account in one pass."
+        backLabel="All contacts"
+        onBack={() => navigate("/contacts")}
+      >
+        <ContactForm
+          accounts={accounts}
+          saving={saving}
+          error={formError}
+          submitLabel="Save contact"
+          onSubmit={createContact}
+          onCancel={() => navigate("/contacts")}
+        />
+      </WorkflowPage>
+    );
+
+  if ((route.action === "edit" || route.action === "delete") && !selected)
+    return <ErrorState message="That contact could not be found." />;
+
+  if (route.action === "edit" && selected)
+    return (
+      <WorkflowPage
+        eyebrow="Relationships"
+        title={`Edit ${selected.name}`}
+        detail="Update this person without losing the rest of their account history."
+        backLabel="Back to contact"
+        onBack={() => navigate(`/contacts/${selected.id}`)}
+      >
+        <ContactForm
+          contact={selected}
+          accounts={accounts}
+          saving={saving}
+          error={formError}
+          submitLabel="Save changes"
+          onSubmit={updateContact}
+          onCancel={() => navigate(`/contacts/${selected.id}`)}
+        />
+      </WorkflowPage>
+    );
+
+  if (route.action === "delete" && selected)
+    return (
+      <WorkflowPage
+        eyebrow="Relationships"
+        title="Delete this contact?"
+        detail={`${selected.name} will be permanently removed from Kosmos and from the connected shared Google Contacts account after its queued sync completes.`}
+        backLabel="Keep contact"
+        onBack={() => navigate(`/contacts/${selected.id}`)}
+        tone="danger"
+      >
+        {formError && (
+          <p className="form-error" role="alert">
+            {formError}
+          </p>
+        )}
+        <div className="form-actions">
+          <button
+            className="secondary-button"
+            onClick={() => navigate(`/contacts/${selected.id}`)}
+          >
+            Keep contact
+          </button>
+          <button
+            className="danger-button"
+            onClick={deleteContact}
+            disabled={saving}
+          >
+            <Trash2 size={16} /> {saving ? "Deleting..." : "Delete contact"}
+          </button>
+        </div>
+      </WorkflowPage>
+    );
+
   if (selected)
     return (
-      <>
-        <ContactAccount
-          contact={selected}
-          account={accounts.find(
-            (account) => account.id === selected.accountId,
-          )}
-          activities={activities.filter(
-            (item) => item.contactId === selected.id,
-          )}
-          reminders={reminders.filter((item) => item.contactId === selected.id)}
-          opportunities={opportunities.filter(
-            (item) => item.contactId === selected.id,
-          )}
-          actionError={actionError}
-          onBack={() => navigate("/contacts")}
-          onEdit={() => setEditing(true)}
-          onDelete={() => setDeleting(true)}
-          onActivity={addActivity}
-          onReminder={addReminder}
-        />
-        {editing && (
-          <Modal
-            eyebrow="Relationships"
-            title="Edit contact"
-            onClose={() => setEditing(false)}
-          >
-            <ContactForm
-              contact={selected}
-              accounts={accounts}
-              saving={saving}
-              error={formError}
-              submitLabel="Save changes"
-              onSubmit={updateContact}
-              onCancel={() => setEditing(false)}
-            />
-          </Modal>
+      <ContactAccount
+        contact={selected}
+        account={accounts.find((account) => account.id === selected.accountId)}
+        activities={activities.filter((item) => item.contactId === selected.id)}
+        reminders={reminders.filter((item) => item.contactId === selected.id)}
+        opportunities={opportunities.filter(
+          (item) => item.contactId === selected.id,
         )}
-        {deleting && (
-          <Modal
-            eyebrow="Relationships"
-            title="Delete this contact?"
-            onClose={() => setDeleting(false)}
-          >
-            <p className="muted-copy">
-              {selected.name} will be permanently removed from Kosmos and from
-              the connected shared Google Contacts account after its queued
-              sync completes.
-            </p>
-            {formError && (
-              <p className="form-error" role="alert">
-                {formError}
-              </p>
-            )}
-            <div className="form-actions">
-              <button
-                className="secondary-button"
-                onClick={() => setDeleting(false)}
-              >
-                Keep contact
-              </button>
-              <button
-                className="danger-button"
-                onClick={deleteContact}
-                disabled={saving}
-              >
-                <Trash2 size={16} />
-                {saving ? "Deleting..." : "Delete contact"}
-              </button>
-            </div>
-          </Modal>
-        )}
-      </>
+        actionError={actionError}
+        onBack={() => navigate("/contacts")}
+        onEdit={() => navigate(`/contacts/${selected.id}/edit`)}
+        onDelete={() => navigate(`/contacts/${selected.id}/delete`)}
+        onActivity={addActivity}
+        onReminder={addReminder}
+      />
     );
 
   return (
-    <>
-      <Page
-        eyebrow="Relationships"
-        title="Contacts"
-        detail="The people you talk to, linked to the businesses and opportunities they belong to."
-        action={
-          <div className="button-row page-actions">
+    <Page
+      eyebrow="Relationships"
+      title="Contacts"
+      detail="The people you talk to, linked to the businesses and opportunities they belong to."
+      action={
+        <div className="button-row page-actions">
+          <button
+            className="secondary-button"
+            onClick={() => navigate("/lead")}
+          >
+            <ContactRound size={17} /> Quick lead
+          </button>
+          <button
+            className="primary-button"
+            onClick={() => navigate("/contacts/new")}
+          >
+            <Plus size={17} /> Add contact
+          </button>
+        </div>
+      }
+    >
+      {contacts.length ? (
+        <div className="record-grid">
+          {contacts.map((contact) => (
             <button
-              className="secondary-button"
-              onClick={() => navigate("/lead")}
+              className="record-card"
+              key={contact.id}
+              onClick={() => navigate(`/contacts/${contact.id}`)}
             >
-              <ContactRound size={17} /> Quick lead
+              <span className="record-avatar">{initials(contact.name)}</span>
+              <span className="record-main">
+                <strong>{contact.name}</strong>
+                <small>
+                  {accounts.find((account) => account.id === contact.accountId)
+                    ?.name ||
+                    contact.email ||
+                    "No account yet"}
+                </small>
+              </span>
             </button>
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          title="No people yet"
+          detail="Add the first person you want to follow up with."
+          action={
             <button
               className="primary-button"
-              onClick={() => setCreating(true)}
+              onClick={() => navigate("/contacts/new")}
             >
-              <Plus size={17} /> Add contact
+              <Plus size={17} /> Add your first contact
             </button>
-          </div>
-        }
-      >
-        {contacts.length ? (
-          <div className="record-grid">
-            {contacts.map((contact) => (
-              <button
-                className="record-card"
-                key={contact.id}
-                onClick={() => navigate(`/contacts/${contact.id}`)}
-              >
-                <span className="record-avatar">{initials(contact.name)}</span>
-                <span className="record-main">
-                  <strong>{contact.name}</strong>
-                  <small>
-                    {accounts.find(
-                      (account) => account.id === contact.accountId,
-                    )?.name ||
-                      contact.email ||
-                      "No account yet"}
-                  </small>
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            title="No people yet"
-            detail="Add the first person you want to follow up with."
-            action={
-              <button
-                className="primary-button"
-                onClick={() => setCreating(true)}
-              >
-                <Plus size={17} /> Add your first contact
-              </button>
-            }
-          />
-        )}
-      </Page>
-      {creating && (
-        <Modal
-          eyebrow="Relationships"
-          title="Add a contact"
-          onClose={() => {
-            setCreating(false);
-            navigate("/contacts");
-          }}
-        >
-          <ContactForm
-            accounts={accounts}
-            saving={saving}
-            error={formError}
-            submitLabel="Save contact"
-            onSubmit={createContact}
-            onCancel={() => {
-              setCreating(false);
-              navigate("/contacts");
-            }}
-          />
-        </Modal>
+          }
+        />
       )}
-    </>
+    </Page>
   );
 }
 

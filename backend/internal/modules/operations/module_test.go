@@ -150,6 +150,17 @@ func TestEmailTemplateCanBeEditedAndDeleted(t *testing.T) {
 	performJSON[map[string]any](t, mux, http.MethodPatch, "/api/v1/email/templates/"+created.ID, `{"name":"Missing","subject":"Missing","body":"Missing"}`, http.StatusNotFound)
 }
 
+func TestEmailTemplateCustomInputsAreValidatedAndPersisted(t *testing.T) {
+	_, mux, _ := newTestModule(t)
+	created := performJSON[EmailTemplate](t, mux, http.MethodPost, "/api/v1/email/templates", `{"name":"Renewal","subject":"Your renewal is {{ renewal_amount }}","body":"Hi {{name}}, answer by {{renewal_date}}.","inputs":[{"key":"renewal_amount","label":"How much is their renewal?","defaultValue":"$100"},{"key":"renewal_date","label":"When is it due?","defaultValue":""}]}`, http.StatusCreated)
+	if len(created.Inputs) != 2 || created.Inputs[0].Key != "renewal_amount" || created.Inputs[0].DefaultValue != "$100" {
+		t.Fatalf("custom inputs were not persisted: %#v", created.Inputs)
+	}
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/email/templates", `{"name":"Undefined","subject":"Renewal","body":"Amount: {{renewal_amount}}"}`, http.StatusBadRequest)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/email/templates", `{"name":"Unused","subject":"Renewal","body":"Hello","inputs":[{"key":"renewal_amount","label":"Amount","defaultValue":""}]}`, http.StatusBadRequest)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/email/templates", `{"name":"Reserved","subject":"Hello {{name}}","body":"Hello","inputs":[{"key":"name","label":"Name","defaultValue":""}]}`, http.StatusBadRequest)
+}
+
 func TestVoiceLinkSelectsSharedGoogleAccount(t *testing.T) {
 	module, mux, _ := newTestModule(t)
 	const googleEmail = "shared.voice@gmail.com"
@@ -169,11 +180,19 @@ func TestVoiceLinkSelectsSharedGoogleAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if destination.Host != "voice.google.com" || destination.Path != "/calls" || destination.Query().Get("authuser") != googleEmail {
+	if destination.Host != "voice.google.com" || destination.Path != "/search" || destination.Query().Get("authuser") != googleEmail || destination.Query().Get("from") != "[]" || destination.Query().Get("q") != `["+15551234567"]` {
 		t.Fatalf("unexpected Voice destination: %s", destination)
 	}
 	if response["googleAccount"] != googleEmail {
 		t.Fatalf("google account = %q", response["googleAccount"])
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/voice/link?phone=%2B15551234567&redirect=1", nil)
+	request.Header.Set("X-Test-User", "owner@nerdswhofish.com")
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusSeeOther || !strings.Contains(recorder.Header().Get("Location"), "accounts.google.com/AccountChooser") {
+		t.Fatalf("redirect = %d %q", recorder.Code, recorder.Header().Get("Location"))
 	}
 }
 

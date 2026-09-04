@@ -15,38 +15,50 @@ import {
   api,
   Contact,
   EmailTemplate,
+  EmailTemplateInput,
   GoogleStatus,
   MailMessage,
   Notification,
   shortDate,
 } from "../api";
-import { Modal } from "../components/Modal";
 import { GoogleVoiceButton } from "../components/GoogleVoiceButton";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
+import { WorkflowPage } from "../components/WorkflowPage";
+import { ResourceRoute } from "../routing";
 
 export function mergeTemplate(
   value: string,
   contact?: Contact,
   account?: Account,
+  answers: Record<string, string> = {},
 ) {
-  return value
-    .replaceAll("{{name}}", contact?.name || "{{name}}")
-    .replaceAll("{{company}}", account?.name || "{{company}}")
-    .replaceAll(
-      "{{domains}}",
+  const values: Record<string, string> = {
+    name: contact?.name || "",
+    company: account?.name || "",
+    domains:
       account?.websites
         ?.map((website) => website.domain || website.url)
         .filter(Boolean)
-        .join(", ") || "{{domains}}",
-    );
+        .join(", ") || "",
+    ...answers,
+  };
+  return value.replace(/{{\s*([a-z][a-z0-9_]*)\s*}}/g, (token, key: string) =>
+    values[key]?.trim() ? values[key] : token,
+  );
 }
 
 export function hasTemplateVariables(value: string) {
-  return /{{(?:name|company|domains)}}/.test(value);
+  return /{{\s*[a-z][a-z0-9_]*\s*}}/.test(value);
 }
 
-export function Communications() {
+export function Communications({
+  route,
+  navigate,
+}: {
+  route: ResourceRoute;
+  navigate: (path: string) => void;
+}) {
   const [status, setStatus] = useState<GoogleStatus | null>(null);
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [messages, setMessages] = useState<MailMessage[]>([]);
@@ -54,12 +66,12 @@ export function Communications() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [templateOpen, setTemplateOpen] = useState(false);
-  const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(
-    null,
+  const [templateInputs, setTemplateInputs] = useState<EmailTemplateInput[]>(
+    [],
   );
-  const [deletingTemplate, setDeletingTemplate] =
-    useState<EmailTemplate | null>(null);
+  const [templateAnswers, setTemplateAnswers] = useState<
+    Record<string, string>
+  >({});
   const [templateSaving, setTemplateSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -106,6 +118,23 @@ export function Communications() {
 
   useEffect(load, [load]);
 
+  const editingTemplate =
+    route.action === "edit"
+      ? (templates.find((item) => item.id === route.id) ?? null)
+      : null;
+  const deletingTemplate =
+    route.action === "delete"
+      ? (templates.find((item) => item.id === route.id) ?? null)
+      : null;
+  useEffect(() => {
+    if (route.action === "new") setTemplateInputs([]);
+    if (route.action === "edit" && editingTemplate)
+      setTemplateInputs(
+        (editingTemplate.inputs ?? []).map((input) => ({ ...input })),
+      );
+    setNotice("");
+  }, [route.action, route.id, editingTemplate?.id]);
+
   async function sendEmail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (hasTemplateVariables(`${draft.subject}\n${draft.body}`)) {
@@ -130,6 +159,7 @@ export function Communications() {
       formElement.reset();
       setDraft({ to: "", subject: "", body: "" });
       setActiveTemplate(null);
+      setTemplateAnswers({});
       setNotice("Email sent through your Google account.");
       load();
     } catch (reason) {
@@ -158,21 +188,6 @@ export function Communications() {
     }
   }
 
-  function openNewTemplate() {
-    setEditingTemplate(null);
-    setTemplateOpen(true);
-  }
-
-  function openEditTemplate(template: EmailTemplate) {
-    setEditingTemplate(template);
-    setTemplateOpen(true);
-  }
-
-  function closeTemplate() {
-    setTemplateOpen(false);
-    setEditingTemplate(null);
-  }
-
   async function saveTemplate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -189,14 +204,15 @@ export function Communications() {
             name: form.get("name"),
             subject: form.get("subject"),
             body: form.get("body"),
+            inputs: templateInputs,
           }),
         },
       );
       setNotice(
         editingTemplate ? "Email template updated." : "Email template saved.",
       );
-      closeTemplate();
-      load();
+      await load();
+      navigate("/communications");
     } catch (reason) {
       setNotice(
         reason instanceof Error ? reason.message : "Could not save template",
@@ -219,7 +235,7 @@ export function Communications() {
       );
       if (activeTemplate?.id === deletingTemplate.id) setActiveTemplate(null);
       setNotice("Email template deleted.");
-      setDeletingTemplate(null);
+      navigate("/communications");
     } catch (reason) {
       setNotice(
         reason instanceof Error ? reason.message : "Could not delete template",
@@ -248,11 +264,15 @@ export function Communications() {
       (item) => item.email.toLowerCase() === draft.to.toLowerCase(),
     );
     const account = accounts.find((item) => item.id === contact?.accountId);
+    const answers = Object.fromEntries(
+      (template.inputs ?? []).map((input) => [input.key, input.defaultValue]),
+    );
     setActiveTemplate(template);
+    setTemplateAnswers(answers);
     setDraft((current) => ({
       ...current,
-      subject: mergeTemplate(template.subject, contact, account),
-      body: mergeTemplate(template.body, contact, account),
+      subject: mergeTemplate(template.subject, contact, account, answers),
+      body: mergeTemplate(template.body, contact, account, answers),
     }));
     setNotice(
       contact
@@ -271,10 +291,35 @@ export function Communications() {
       to,
       ...(activeTemplate
         ? {
-            subject: mergeTemplate(activeTemplate.subject, contact, account),
-            body: mergeTemplate(activeTemplate.body, contact, account),
+            subject: mergeTemplate(
+              activeTemplate.subject,
+              contact,
+              account,
+              templateAnswers,
+            ),
+            body: mergeTemplate(
+              activeTemplate.body,
+              contact,
+              account,
+              templateAnswers,
+            ),
           }
         : {}),
+    }));
+  }
+
+  function updateTemplateAnswer(key: string, value: string) {
+    if (!activeTemplate) return;
+    const answers = { ...templateAnswers, [key]: value };
+    const contact = contacts.find(
+      (item) => item.email.toLowerCase() === draft.to.toLowerCase(),
+    );
+    const account = accounts.find((item) => item.id === contact?.accountId);
+    setTemplateAnswers(answers);
+    setDraft((current) => ({
+      ...current,
+      subject: mergeTemplate(activeTemplate.subject, contact, account, answers),
+      body: mergeTemplate(activeTemplate.body, contact, account, answers),
     }));
   }
 
@@ -285,6 +330,221 @@ export function Communications() {
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} retry={load} />;
+
+  if (route.action === "new" || route.action === "edit") {
+    if (route.action === "edit" && !editingTemplate)
+      return <ErrorState message="That email template could not be found." />;
+    return (
+      <WorkflowPage
+        eyebrow="Reusable message"
+        title={editingTemplate ? "Edit email template" : "New email template"}
+        detail="Add questions for details that change each time. Senders must answer every question without a default."
+        backLabel="Back to communications"
+        onBack={() => navigate("/communications")}
+      >
+        <form onSubmit={saveTemplate}>
+          <div
+            className="template-variables"
+            role="note"
+            aria-label="Available template variables"
+          >
+            <strong>Built-in variables</strong>
+            <span>
+              <code>{"{{name}}"}</code> contact name
+            </span>
+            <span>
+              <code>{"{{company}}"}</code> account name
+            </span>
+            <span>
+              <code>{"{{domains}}"}</code> account domains
+            </span>
+          </div>
+          <label>
+            Name
+            <input
+              name="name"
+              required
+              autoFocus
+              defaultValue={editingTemplate?.name}
+            />
+          </label>
+          <label>
+            Subject
+            <input
+              name="subject"
+              required
+              defaultValue={editingTemplate?.subject}
+            />
+          </label>
+          <label>
+            Message
+            <textarea
+              name="body"
+              rows={12}
+              required
+              defaultValue={editingTemplate?.body}
+            />
+          </label>
+          <fieldset className="form-section template-inputs">
+            <legend>Questions for the sender</legend>
+            <p className="field-help">
+              Each answer replaces its matching variable in the subject or
+              message.
+            </p>
+            {templateInputs.map((input, index) => (
+              <div className="template-input-card" key={index}>
+                <div className="field-grid">
+                  <label>
+                    Variable key
+                    <input
+                      aria-label={`Question ${index + 1} variable key`}
+                      value={input.key}
+                      pattern="[a-z][a-z0-9_]*"
+                      placeholder="renewal_amount"
+                      required
+                      onChange={(event) =>
+                        setTemplateInputs((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? {
+                                  ...item,
+                                  key: event.target.value
+                                    .toLowerCase()
+                                    .replace(/[^a-z0-9_]/g, "_"),
+                                }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    Question
+                    <input
+                      aria-label={`Question ${index + 1} label`}
+                      value={input.label}
+                      placeholder="How much is their renewal?"
+                      required
+                      onChange={(event) =>
+                        setTemplateInputs((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, label: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    Default answer <small>(optional)</small>
+                    <input
+                      aria-label={`Question ${index + 1} default answer`}
+                      value={input.defaultValue}
+                      placeholder="$0.00"
+                      onChange={(event) =>
+                        setTemplateInputs((current) =>
+                          current.map((item, itemIndex) =>
+                            itemIndex === index
+                              ? { ...item, defaultValue: event.target.value }
+                              : item,
+                          ),
+                        )
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="template-token-row">
+                  <code>{`{{${input.key || "variable"}}}`}</code>
+                  <button
+                    type="button"
+                    className="text-button danger-text"
+                    onClick={() =>
+                      setTemplateInputs((current) =>
+                        current.filter((_, itemIndex) => itemIndex !== index),
+                      )
+                    }
+                  >
+                    <Trash2 size={15} /> Remove question
+                  </button>
+                </div>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() =>
+                setTemplateInputs((current) => [
+                  ...current,
+                  { key: "", label: "", defaultValue: "" },
+                ])
+              }
+            >
+              <Plus size={15} /> Add a question
+            </button>
+          </fieldset>
+          {notice && (
+            <p className="form-error" role="alert">
+              {notice}
+            </p>
+          )}
+          <div className="form-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => navigate("/communications")}
+            >
+              Cancel
+            </button>
+            <button className="primary-button" disabled={templateSaving}>
+              {templateSaving
+                ? "Saving..."
+                : editingTemplate
+                  ? "Save changes"
+                  : "Save template"}
+            </button>
+          </div>
+        </form>
+      </WorkflowPage>
+    );
+  }
+
+  if (route.action === "delete") {
+    if (!deletingTemplate)
+      return <ErrorState message="That email template could not be found." />;
+    return (
+      <WorkflowPage
+        eyebrow="Reusable message"
+        title="Delete this email template?"
+        detail={`${deletingTemplate.name} will be removed for everyone in the organization.`}
+        backLabel="Keep template"
+        onBack={() => navigate("/communications")}
+        tone="danger"
+      >
+        {notice && (
+          <p className="form-error" role="alert">
+            {notice}
+          </p>
+        )}
+        <div className="form-actions">
+          <button
+            className="secondary-button"
+            onClick={() => navigate("/communications")}
+          >
+            Keep template
+          </button>
+          <button
+            className="danger-button"
+            onClick={deleteTemplate}
+            disabled={templateSaving}
+          >
+            <Trash2 size={16} />{" "}
+            {templateSaving ? "Deleting..." : "Delete template"}
+          </button>
+        </div>
+      </WorkflowPage>
+    );
+  }
 
   return (
     <Page
@@ -334,7 +594,10 @@ export function Communications() {
               <p className="eyebrow">Outbound</p>
               <h2>Send one good email</h2>
             </div>
-            <button className="text-button" onClick={openNewTemplate}>
+            <button
+              className="text-button"
+              onClick={() => navigate("/communications/templates/new")}
+            >
               <Plus size={15} /> Template
             </button>
           </div>
@@ -368,7 +631,6 @@ export function Communications() {
                 maxLength={200}
                 value={draft.subject}
                 onChange={(event) => {
-                  setActiveTemplate(null);
                   setDraft((current) => ({
                     ...current,
                     subject: event.target.value,
@@ -384,7 +646,6 @@ export function Communications() {
                 rows={9}
                 value={draft.body}
                 onChange={(event) => {
-                  setActiveTemplate(null);
                   setDraft((current) => ({
                     ...current,
                     body: event.target.value,
@@ -392,6 +653,26 @@ export function Communications() {
                 }}
               />
             </label>
+            {!!activeTemplate?.inputs?.length && (
+              <fieldset className="form-section template-questionnaire">
+                <legend>Fill in this template</legend>
+                <p className="field-help">
+                  These answers are required before the email can be sent.
+                </p>
+                {activeTemplate.inputs.map((input) => (
+                  <label key={input.key}>
+                    {input.label}
+                    <input
+                      required
+                      value={templateAnswers[input.key] ?? ""}
+                      onChange={(event) =>
+                        updateTemplateAnswer(input.key, event.target.value)
+                      }
+                    />
+                  </label>
+                ))}
+              </fieldset>
+            )}
             {(draft.subject || draft.body) && (
               <section className="email-preview" aria-label="Email preview">
                 <p className="eyebrow">Preview</p>
@@ -402,7 +683,13 @@ export function Communications() {
             <div className="form-actions">
               <button
                 className="primary-button"
-                disabled={!status?.connected || sending}
+                disabled={
+                  !status?.connected ||
+                  sending ||
+                  (activeTemplate?.inputs ?? []).some(
+                    (input) => !(templateAnswers[input.key] ?? "").trim(),
+                  )
+                }
               >
                 <Send size={16} /> {sending ? "Sending..." : "Send with Gmail"}
               </button>
@@ -431,7 +718,11 @@ export function Communications() {
                       className="record-action"
                       type="button"
                       aria-label={`Edit ${template.name} template`}
-                      onClick={() => openEditTemplate(template)}
+                      onClick={() =>
+                        navigate(
+                          `/communications/templates/${template.id}/edit`,
+                        )
+                      }
                     >
                       <Pencil size={15} /> Edit
                     </button>
@@ -439,7 +730,11 @@ export function Communications() {
                       className="record-action danger-text"
                       type="button"
                       aria-label={`Delete ${template.name} template`}
-                      onClick={() => setDeletingTemplate(template)}
+                      onClick={() =>
+                        navigate(
+                          `/communications/templates/${template.id}/delete`,
+                        )
+                      }
                     >
                       <Trash2 size={15} /> Delete
                     </button>
@@ -580,102 +875,6 @@ export function Communications() {
           )}
         </div>
       </section>
-      {templateOpen && (
-        <Modal
-          eyebrow="Reusable message"
-          title={editingTemplate ? "Edit email template" : "New email template"}
-          onClose={closeTemplate}
-        >
-          <form onSubmit={saveTemplate}>
-            <div
-              className="template-variables"
-              role="note"
-              aria-label="Available template variables"
-            >
-              <strong>Available variables</strong>
-              <span>
-                <code>{"{{name}}"}</code> contact name
-              </span>
-              <span>
-                <code>{"{{company}}"}</code> account name
-              </span>
-              <span>
-                <code>{"{{domains}}"}</code> account domains
-              </span>
-            </div>
-            <label>
-              Name
-              <input
-                name="name"
-                required
-                autoFocus
-                defaultValue={editingTemplate?.name}
-              />
-            </label>
-            <label>
-              Subject
-              <input
-                name="subject"
-                required
-                defaultValue={editingTemplate?.subject}
-              />
-            </label>
-            <label>
-              Message
-              <textarea
-                name="body"
-                rows={8}
-                required
-                defaultValue={editingTemplate?.body}
-              />
-            </label>
-            <div className="form-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={closeTemplate}
-              >
-                Cancel
-              </button>
-              <button className="primary-button" disabled={templateSaving}>
-                {templateSaving
-                  ? "Saving..."
-                  : editingTemplate
-                    ? "Save changes"
-                    : "Save template"}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-      {deletingTemplate && (
-        <Modal
-          eyebrow="Reusable message"
-          title="Delete this email template?"
-          onClose={() => setDeletingTemplate(null)}
-        >
-          <p className="muted-copy">
-            {deletingTemplate.name} will be removed for everyone in the
-            organization.
-          </p>
-          <div className="form-actions">
-            <button
-              className="secondary-button"
-              onClick={() => setDeletingTemplate(null)}
-            >
-              Keep template
-            </button>
-            <button
-              className="danger-button"
-              onClick={deleteTemplate}
-              disabled={templateSaving}
-            >
-              <Trash2 size={16} />
-              {templateSaving ? "Deleting..." : "Delete template"}
-            </button>
-          </div>
-        </Modal>
-      )}
     </Page>
   );
 }

@@ -12,7 +12,6 @@ dev-frontend:
 
 test:
 	GOWORK=off go test ./...
-	npm --prefix extensions/kosmos-companion test
 	npm --prefix frontend ci
 	npm --prefix frontend test
 	npm --prefix frontend run build

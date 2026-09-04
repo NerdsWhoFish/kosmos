@@ -254,6 +254,22 @@ const responses: Record<string, unknown> = {
         name: "Welcome note",
         subject: "Welcome {{name}}",
         body: "Hi {{name}} at {{company}}. Domains: {{domains}}.",
+        inputs: [],
+        createdAt: "2026-09-03T12:00:00Z",
+        updatedAt: "2026-09-03T12:00:00Z",
+      },
+      {
+        id: "template-2",
+        name: "Renewal notice",
+        subject: "Your renewal is {{renewal_amount}}",
+        body: "Hi {{name}}, your renewal is {{renewal_amount}}.",
+        inputs: [
+          {
+            key: "renewal_amount",
+            label: "How much is their renewal?",
+            defaultValue: "$100",
+          },
+        ],
         createdAt: "2026-09-03T12:00:00Z",
         updatedAt: "2026-09-03T12:00:00Z",
       },
@@ -491,26 +507,30 @@ function mockAPI(authenticated = true) {
         method === "DELETE"
       )
         return Promise.resolve(new Response(null, { status: 204 }));
-      if (url.pathname === "/api/v1/costs" && method === "POST")
-        return Promise.resolve(
-          json(
-            {
-              id: "cost-2",
-              vendor: body.vendor,
-              description: body.description,
-              amountCents: body.amountCents,
-              category: body.category,
-              incurredOn: body.incurredOn,
-              recurring: body.recurring,
-              recurrence: body.recurrence,
-              taxDeductible: body.taxDeductible,
-              notes: body.notes,
-              createdAt: "2026-09-03T13:00:00Z",
-              updatedAt: "2026-09-03T13:00:00Z",
-            },
-            201,
-          ),
-        );
+      if (url.pathname === "/api/v1/costs" && method === "POST") {
+        const created = {
+          id: "cost-2",
+          vendor: body.vendor,
+          description: body.description,
+          amountCents: body.amountCents,
+          category: body.category,
+          incurredOn: body.incurredOn,
+          recurring: body.recurring,
+          recurrence: body.recurrence,
+          taxDeductible: body.taxDeductible,
+          notes: body.notes,
+          createdAt: "2026-09-03T13:00:00Z",
+          updatedAt: "2026-09-03T13:00:00Z",
+        };
+        const collection = responses["/api/v1/costs"] as {
+          costs: Array<{ id?: string }>;
+        };
+        collection.costs = [
+          created,
+          ...collection.costs.filter((item) => item.id !== created.id),
+        ];
+        return Promise.resolve(json(created, 201));
+      }
       if (url.pathname === "/api/v1/costs/cost-1" && method === "PATCH")
         return Promise.resolve(
           json({
@@ -655,32 +675,31 @@ function mockAPI(authenticated = true) {
       if (url.pathname === "/api/v1/attachments" && method === "POST") {
         const form = init?.body as FormData;
         const file = form.get("file") as File;
-        return Promise.resolve(
-          json(
-            {
-              id: "attachment-1",
-              fileName:
-                form.get("kind") === "photo"
-                  ? "profile.png"
-                  : form.get("recordType") === "document"
-                    ? "guide.pdf"
-                    : "license.pdf",
-              contentType: file?.type || "application/pdf",
-              size: file?.size || 512,
-              kind: form.get("kind"),
-              recordType: form.get("recordType"),
-              recordId: form.get("recordId"),
-              createdBy: user.email,
-              createdAt: "2026-09-03T12:00:00Z",
-              downloadUrl: "/download",
-              viewUrl:
-                form.get("kind") === "photo"
-                  ? "/profile.png"
-                  : "/download?disposition=inline",
-            },
-            201,
-          ),
-        );
+        const created = {
+          id: "attachment-1",
+          fileName:
+            form.get("kind") === "photo"
+              ? "profile.png"
+              : form.get("recordType") === "document"
+                ? "guide.pdf"
+                : "license.pdf",
+          contentType: file?.type || "application/pdf",
+          size: file?.size || 512,
+          kind: form.get("kind"),
+          recordType: form.get("recordType"),
+          recordId: form.get("recordId"),
+          createdBy: user.email,
+          createdAt: "2026-09-03T12:00:00Z",
+          downloadUrl: "/download",
+          viewUrl:
+            form.get("kind") === "photo"
+              ? "/profile.png"
+              : "/download?disposition=inline",
+        };
+        (
+          responses["/api/v1/attachments"] as { attachments: object[] }
+        ).attachments.unshift(created);
+        return Promise.resolve(json(created, 201));
       }
       if (
         url.pathname.startsWith("/api/v1/attachments/") &&
@@ -1049,10 +1068,11 @@ describe("Kosmos application", () => {
       screen.getByRole("button", { name: /future reminders 1/i }),
     );
     expect(
-      within(screen.getByRole("dialog")).getByText(
+      await screen.findByText(
         "affordable-drainage-solutions.com renews in 30 days",
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("lets an administrator edit and confirm deletion of a shortcut", async () => {
@@ -1172,11 +1192,7 @@ describe("Kosmos application", () => {
         ),
     ).toBe(false);
 
-    fireEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
-        name: /^delete account$/i,
-      }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /^delete account$/i }));
     await waitFor(() =>
       expect(
         vi
@@ -1444,8 +1460,9 @@ describe("Kosmos application", () => {
     );
     fireEvent.click(screen.getByRole("link", { name: "Documents" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: /delete client kickoff/i }),
+      await screen.findByRole("link", { name: /client kickoff/i }),
     );
+    fireEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^delete document$/i }));
     await waitFor(() =>
       expect(
@@ -1467,8 +1484,11 @@ describe("Kosmos application", () => {
       name: /good (morning|afternoon|evening)/i,
     });
     fireEvent.click(screen.getByRole("link", { name: "Documents" }));
+    fireEvent.click(
+      await screen.findByRole("link", { name: /client kickoff/i }),
+    );
     const file = new File(["pdf"], "guide.pdf", { type: "application/pdf" });
-    const documentFile = await screen.findByLabelText(/attach a file/i);
+    const documentFile = await screen.findByLabelText(/choose a file/i);
     fireEvent.change(documentFile, {
       target: { files: [file] },
     });
@@ -1530,8 +1550,7 @@ describe("Kosmos application", () => {
     ).toHaveAttribute("href", "/download");
   });
 
-  it("uses the Google profile picture and detects Kosmos Companion", async () => {
-    const postMessage = vi.spyOn(window, "postMessage");
+  it("uses the Google profile picture and links directly to the shared Google Voice account", async () => {
     mockAPI();
     render(<App />);
     await screen.findByRole("heading", {
@@ -1544,23 +1563,12 @@ describe("Kosmos application", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "Contacts" }));
     fireEvent.click(await screen.findByRole("button", { name: /ada angler/i }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: /google voice/i }),
-    );
-    expect(
-      await screen.findByText(/install kosmos companion/i),
-    ).toBeInTheDocument();
-    fireEvent(window, new CustomEvent("kosmos-companion-ready"));
-    fireEvent.click(screen.getByRole("button", { name: /google voice/i }));
-    await waitFor(() =>
-      expect(postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: "KOSMOS_VOICE_PREPARE",
-          phone: contact.phone,
-          launchUrl: expect.stringContaining("accounts.google.com"),
-        }),
-        window.location.origin,
-      ),
+    const voiceLink = await screen.findByRole("link", {
+      name: /google voice/i,
+    });
+    expect(voiceLink).toHaveAttribute(
+      "href",
+      `/api/v1/voice/link?phone=${encodeURIComponent(contact.phone)}&mode=message&redirect=1`,
     );
   });
 
@@ -1607,6 +1615,46 @@ describe("Kosmos application", () => {
     });
   });
 
+  it("requires custom template answers and merges them into the email", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Inbox" }));
+    fireEvent.click(
+      (await screen.findByText("Renewal notice")).closest("button")!,
+    );
+
+    const answer = screen.getByLabelText(/how much is their renewal/i);
+    expect(answer).toHaveValue("$100");
+    expect(screen.getByRole("textbox", { name: /^subject$/i })).toHaveValue(
+      "Your renewal is $100",
+    );
+    fireEvent.change(answer, { target: { value: "" } });
+    expect(
+      screen.getByRole("button", { name: /send with gmail/i }),
+    ).toBeDisabled();
+
+    fireEvent.change(screen.getByRole("combobox", { name: /^to$/i }), {
+      target: { value: contact.email },
+    });
+    fireEvent.change(answer, { target: { value: "$250" } });
+    fireEvent.click(screen.getByRole("button", { name: /send with gmail/i }));
+    await waitFor(() => {
+      const request = vi
+        .mocked(fetch)
+        .mock.calls.find(
+          ([input, init]) =>
+            String(input) === "/api/v1/email/send" && init?.method === "POST",
+        );
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        subject: "Your renewal is $250",
+        body: "Hi Ada Angler, your renewal is $250.",
+      });
+    });
+  });
+
   it("creates an account document with the account link", async () => {
     mockAPI();
     render(<App />);
@@ -1618,6 +1666,7 @@ describe("Kosmos application", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /new document/i }),
     );
+    await screen.findByRole("heading", { name: /new document/i });
     fireEvent.change(screen.getByLabelText(/^title$/i), {
       target: { value: "Renewal notes" },
     });
@@ -1676,6 +1725,56 @@ describe("Kosmos application", () => {
     expect(
       screen.getByLabelText(/available template variables/i),
     ).toHaveTextContent("{{company}}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("creates an email template with a custom sender question", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Inbox" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^template$/i }));
+    fireEvent.change(screen.getByLabelText(/^name$/i), {
+      target: { value: "Renewal" },
+    });
+    fireEvent.change(screen.getByLabelText(/^subject$/i), {
+      target: { value: "Your renewal is {{renewal_amount}}" },
+    });
+    fireEvent.change(screen.getByLabelText(/^message$/i), {
+      target: { value: "Please renew for {{renewal_amount}}." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add a question/i }));
+    fireEvent.change(screen.getByLabelText(/question 1 variable key/i), {
+      target: { value: "renewal_amount" },
+    });
+    fireEvent.change(screen.getByLabelText(/question 1 label/i), {
+      target: { value: "How much is their renewal?" },
+    });
+    fireEvent.change(screen.getByLabelText(/question 1 default answer/i), {
+      target: { value: "$100" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save template/i }));
+
+    await waitFor(() => {
+      const request = vi
+        .mocked(fetch)
+        .mock.calls.find(
+          ([input, init]) =>
+            String(input) === "/api/v1/email/templates" &&
+            init?.method === "POST",
+        );
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        inputs: [
+          {
+            key: "renewal_amount",
+            label: "How much is their renewal?",
+            defaultValue: "$100",
+          },
+        ],
+      });
+    });
   });
 
   it.each([

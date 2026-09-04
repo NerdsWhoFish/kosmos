@@ -18,6 +18,7 @@ import (
 	"net/mail"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -510,7 +511,7 @@ func (m *Module) updateEmailTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "template_update_failed", "Could not update email template")
 		return
 	}
-	item.Name, item.Subject, item.Body, item.UpdatedAt = request.Name, request.Subject, request.Body, time.Now().UTC()
+	item.Name, item.Subject, item.Body, item.Inputs, item.UpdatedAt = request.Name, request.Subject, request.Body, request.Inputs, time.Now().UTC()
 	if err := m.store.Put(r.Context(), scope, "emailTemplates", item.ID, item); err != nil {
 		writeError(w, http.StatusInternalServerError, "template_update_failed", "Could not update email template")
 		return
@@ -550,8 +551,42 @@ func decodeEmailTemplate(w http.ResponseWriter, r *http.Request) (EmailTemplate,
 		writeError(w, http.StatusBadRequest, "invalid_template", "Template name, subject, and a body under 100,000 characters are required")
 		return EmailTemplate{}, false
 	}
+	if len(item.Inputs) > 20 {
+		writeError(w, http.StatusBadRequest, "invalid_template_inputs", "A template can have up to 20 custom questions")
+		return EmailTemplate{}, false
+	}
+	seen := map[string]bool{"name": true, "company": true, "domains": true}
+	for index := range item.Inputs {
+		input := &item.Inputs[index]
+		input.Key = strings.TrimSpace(input.Key)
+		input.Label = strings.TrimSpace(input.Label)
+		input.DefaultValue = strings.TrimSpace(input.DefaultValue)
+		if !templateInputKeyPattern.MatchString(input.Key) || len(input.Key) > 64 || input.Label == "" || len(input.Label) > 160 || len(input.DefaultValue) > 2000 || seen[input.Key] {
+			writeError(w, http.StatusBadRequest, "invalid_template_inputs", "Each custom question needs a unique lowercase variable key and a question")
+			return EmailTemplate{}, false
+		}
+		seen[input.Key] = true
+	}
+	used := map[string]bool{}
+	for _, match := range templateVariablePattern.FindAllStringSubmatch(item.Subject+"\n"+item.Body, -1) {
+		key := strings.TrimSpace(match[1])
+		if !templateInputKeyPattern.MatchString(key) || !seen[key] {
+			writeError(w, http.StatusBadRequest, "undefined_template_input", "Define a custom question for {{"+key+"}} before saving")
+			return EmailTemplate{}, false
+		}
+		used[key] = true
+	}
+	for _, input := range item.Inputs {
+		if !used[input.Key] {
+			writeError(w, http.StatusBadRequest, "unused_template_input", "Use {{"+input.Key+"}} in the subject or message before saving")
+			return EmailTemplate{}, false
+		}
+	}
 	return item, true
 }
+
+var templateInputKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+var templateVariablePattern = regexp.MustCompile(`{{\s*([^{}]+?)\s*}}`)
 
 func (m *Module) googleStatus(w http.ResponseWriter, r *http.Request) {
 	scope, actor, ok := m.authorize(w, r)
@@ -971,12 +1006,21 @@ func (m *Module) voiceLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
-	path := "messages"
-	if r.URL.Query().Get("mode") == "call" {
-		path = "calls"
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone_required", "A phone number is required")
+		return
 	}
-	voiceURL := "https://voice.google.com/" + path + "?" + url.Values{"authuser": {connection.GoogleEmail}}.Encode()
+	query, _ := json.Marshal([]string{phone})
+	voiceURL := "https://voice.google.com/search?" + url.Values{
+		"authuser": {connection.GoogleEmail},
+		"from":     {"[]"},
+		"q":        {string(query)},
+	}.Encode()
 	chooserURL := "https://accounts.google.com/AccountChooser?" + url.Values{"Email": {connection.GoogleEmail}, "continue": {voiceURL}}.Encode()
+	if r.URL.Query().Get("redirect") == "1" {
+		http.Redirect(w, r, chooserURL, http.StatusSeeOther)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"googleVoiceUrl": chooserURL, "googleAccount": connection.GoogleEmail, "callUrl": "tel:" + phone, "smsUrl": "sms:" + phone})
 }
 

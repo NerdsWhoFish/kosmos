@@ -17,32 +17,33 @@ import {
   PipelineStage,
   shortDate,
 } from "../api";
-import { Modal } from "../components/Modal";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
+import { WorkflowPage } from "../components/WorkflowPage";
+import { ResourceRoute } from "../routing";
 
 type OpportunityView = "pipeline" | "won" | "lost";
 
 export function Opportunities({
   initialView,
   navigate,
+  route,
 }: {
   initialView: OpportunityView;
   navigate: (path: string) => void;
+  route: ResourceRoute;
 }) {
   const [items, setItems] = useState<Opportunity[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [view, setView] = useState<OpportunityView>(initialView);
-  const [creating, setCreating] = useState(false);
   const [newAccountID, setNewAccountID] = useState("");
   const [draggedID, setDraggedID] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState<Opportunity | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -94,8 +95,8 @@ export function Opportunities({
         }),
       });
       setItems((current) => [created, ...current]);
-      setCreating(false);
       setNewAccountID("");
+      navigate("/opportunities");
     } catch (reason) {
       setFormError(
         reason instanceof Error ? reason.message : "Could not save opportunity",
@@ -124,13 +125,14 @@ export function Opportunities({
   }
 
   async function deleteOpportunity() {
+    const deleting = items.find((item) => item.id === route.id);
     if (!deleting) return;
     setSaving(true);
     setFormError("");
     try {
       await api(`/api/v1/opportunities/${deleting.id}`, { method: "DELETE" });
       setItems((current) => current.filter((item) => item.id !== deleting.id));
-      setDeleting(null);
+      navigate("/opportunities");
     } catch (reason) {
       setFormError(
         reason instanceof Error
@@ -183,252 +185,296 @@ export function Opportunities({
         { id: "lost", name: "Lost" },
       ] as PipelineStage[]);
 
-  return (
-    <>
-      <Page
+  if (route.action === "new")
+    return (
+      <WorkflowPage
         eyebrow="Pipeline"
-        title="Opportunities"
-        detail="Know what is moving, what is stuck, and what each win is worth."
-        action={
-          <button className="primary-button" onClick={() => setCreating(true)}>
-            <Plus size={17} /> Add opportunity
-          </button>
-        }
+        title="Add an opportunity"
+        detail="Put the work in the right account and give the team a concrete next step."
+        backLabel="Back to pipeline"
+        onBack={() => navigate("/opportunities")}
       >
-        <div
-          className="opportunity-tabs"
-          role="tablist"
-          aria-label="Opportunity views"
-        >
-          {(["pipeline", "won", "lost"] as OpportunityView[]).map((choice) => (
-            <button
-              role="tab"
-              aria-selected={view === choice}
-              className={view === choice ? "active" : ""}
-              key={choice}
-              onClick={() => setView(choice)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) =>
-                drop(
-                  event,
-                  choice === "won"
-                    ? wonStage
-                    : choice === "lost"
-                      ? lostStage
-                      : (openStages[0]?.id ?? "new"),
-                )
-              }
-            >
-              {choice}
-            </button>
-          ))}
+        <OpportunityForm
+          accounts={accounts}
+          contacts={contacts}
+          stages={openStages}
+          accountID={newAccountID}
+          saving={saving}
+          error={formError}
+          onAccount={setNewAccountID}
+          onSubmit={create}
+          onCancel={() => navigate("/opportunities")}
+        />
+      </WorkflowPage>
+    );
+
+  if (route.action === "delete") {
+    const deleting = items.find((item) => item.id === route.id);
+    if (!deleting)
+      return <ErrorState message="That opportunity could not be found." />;
+    return (
+      <WorkflowPage
+        eyebrow="Pipeline"
+        title="Delete this opportunity?"
+        detail={`${deleting.name} will be permanently removed from the pipeline.`}
+        backLabel="Keep opportunity"
+        onBack={() => navigate("/opportunities")}
+        tone="danger"
+      >
+        {formError && (
+          <p className="form-error" role="alert">
+            {formError}
+          </p>
+        )}
+        <div className="form-actions">
+          <button
+            className="secondary-button"
+            onClick={() => navigate("/opportunities")}
+          >
+            Keep opportunity
+          </button>
+          <button
+            className="danger-button"
+            onClick={deleteOpportunity}
+            disabled={saving}
+          >
+            <Trash2 size={16} /> {saving ? "Deleting..." : "Delete opportunity"}
+          </button>
         </div>
-        {view === "pipeline" ? (
-          openStages.length ? (
-            <div className="pipeline-board">
-              {openStages.map((stage) => (
-                <section
-                  className={`pipeline-column ${stage.id}`}
-                  role="region"
-                  aria-label={`${stage.name} stage`}
-                  key={stage.id}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => drop(event, stage.id)}
-                >
-                  <header>
-                    <span>{stage.name}</span>
-                    <strong>
-                      {items.filter((item) => item.stage === stage.id).length}
-                    </strong>
-                  </header>
-                  <div>
-                    {items
-                      .filter((item) => item.stage === stage.id)
-                      .map((item) => (
-                        <OpportunityCard
-                          key={item.id}
-                          item={item}
-                          accounts={accounts}
-                          contacts={contacts}
-                          stages={allStageChoices}
-                          onMove={move}
-                          onOpen={openAccount}
-                          onKeyOpen={keyOpen}
-                          onDelete={setDeleting}
-                          onDragStart={(event) => {
-                            setDraggedID(item.id);
-                            event.dataTransfer.effectAllowed = "move";
-                            event.dataTransfer.setData("text/plain", item.id);
-                          }}
-                        />
-                      ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              title="No open pipeline stages"
-              detail="Add an open stage in Settings."
-            />
-          )
-        ) : closedItems.length ? (
-          <div className="closed-opportunity-list">
-            {closedItems.map((item) => (
-              <OpportunityCard
-                key={item.id}
-                item={item}
-                accounts={accounts}
-                contacts={contacts}
-                stages={allStageChoices}
-                onMove={move}
-                onOpen={openAccount}
-                onKeyOpen={keyOpen}
-                onDelete={setDeleting}
-                onDragStart={(event) => {
-                  setDraggedID(item.id);
-                  event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData("text/plain", item.id);
-                }}
-              />
+      </WorkflowPage>
+    );
+  }
+
+  return (
+    <Page
+      eyebrow="Pipeline"
+      title="Opportunities"
+      detail="Know what is moving, what is stuck, and what each win is worth."
+      action={
+        <button
+          className="primary-button"
+          onClick={() => navigate("/opportunities/new")}
+        >
+          <Plus size={17} /> Add opportunity
+        </button>
+      }
+    >
+      <div
+        className="opportunity-tabs"
+        role="tablist"
+        aria-label="Opportunity views"
+      >
+        {(["pipeline", "won", "lost"] as OpportunityView[]).map((choice) => (
+          <button
+            role="tab"
+            aria-selected={view === choice}
+            className={view === choice ? "active" : ""}
+            key={choice}
+            onClick={() => setView(choice)}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) =>
+              drop(
+                event,
+                choice === "won"
+                  ? wonStage
+                  : choice === "lost"
+                    ? lostStage
+                    : (openStages[0]?.id ?? "new"),
+              )
+            }
+          >
+            {choice}
+          </button>
+        ))}
+      </div>
+      {view === "pipeline" ? (
+        openStages.length ? (
+          <div className="pipeline-board">
+            {openStages.map((stage) => (
+              <section
+                className={`pipeline-column ${stage.id}`}
+                role="region"
+                aria-label={`${stage.name} stage`}
+                key={stage.id}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => drop(event, stage.id)}
+              >
+                <header>
+                  <span>{stage.name}</span>
+                  <strong>
+                    {items.filter((item) => item.stage === stage.id).length}
+                  </strong>
+                </header>
+                <div>
+                  {items
+                    .filter((item) => item.stage === stage.id)
+                    .map((item) => (
+                      <OpportunityCard
+                        key={item.id}
+                        item={item}
+                        accounts={accounts}
+                        contacts={contacts}
+                        stages={allStageChoices}
+                        onMove={move}
+                        onOpen={openAccount}
+                        onKeyOpen={keyOpen}
+                        onDelete={(item) =>
+                          navigate(`/opportunities/${item.id}/delete`)
+                        }
+                        onDragStart={(event) => {
+                          setDraggedID(item.id);
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", item.id);
+                        }}
+                      />
+                    ))}
+                </div>
+              </section>
             ))}
           </div>
         ) : (
           <EmptyState
-            title={`No ${view} opportunities`}
-            detail={`${view === "won" ? "Closed wins" : "Closed losses"} will collect here newest first.`}
+            title="No open pipeline stages"
+            detail="Add an open stage in Settings."
           />
-        )}
-      </Page>
-      {creating && (
-        <Modal
-          eyebrow="Pipeline"
-          title="Add an opportunity"
-          onClose={() => setCreating(false)}
-        >
-          <form onSubmit={create}>
-            <label>
-              Opportunity name
-              <input name="name" maxLength={160} required autoFocus />
-            </label>
-            <div className="field-grid">
-              <label>
-                Account
-                <select
-                  name="accountId"
-                  value={newAccountID}
-                  onChange={(event) => setNewAccountID(event.target.value)}
-                  required
-                >
-                  <option value="">Choose an account</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Contact
-                <select name="contactId" defaultValue="">
-                  <option value="">No contact needed</option>
-                  {contacts
-                    .filter((contact) => contact.accountId === newAccountID)
-                    .map((contact) => (
-                      <option key={contact.id} value={contact.id}>
-                        {contact.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label>
-                Value
-                <input
-                  name="amount"
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="0.01"
-                  defaultValue="0"
-                  required
-                />
-              </label>
-              <label>
-                Stage
-                <select name="stage" defaultValue={openStages[0]?.id ?? "new"}>
-                  {openStages.map((stage) => (
-                    <option key={stage.id} value={stage.id}>
-                      {stage.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Target close
-                <input name="closeDate" type="date" />
-              </label>
-            </div>
-            <label>
-              Next step
-              <input
-                name="nextStep"
-                maxLength={240}
-                placeholder="Send the proposal"
-              />
-            </label>
-            {formError && (
-              <p className="form-error" role="alert">
-                {formError}
-              </p>
-            )}
-            <div className="form-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setCreating(false)}
-              >
-                Cancel
-              </button>
-              <button className="primary-button" disabled={saving}>
-                {saving ? "Saving..." : "Save opportunity"}
-              </button>
-            </div>
-          </form>
-        </Modal>
+        )
+      ) : closedItems.length ? (
+        <div className="closed-opportunity-list">
+          {closedItems.map((item) => (
+            <OpportunityCard
+              key={item.id}
+              item={item}
+              accounts={accounts}
+              contacts={contacts}
+              stages={allStageChoices}
+              onMove={move}
+              onOpen={openAccount}
+              onKeyOpen={keyOpen}
+              onDelete={(item) => navigate(`/opportunities/${item.id}/delete`)}
+              onDragStart={(event) => {
+                setDraggedID(item.id);
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", item.id);
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          title={`No ${view} opportunities`}
+          detail={`${view === "won" ? "Closed wins" : "Closed losses"} will collect here newest first.`}
+        />
       )}
-      {deleting && (
-        <Modal
-          eyebrow="Pipeline"
-          title="Delete this opportunity?"
-          onClose={() => setDeleting(null)}
-        >
-          <p className="muted-copy">
-            {deleting.name} will be permanently removed from the pipeline.
-          </p>
-          {formError && (
-            <p className="form-error" role="alert">
-              {formError}
-            </p>
-          )}
-          <div className="form-actions">
-            <button
-              className="secondary-button"
-              onClick={() => setDeleting(null)}
-            >
-              Keep opportunity
-            </button>
-            <button
-              className="danger-button"
-              onClick={deleteOpportunity}
-              disabled={saving}
-            >
-              <Trash2 size={16} />{" "}
-              {saving ? "Deleting..." : "Delete opportunity"}
-            </button>
-          </div>
-        </Modal>
+    </Page>
+  );
+}
+
+function OpportunityForm({
+  accounts,
+  contacts,
+  stages,
+  accountID,
+  saving,
+  error,
+  onAccount,
+  onSubmit,
+  onCancel,
+}: {
+  accounts: Account[];
+  contacts: Contact[];
+  stages: PipelineStage[];
+  accountID: string;
+  saving: boolean;
+  error: string;
+  onAccount: (id: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <form onSubmit={onSubmit}>
+      <label>
+        Opportunity name
+        <input name="name" maxLength={160} required autoFocus />
+      </label>
+      <div className="field-grid">
+        <label>
+          Account
+          <select
+            name="accountId"
+            value={accountID}
+            onChange={(event) => onAccount(event.target.value)}
+            required
+          >
+            <option value="">Choose an account</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Contact
+          <select name="contactId" defaultValue="">
+            <option value="">No contact needed</option>
+            {contacts
+              .filter((contact) => contact.accountId === accountID)
+              .map((contact) => (
+                <option key={contact.id} value={contact.id}>
+                  {contact.name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label>
+          Value
+          <input
+            name="amount"
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            defaultValue="0"
+            required
+          />
+        </label>
+        <label>
+          Stage
+          <select name="stage" defaultValue={stages[0]?.id ?? "new"}>
+            {stages.map((stage) => (
+              <option key={stage.id} value={stage.id}>
+                {stage.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Target close
+          <input name="closeDate" type="date" />
+        </label>
+      </div>
+      <label>
+        Next step
+        <input
+          name="nextStep"
+          maxLength={240}
+          placeholder="Send the proposal"
+        />
+      </label>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
       )}
-    </>
+      <div className="form-actions">
+        <button type="button" className="secondary-button" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="primary-button" disabled={saving}>
+          {saving ? "Saving..." : "Save opportunity"}
+        </button>
+      </div>
+    </form>
   );
 }
 

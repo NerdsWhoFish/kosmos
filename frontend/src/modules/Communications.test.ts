@@ -31,4 +31,18 @@ describe("email template variables", () => {
     expect(hasTemplateVariables(mergeTemplate(value))).toBe(true);
     expect(hasTemplateVariables("Hi Ada at River Labs.")).toBe(false);
   });
+
+  it("merges custom questionnaire answers and detects any unresolved key", () => {
+    const value = "Your renewal is {{ renewal_amount }} on {{renewal_date}}.";
+
+    expect(
+      mergeTemplate(value, undefined, undefined, {
+        renewal_amount: "$125",
+        renewal_date: "October 1",
+      }),
+    ).toBe("Your renewal is $125 on October 1.");
+    expect(hasTemplateVariables("Answer {{custom_question}} first.")).toBe(
+      true,
+    );
+  });
 });

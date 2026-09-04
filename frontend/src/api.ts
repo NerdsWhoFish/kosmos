@@ -174,8 +174,14 @@ export type EmailTemplate = {
   name: string;
   subject: string;
   body: string;
+  inputs?: EmailTemplateInput[];
   createdAt: string;
   updatedAt: string;
+};
+export type EmailTemplateInput = {
+  key: string;
+  label: string;
+  defaultValue: string;
 };
 export type GoogleConnection = {
   id: string;

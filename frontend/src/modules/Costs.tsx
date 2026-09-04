@@ -8,19 +8,25 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, Attachment, Cost, money, shortDate } from "../api";
-import { Modal } from "../components/Modal";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
+import { WorkflowPage } from "../components/WorkflowPage";
+import { ResourceRoute } from "../routing";
 
 export function Costs({
   embedded = false,
   initialItems,
+  route,
+  navigate,
+  onChanged,
 }: {
   embedded?: boolean;
   initialItems?: Cost[];
+  route: ResourceRoute;
+  navigate: (path: string) => void;
+  onChanged?: () => void | Promise<void>;
 }) {
   const [items, setItems] = useState<Cost[]>(initialItems ?? []);
-  const [creating, setCreating] = useState(false);
   const [recurring, setRecurring] = useState(false);
   const [loading, setLoading] = useState(initialItems === undefined);
   const [error, setError] = useState("");
@@ -28,8 +34,14 @@ export function Costs({
   const [saving, setSaving] = useState(false);
   const [receipts, setReceipts] = useState<Attachment[]>([]);
   const [pendingCostID, setPendingCostID] = useState("");
-  const [editing, setEditing] = useState<Cost | null>(null);
-  const [deleting, setDeleting] = useState<Cost | null>(null);
+  const editing =
+    route.action === "edit"
+      ? (items.find((item) => item.id === route.id) ?? null)
+      : null;
+  const deleting =
+    route.action === "delete"
+      ? (items.find((item) => item.id === route.id) ?? null)
+      : null;
 
   const load = useCallback(() => {
     setLoading(true);
@@ -55,6 +67,11 @@ export function Costs({
       )
       .catch(() => setReceipts([]));
   }, []);
+  useEffect(() => {
+    setRecurring(editing?.recurring ?? false);
+    setPendingCostID("");
+    setFormError("");
+  }, [route.action, route.id, editing?.recurring]);
 
   async function uploadReceipt(file: File, costID: string) {
     const data = new FormData();
@@ -81,25 +98,16 @@ export function Costs({
   }
 
   function openCreate() {
-    setEditing(null);
-    setRecurring(false);
-    setPendingCostID("");
-    setFormError("");
-    setCreating(true);
+    navigate("/operations/costs/new");
   }
 
   function openEdit(item: Cost) {
-    setEditing(item);
-    setRecurring(item.recurring);
-    setPendingCostID("");
-    setFormError("");
-    setCreating(true);
+    navigate(`/operations/costs/${item.id}/edit`);
   }
 
   function closeForm() {
-    setCreating(false);
-    setEditing(null);
     setPendingCostID("");
+    navigate("/operations");
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -144,6 +152,7 @@ export function Costs({
         setPendingCostID(saved.id);
       }
       if (receiptFile) await uploadReceipt(receiptFile, saved.id);
+      await onChanged?.();
       closeForm();
       setRecurring(false);
     } catch (reason) {
@@ -165,7 +174,8 @@ export function Costs({
       setReceipts((current) =>
         current.filter((receipt) => receipt.recordId !== deleting.id),
       );
-      setDeleting(null);
+      await onChanged?.();
+      navigate("/operations");
     } catch (reason) {
       setFormError(
         reason instanceof Error ? reason.message : "Could not delete cost",
@@ -177,6 +187,12 @@ export function Costs({
 
   if (loading) return <LoadingState label="Loading business costs" />;
   if (error) return <ErrorState message={error} retry={load} />;
+  if (
+    (route.action === "edit" || route.action === "delete") &&
+    !items.some((item) => item.id === route.id)
+  ) {
+    return <ErrorState message="That business cost could not be found." />;
+  }
 
   const total = items.reduce((sum, item) => sum + item.amountCents, 0);
   const action = (
@@ -251,7 +267,9 @@ export function Costs({
                 <button
                   className="record-action danger-text"
                   aria-label={`Delete ${item.description} cost`}
-                  onClick={() => setDeleting(item)}
+                  onClick={() =>
+                    navigate(`/operations/costs/${item.id}/delete`)
+                  }
                 >
                   <Trash2 size={15} /> Delete
                 </button>
@@ -275,36 +293,39 @@ export function Costs({
 
   return (
     <>
-      {embedded ? (
-        <section className="panel operations-costs" id="costs">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Money</p>
-              <h2>Business costs</h2>
-              <p className="muted-copy">
-                Track subscriptions, registrations, and every expense you will
-                want at tax time.
-              </p>
+      {route.action === "list" &&
+        (embedded ? (
+          <section className="panel operations-costs" id="costs">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Money</p>
+                <h2>Business costs</h2>
+                <p className="muted-copy">
+                  Track subscriptions, registrations, and every expense you will
+                  want at tax time.
+                </p>
+              </div>
+              {action}
             </div>
-            {action}
-          </div>
-          {content}
-        </section>
-      ) : (
-        <Page
-          eyebrow="Money"
-          title="Business costs"
-          detail="Track subscriptions, registrations, and every expense you will want at tax time."
-          action={action}
-        >
-          {content}
-        </Page>
-      )}
-      {creating && (
-        <Modal
+            {content}
+          </section>
+        ) : (
+          <Page
+            eyebrow="Money"
+            title="Business costs"
+            detail="Track subscriptions, registrations, and every expense you will want at tax time."
+            action={action}
+          >
+            {content}
+          </Page>
+        ))}
+      {(route.action === "new" || route.action === "edit") && (
+        <WorkflowPage
           eyebrow="Money"
           title={editing ? "Edit business cost" : "Record a business cost"}
-          onClose={closeForm}
+          detail="Keep the expense, tax details, recurrence, and receipt together."
+          backLabel="Back to business operations"
+          onBack={closeForm}
         >
           <form onSubmit={save}>
             <div className="field-grid">
@@ -458,18 +479,17 @@ export function Costs({
               </button>
             </div>
           </form>
-        </Modal>
+        </WorkflowPage>
       )}
-      {deleting && (
-        <Modal
+      {route.action === "delete" && deleting && (
+        <WorkflowPage
           eyebrow="Money"
           title="Delete this business cost?"
-          onClose={() => setDeleting(null)}
+          detail={`${deleting.description} and its linked receipt files will be permanently deleted.`}
+          backLabel="Keep cost"
+          onBack={() => navigate("/operations")}
+          tone="danger"
         >
-          <p className="muted-copy">
-            {deleting.description} and its linked receipt files will be
-            permanently deleted.
-          </p>
           {formError && (
             <p className="form-error" role="alert">
               {formError}
@@ -478,7 +498,7 @@ export function Costs({
           <div className="form-actions">
             <button
               className="secondary-button"
-              onClick={() => setDeleting(null)}
+              onClick={() => navigate("/operations")}
             >
               Keep cost
             </button>
@@ -490,7 +510,7 @@ export function Costs({
               <Trash2 size={16} /> {saving ? "Deleting..." : "Delete cost"}
             </button>
           </div>
-        </Modal>
+        </WorkflowPage>
       )}
     </>
   );

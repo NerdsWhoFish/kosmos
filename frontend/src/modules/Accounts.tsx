@@ -23,11 +23,12 @@ import {
   Opportunity,
   Website,
 } from "../api";
-import { Modal } from "../components/Modal";
 import { ContactSourcePicker } from "../components/ContactSourcePicker";
 import { RecordPhoto } from "../components/RecordPhoto";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
+import { WorkflowPage } from "../components/WorkflowPage";
+import { ResourceRoute } from "../routing";
 
 type AccountDetail = {
   account: Account;
@@ -38,21 +39,16 @@ type AccountDetail = {
 type AccountCreation = { account: Account; contact?: Contact };
 
 export function Accounts({
-  initialID,
+  route,
   navigate,
 }: {
-  initialID: string;
+  route: ResourceRoute;
   navigate: (path: string) => void;
 }) {
   const [items, setItems] = useState<Account[]>([]);
   const [selected, setSelected] = useState<AccountDetail | null>(null);
   const [cloudflare, setCloudflare] = useState<CloudflareStatus | null>(null);
   const [domains, setDomains] = useState<CloudflareDomain[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [managingLinks, setManagingLinks] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [linking, setLinking] = useState(false);
   const [websiteFields, setWebsiteFields] = useState([""]);
   const [editWebsiteFields, setEditWebsiteFields] = useState([""]);
   const [editLinkFields, setEditLinkFields] = useState<AccountLink[]>([
@@ -94,12 +90,29 @@ export function Accounts({
     void load();
   }, [load]);
   useEffect(() => {
-    if (!initialID) {
+    if (!route.id) {
       setSelected(null);
       return;
     }
-    void loadSelected(initialID);
-  }, [initialID, loadSelected]);
+    void loadSelected(route.id);
+  }, [route.id, loadSelected]);
+  useEffect(() => {
+    if (!selected) return;
+    if (route.action === "edit") {
+      const websites = accountWebsites(selected.account);
+      setEditWebsiteFields(
+        websites.length ? websites.map((item) => item.url) : [""],
+      );
+    }
+    if (route.action === "links") {
+      setEditLinkFields(
+        selected.account.links?.length
+          ? selected.account.links.map((link) => ({ ...link }))
+          : [{ label: "", url: "" }],
+      );
+    }
+    if (route.action === "domain") void loadDomains();
+  }, [route.action, selected?.account.id]);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -130,7 +143,6 @@ export function Accounts({
         }),
       });
       setItems((current) => [created.account, ...current]);
-      setCreating(false);
       resetCreateForm();
       navigate(`/accounts/${created.account.id}`);
     } catch (reason) {
@@ -142,8 +154,7 @@ export function Accounts({
     }
   }
 
-  async function openDomainLink() {
-    setLinking(true);
+  async function loadDomains() {
     setLoadingDomains(true);
     setFormError("");
     try {
@@ -189,7 +200,7 @@ export function Accounts({
           item.id === response.account.id ? response.account : item,
         ),
       );
-      setLinking(false);
+      navigate(`/accounts/${response.account.id}`);
     } catch (reason) {
       setFormError(
         reason instanceof Error ? reason.message : "Could not link domain",
@@ -223,28 +234,6 @@ export function Accounts({
     }
   }
 
-  function openEdit() {
-    if (!selected) return;
-    setEditWebsiteFields(
-      accountWebsites(selected.account)
-        .map((website) => website.url)
-        .concat(accountWebsites(selected.account).length ? [] : [""]),
-    );
-    setFormError("");
-    setEditing(true);
-  }
-
-  function openLinks() {
-    if (!selected) return;
-    setEditLinkFields(
-      selected.account.links?.length
-        ? selected.account.links.map((link) => ({ ...link }))
-        : [{ label: "", url: "" }],
-    );
-    setFormError("");
-    setManagingLinks(true);
-  }
-
   async function updateLinks(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
@@ -266,7 +255,7 @@ export function Accounts({
       setItems((current) =>
         current.map((item) => (item.id === account.id ? account : item)),
       );
-      setManagingLinks(false);
+      navigate(`/accounts/${account.id}`);
     } catch (reason) {
       setFormError(
         reason instanceof Error ? reason.message : "Could not update links",
@@ -302,7 +291,7 @@ export function Accounts({
       setItems((current) =>
         current.map((item) => (item.id === account.id ? account : item)),
       );
-      setEditing(false);
+      navigate(`/accounts/${account.id}`);
     } catch (reason) {
       setFormError(
         reason instanceof Error ? reason.message : "Could not update account",
@@ -323,7 +312,6 @@ export function Accounts({
       setItems((current) =>
         current.filter((item) => item.id !== selected.account.id),
       );
-      setDeleting(false);
       setSelected(null);
       navigate("/accounts");
     } catch (reason) {
@@ -346,30 +334,28 @@ export function Accounts({
   if (selected)
     return (
       <>
-        <AccountView
-          detail={selected}
-          cloudflare={cloudflare}
-          navigate={navigate}
-          onLink={openDomainLink}
-          linking={linking}
-          domains={domains}
-          selectedDomain={selectedDomain}
-          setSelectedDomain={setSelectedDomain}
-          loadingDomains={loadingDomains}
-          saving={saving}
-          formError={formError}
-          onStatus={updateStatus}
-          onSubmitDomain={linkDomain}
-          onCloseDomain={() => setLinking(false)}
-          onEdit={openEdit}
-          onManageLinks={openLinks}
-          onDelete={() => setDeleting(true)}
-        />
-        {editing && (
-          <Modal
+        {route.action === "view" && (
+          <AccountView
+            detail={selected}
+            cloudflare={cloudflare}
+            navigate={navigate}
+            saving={saving}
+            formError={formError}
+            onStatus={updateStatus}
+            onLink={() => navigate(`/accounts/${selected.account.id}/domain`)}
+            onEdit={() => navigate(`/accounts/${selected.account.id}/edit`)}
+            onManageLinks={() =>
+              navigate(`/accounts/${selected.account.id}/links`)
+            }
+            onDelete={() => navigate(`/accounts/${selected.account.id}/delete`)}
+          />
+        )}
+        {route.action === "edit" && (
+          <WorkflowPage
             eyebrow="Relationships"
             title={`Edit ${selected.account.name}`}
-            onClose={() => setEditing(false)}
+            backLabel={`Back to ${selected.account.name}`}
+            onBack={() => navigate(`/accounts/${selected.account.id}`)}
           >
             <form onSubmit={updateAccount}>
               <label>
@@ -463,7 +449,7 @@ export function Accounts({
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setEditing(false)}
+                  onClick={() => navigate(`/accounts/${selected.account.id}`)}
                 >
                   Cancel
                 </button>
@@ -472,13 +458,14 @@ export function Accounts({
                 </button>
               </div>
             </form>
-          </Modal>
+          </WorkflowPage>
         )}
-        {managingLinks && (
-          <Modal
+        {route.action === "links" && (
+          <WorkflowPage
             eyebrow="Account resources"
             title={`Links for ${selected.account.name}`}
-            onClose={() => setManagingLinks(false)}
+            backLabel={`Back to ${selected.account.name}`}
+            onBack={() => navigate(`/accounts/${selected.account.id}`)}
           >
             <form onSubmit={updateLinks}>
               <p className="field-help">
@@ -564,7 +551,7 @@ export function Accounts({
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => setManagingLinks(false)}
+                  onClick={() => navigate(`/accounts/${selected.account.id}`)}
                 >
                   Cancel
                 </button>
@@ -573,20 +560,89 @@ export function Accounts({
                 </button>
               </div>
             </form>
-          </Modal>
+          </WorkflowPage>
         )}
-        {deleting && (
-          <Modal
+        {route.action === "domain" && (
+          <WorkflowPage
+            eyebrow="Cloudflare"
+            title={`Link a domain to ${selected.account.name}`}
+            backLabel={`Back to ${selected.account.name}`}
+            onBack={() => navigate(`/accounts/${selected.account.id}`)}
+          >
+            {loadingDomains ? (
+              <LoadingState label="Loading Cloudflare domains" />
+            ) : (
+              <form onSubmit={linkDomain}>
+                <label>
+                  Domain
+                  <select
+                    name="domainName"
+                    value={selectedDomain}
+                    onChange={(event) => setSelectedDomain(event.target.value)}
+                    required
+                  >
+                    <option value="">Choose a domain</option>
+                    {domains.map((item) => (
+                      <option value={item.domainName} key={item.domainName}>
+                        {item.domainName}
+                        {item.registered ? " · Cloudflare Registrar" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {domains.find((item) => item.domainName === selectedDomain)
+                  ?.renewalDate ? (
+                  <p className="inline-notice">
+                    <span className="security-dot" /> Renews{" "}
+                    {
+                      domains.find((item) => item.domainName === selectedDomain)
+                        ?.renewalDate
+                    }
+                    . Kosmos will add reminders 30, 14, and 7 days before.
+                  </p>
+                ) : (
+                  <label>
+                    Registrar renewal date
+                    <input name="renewalDate" type="date" required />
+                    <small className="field-help">
+                      Cloudflare hosts this zone but does not register it, so
+                      its API has no renewal date.
+                    </small>
+                  </label>
+                )}
+                {formError && (
+                  <p className="form-error" role="alert">
+                    {formError}
+                  </p>
+                )}
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => navigate(`/accounts/${selected.account.id}`)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="primary-button"
+                    disabled={saving || !selectedDomain}
+                  >
+                    {saving ? "Linking..." : "Link domain and reminders"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </WorkflowPage>
+        )}
+        {route.action === "delete" && (
+          <WorkflowPage
             eyebrow="Relationships"
             title="Delete this account?"
-            onClose={() => setDeleting(false)}
+            detail={`${selected.account.name}, its contacts, opportunities, follow-up reminders, activities, and records linked only to this account will be permanently removed. Shared documents keep their other links.`}
+            backLabel="Keep account"
+            onBack={() => navigate(`/accounts/${selected.account.id}`)}
+            tone="danger"
           >
-            <p className="muted-copy">
-              {selected.account.name}, its contacts, opportunities, follow-up
-              reminders, activities, and records linked only to this account
-              will be permanently removed. Shared documents keep their other
-              links.
-            </p>
             {formError && (
               <p className="form-error" role="alert">
                 {formError}
@@ -595,7 +651,7 @@ export function Accounts({
             <div className="form-actions">
               <button
                 className="secondary-button"
-                onClick={() => setDeleting(false)}
+                onClick={() => navigate(`/accounts/${selected.account.id}`)}
               >
                 Keep account
               </button>
@@ -608,70 +664,77 @@ export function Accounts({
                 {saving ? "Deleting..." : "Delete account"}
               </button>
             </div>
-          </Modal>
+          </WorkflowPage>
         )}
       </>
     );
 
   return (
     <>
-      <Page
-        eyebrow="Relationships"
-        title="Accounts"
-        detail="One home for each business, its people, websites, pipeline, and lifecycle."
-        action={
-          <button className="primary-button" onClick={() => setCreating(true)}>
-            <Plus size={17} /> Add account
-          </button>
-        }
-      >
-        {items.length ? (
-          <div className="record-grid">
-            {items.map((account) => (
-              <button
-                className="record-card"
-                key={account.id}
-                onClick={() => navigate(`/accounts/${account.id}`)}
-              >
-                <span className="record-avatar">
-                  <Building2 size={18} />
-                </span>
-                <span className="record-main">
-                  <strong>{account.name}</strong>
-                  <small>
-                    {account.billingEmail ||
-                      accountWebsites(account)[0]?.domain ||
-                      "No details yet"}
-                  </small>
-                </span>
-                <span className={`status-badge ${account.status}`}>
-                  {account.status}
-                </span>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            title="No accounts yet"
-            detail="Create the first business and its primary contact together."
-            action={
-              <button
-                className="primary-button"
-                onClick={() => setCreating(true)}
-              >
-                Add your first account
-              </button>
-            }
-          />
-        )}
-      </Page>
-      {creating && (
-        <Modal
+      {route.action === "list" && (
+        <Page
+          eyebrow="Relationships"
+          title="Accounts"
+          detail="One home for each business, its people, websites, pipeline, and lifecycle."
+          action={
+            <button
+              className="primary-button"
+              onClick={() => navigate("/accounts/new")}
+            >
+              <Plus size={17} /> Add account
+            </button>
+          }
+        >
+          {items.length ? (
+            <div className="record-grid">
+              {items.map((account) => (
+                <button
+                  className="record-card"
+                  key={account.id}
+                  onClick={() => navigate(`/accounts/${account.id}`)}
+                >
+                  <span className="record-avatar">
+                    <Building2 size={18} />
+                  </span>
+                  <span className="record-main">
+                    <strong>{account.name}</strong>
+                    <small>
+                      {account.billingEmail ||
+                        accountWebsites(account)[0]?.domain ||
+                        "No details yet"}
+                    </small>
+                  </span>
+                  <span className={`status-badge ${account.status}`}>
+                    {account.status}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="No accounts yet"
+              detail="Create the first business and its primary contact together."
+              action={
+                <button
+                  className="primary-button"
+                  onClick={() => navigate("/accounts/new")}
+                >
+                  Add your first account
+                </button>
+              }
+            />
+          )}
+        </Page>
+      )}
+      {route.action === "new" && (
+        <WorkflowPage
           eyebrow="Relationships"
           title="Add an account"
-          onClose={() => {
-            setCreating(false);
+          detail="Create the business and, optionally, its first contact in one step."
+          backLabel="Back to accounts"
+          onBack={() => {
             resetCreateForm();
+            navigate("/accounts");
           }}
         >
           <form onSubmit={create}>
@@ -791,8 +854,8 @@ export function Accounts({
                 type="button"
                 className="secondary-button"
                 onClick={() => {
-                  setCreating(false);
                   resetCreateForm();
+                  navigate("/accounts");
                 }}
               >
                 Cancel
@@ -802,7 +865,7 @@ export function Accounts({
               </button>
             </div>
           </form>
-        </Modal>
+        </WorkflowPage>
       )}
     </>
   );
@@ -813,16 +876,9 @@ function AccountView({
   cloudflare,
   navigate,
   onLink,
-  linking,
-  domains,
-  selectedDomain,
-  setSelectedDomain,
-  loadingDomains,
   saving,
   formError,
   onStatus,
-  onSubmitDomain,
-  onCloseDomain,
   onEdit,
   onManageLinks,
   onDelete,
@@ -831,62 +887,15 @@ function AccountView({
   cloudflare: CloudflareStatus | null;
   navigate: (path: string) => void;
   onLink: () => void;
-  linking: boolean;
-  domains: CloudflareDomain[];
-  selectedDomain: string;
-  setSelectedDomain: (value: string) => void;
-  loadingDomains: boolean;
   saving: boolean;
   formError: string;
   onStatus: (status: Account["status"]) => void;
-  onSubmitDomain: (event: FormEvent<HTMLFormElement>) => void;
-  onCloseDomain: () => void;
   onEdit: () => void;
   onManageLinks: () => void;
   onDelete: () => void;
 }) {
   const websites = accountWebsites(detail.account);
-  const domain = useMemo(
-    () => domains.find((item) => item.domainName === selectedDomain),
-    [domains, selectedDomain],
-  );
-  const [documents, setDocuments] = useState(() =>
-    sortedDocuments(detail.documents || []),
-  );
-  const [creatingDocument, setCreatingDocument] = useState(false);
-  const [documentError, setDocumentError] = useState("");
-  const [savingDocument, setSavingDocument] = useState(false);
-
-  useEffect(
-    () => setDocuments(sortedDocuments(detail.documents || [])),
-    [detail.account.id, detail.documents],
-  );
-
-  async function createDocument(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSavingDocument(true);
-    setDocumentError("");
-    const form = new FormData(event.currentTarget);
-    try {
-      const document = await api<Document>("/api/v1/documents", {
-        method: "POST",
-        body: JSON.stringify({
-          title: form.get("title"),
-          body: form.get("body"),
-          links: [{ type: "account", id: detail.account.id }],
-        }),
-      });
-      setDocuments((current) => sortedDocuments([document, ...current]));
-      setCreatingDocument(false);
-      navigate(`/documents/${document.id}`);
-    } catch (reason) {
-      setDocumentError(
-        reason instanceof Error ? reason.message : "Could not create document",
-      );
-    } finally {
-      setSavingDocument(false);
-    }
-  }
+  const documents = sortedDocuments(detail.documents || []);
 
   return (
     <div className="page">
@@ -920,7 +929,7 @@ function AccountView({
           <p className="subhead">
             {detail.account.billingEmail || "No billing email yet"}
           </p>
-          {formError && !linking && (
+          {formError && (
             <p className="form-error" role="alert">
               {formError}
             </p>
@@ -1099,7 +1108,9 @@ function AccountView({
           </div>
           <button
             className="secondary-button"
-            onClick={() => setCreatingDocument(true)}
+            onClick={() =>
+              navigate(`/documents/new?account=${detail.account.id}`)
+            }
           >
             <FilePlus2 size={16} /> New document
           </button>
@@ -1130,112 +1141,6 @@ function AccountView({
           </p>
         )}
       </section>
-      {linking && (
-        <Modal
-          eyebrow="Cloudflare"
-          title="Link a domain"
-          onClose={onCloseDomain}
-        >
-          {loadingDomains ? (
-            <LoadingState label="Loading Cloudflare domains" />
-          ) : (
-            <form onSubmit={onSubmitDomain}>
-              <label>
-                Domain
-                <select
-                  name="domainName"
-                  value={selectedDomain}
-                  onChange={(event) => setSelectedDomain(event.target.value)}
-                  required
-                >
-                  <option value="">Choose a domain</option>
-                  {domains.map((item) => (
-                    <option value={item.domainName} key={item.domainName}>
-                      {item.domainName}
-                      {item.registered ? " · Cloudflare Registrar" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {domain?.renewalDate ? (
-                <p className="inline-notice">
-                  <span className="security-dot" /> Renews {domain.renewalDate}.
-                  Kosmos will add reminders 30, 14, and 7 days before.
-                </p>
-              ) : (
-                <label>
-                  Registrar renewal date
-                  <input name="renewalDate" type="date" required />
-                  <small className="field-help">
-                    Cloudflare hosts this zone but does not register it, so its
-                    API has no renewal date.
-                  </small>
-                </label>
-              )}
-              {formError && (
-                <p className="form-error" role="alert">
-                  {formError}
-                </p>
-              )}
-              <div className="form-actions">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={onCloseDomain}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="primary-button"
-                  disabled={saving || !selectedDomain}
-                >
-                  {saving ? "Linking..." : "Link domain and reminders"}
-                </button>
-              </div>
-            </form>
-          )}
-        </Modal>
-      )}
-      {creatingDocument && (
-        <Modal
-          eyebrow="Knowledge"
-          title={`New document for ${detail.account.name}`}
-          onClose={() => setCreatingDocument(false)}
-        >
-          <form onSubmit={createDocument}>
-            <label>
-              Title
-              <input name="title" maxLength={160} required autoFocus />
-            </label>
-            <label>
-              Start writing
-              <textarea
-                name="body"
-                rows={10}
-                maxLength={100000}
-                placeholder="Markdown is supported."
-              />
-            </label>
-            {documentError && (
-              <p className="form-error" role="alert">
-                {documentError}
-              </p>
-            )}
-            <div className="form-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setCreatingDocument(false)}
-              >
-                Cancel
-              </button>
-              <button className="primary-button" disabled={savingDocument}>
-                {savingDocument ? "Creating..." : "Create document"}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
     </div>
   );
 }

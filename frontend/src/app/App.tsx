@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { api, ModuleManifest, User } from "../api";
 import { PublicLogin, Shell } from "../components/Shell";
 import { LoadingState } from "../components/States";
+import { resourceRoute } from "../routing";
 
 const Activity = lazy(() =>
   import("../modules/Activity").then((module) => ({
@@ -137,12 +138,18 @@ function Route({
   navigate: (path: string) => void;
 }) {
   const path = basePath(location.path);
-  if (path === "/") return <Overview user={user} navigate={navigate} />;
+  if (path === "/")
+    return (
+      <Overview
+        user={user}
+        navigate={navigate}
+        route={resourceRoute(location.path, "/landing-zone")}
+      />
+    );
   if (path === "/contacts")
     return (
       <Contacts
-        initialID={recordID(location.path, "/contacts")}
-        openNew={new URLSearchParams(location.search).get("new") === "1"}
+        route={resourceRoute(location.path, "/contacts")}
         navigate={navigate}
       />
     );
@@ -150,7 +157,7 @@ function Route({
   if (path === "/accounts")
     return (
       <Accounts
-        initialID={recordID(location.path, "/accounts")}
+        route={resourceRoute(location.path, "/accounts")}
         navigate={navigate}
       />
     );
@@ -158,14 +165,43 @@ function Route({
     const requested = new URLSearchParams(location.search).get("view");
     const initialView =
       requested === "won" || requested === "lost" ? requested : "pipeline";
-    return <Opportunities initialView={initialView} navigate={navigate} />;
+    return (
+      <Opportunities
+        initialView={initialView}
+        navigate={navigate}
+        route={resourceRoute(location.path, "/opportunities")}
+      />
+    );
   }
   if (path === "/documents")
-    return <Documents initialID={recordID(location.path, "/documents")} />;
-  if (path === "/costs") return <Operations />;
-  if (path === "/activity") return <Activity />;
-  if (path === "/communications") return <Communications />;
-  if (path === "/operations") return <Operations />;
+    return (
+      <Documents
+        route={resourceRoute(location.path, "/documents")}
+        accountID={new URLSearchParams(location.search).get("account") ?? ""}
+        navigate={navigate}
+      />
+    );
+  if (path === "/costs" || path === "/operations")
+    return (
+      <Operations
+        route={resourceRoute(location.path, "/operations/costs")}
+        navigate={navigate}
+      />
+    );
+  if (path === "/activity")
+    return (
+      <Activity
+        futureOnly={location.path === "/activity/future"}
+        navigate={navigate}
+      />
+    );
+  if (path === "/communications")
+    return (
+      <Communications
+        route={resourceRoute(location.path, "/communications/templates")}
+        navigate={navigate}
+      />
+    );
   if (path === "/settings") return <Settings user={user} />;
   if (path === "/search")
     return (
@@ -174,7 +210,13 @@ function Route({
         navigate={navigate}
       />
     );
-  return <Overview user={user} navigate={navigate} />;
+  return (
+    <Overview
+      user={user}
+      navigate={navigate}
+      route={resourceRoute("/", "/landing-zone")}
+    />
+  );
 }
 
 function currentLocation(): LocationState {
@@ -182,14 +224,13 @@ function currentLocation(): LocationState {
 }
 
 function basePath(path: string) {
+  if (path.startsWith("/landing-zone/")) return "/";
   if (path.startsWith("/contacts/")) return "/contacts";
   if (path.startsWith("/accounts/")) return "/accounts";
+  if (path.startsWith("/opportunities/")) return "/opportunities";
   if (path.startsWith("/documents/")) return "/documents";
+  if (path.startsWith("/communications/")) return "/communications";
+  if (path.startsWith("/operations/")) return "/operations";
+  if (path.startsWith("/activity/")) return "/activity";
   return path;
-}
-
-function recordID(path: string, base: string) {
-  return path.startsWith(`${base}/`)
-    ? decodeURIComponent(path.slice(base.length + 1))
-    : "";
 }

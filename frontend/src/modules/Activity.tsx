@@ -8,18 +8,23 @@ import {
   Phone,
 } from "lucide-react";
 import { Activity as ActivityRecord, api, Reminder, shortDate } from "../api";
-import { Modal } from "../components/Modal";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
+import { WorkflowPage } from "../components/WorkflowPage";
 
 const reminderWindowMilliseconds = 7 * 24 * 60 * 60 * 1000;
 
-export function Activity() {
+export function Activity({
+  futureOnly,
+  navigate,
+}: {
+  futureOnly: boolean;
+  navigate: (path: string) => void;
+}) {
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [futureOpen, setFutureOpen] = useState(false);
   const load = useCallback(() => {
     setLoading(true);
     Promise.all([
@@ -76,6 +81,26 @@ export function Activity() {
   if (loading) return <LoadingState label="Loading activity" />;
   if (error) return <ErrorState message={error} retry={load} />;
 
+  if (futureOnly)
+    return (
+      <WorkflowPage
+        eyebrow="Later"
+        title="Future reminders"
+        detail="Everything more than one week away, sorted by due date."
+        backLabel="Back to activity"
+        onBack={() => navigate("/activity")}
+      >
+        {future.length ? (
+          <ReminderList reminders={future} complete={complete} />
+        ) : (
+          <EmptyState
+            title="Nothing waiting"
+            detail="Reminders more than one week away will collect here."
+          />
+        )}
+      </WorkflowPage>
+    );
+
   return (
     <Page
       eyebrow="Attention"
@@ -92,9 +117,10 @@ export function Activity() {
             <div className="activity-header-actions">
               <button
                 className="text-button"
-                onClick={() => setFutureOpen(true)}
+                onClick={() => navigate("/activity/future")}
               >
-                Future reminders <span className="count-chip">{future.length}</span>
+                Future reminders{" "}
+                <span className="count-chip">{future.length}</span>
               </button>
               <span className="count-chip">{dueSoon.length}</span>
             </div>
@@ -119,7 +145,9 @@ export function Activity() {
             <div className="timeline">
               {activities.map((item) => (
                 <div className="timeline-item" key={item.id}>
-                  <span className="timeline-icon">{activityIcon(item.kind)}</span>
+                  <span className="timeline-icon">
+                    {activityIcon(item.kind)}
+                  </span>
                   <div>
                     <strong>{item.kind}</strong>
                     <p>{item.body}</p>
@@ -136,22 +164,6 @@ export function Activity() {
           )}
         </section>
       </div>
-      {futureOpen && (
-        <Modal
-          eyebrow="Later"
-          title="Future reminders"
-          onClose={() => setFutureOpen(false)}
-        >
-          {future.length ? (
-            <ReminderList reminders={future} complete={complete} />
-          ) : (
-            <EmptyState
-              title="Nothing waiting"
-              detail="Reminders more than one week away will collect here."
-            />
-          )}
-        </Modal>
-      )}
     </Page>
   );
 }

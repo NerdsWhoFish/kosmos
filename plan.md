@@ -12,7 +12,7 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 8. Restyle account and contact document rows so they use the active theme instead of browser-default gray.
 - [x] 9. Let users delete documents after explicit confirmation.
 - [x] 10. Support `{{domains}}` in email templates and document the variable in the template UI.
-- [x] 11. Add a Chrome and Safari Kosmos Companion extension that opens Google Voice with a contact's number prepared, plus in-app extension detection and installation guidance.
+- [x] 11. Retire the Chrome and Safari Kosmos Companion extension after replacing it with the direct Google Voice workflow in item 35.
 - [x] 12. Display the signed-in user's Google profile picture with an initials fallback.
 - [x] 13. Let users upload files directly to Documents, download them, and embed attached images and PDFs with `[[filename]]` Markdown references.
 - [x] 14. Resolve LinkedIn profile photos through ADR 0009 after confirming LinkedIn offers no compliant, reliable retrieval path for this use.
@@ -32,6 +32,11 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 28. Put Quick Lead beside Add a contact in the overview header instead of inside the Landing Zone.
 - [x] 29. Let users edit and delete existing email templates, with explicit confirmation before deletion.
 - [x] 30. Let users edit and delete recorded business costs, deleting linked receipt attachments with the cost after explicit confirmation.
+- [x] 31. Replace every modal workflow with a dedicated, routable page and keep destructive confirmations explicit without overlays.
+- [x] 32. Make Documents a list that opens directly linkable detail pages with dedicated create, edit, and delete pages.
+- [x] 33. Restyle document attachments as a clear, responsive upload section that remains usable with long documents.
+- [x] 34. Let email templates define custom questionnaire inputs with defaults, merge their values into custom variables, and block sending until every answer is filled.
+- [x] 35. Open a contact's Google Voice search through Google Account Chooser for the administrator-connected shared account without hardcoding a browser-local `/u/N` slot.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
@@ -39,3 +44,5 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] Release v0.3.1 with Quill and deploy items 20 through 27 to production through pinned Spacelift module 0.6.0.
 - [x] Run backend and frontend tests for items 28 through 30, including responsive phone and desktop coverage.
 - [x] Release v0.3.2 and deploy items 28 through 30 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.6.0.
+- [x] Run backend and frontend verification for items 31 through 35 across phone, tablet, laptop, and desktop viewports.
+- [ ] Release and deploy items 31 through 35 to production with Quill's GoReleaser-then-Docker artifact flow.

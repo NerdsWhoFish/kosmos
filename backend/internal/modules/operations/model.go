@@ -41,12 +41,19 @@ type PipelineStage struct {
 }
 
 type EmailTemplate struct {
-	ID        string    `json:"id" firestore:"id"`
-	Name      string    `json:"name" firestore:"name"`
-	Subject   string    `json:"subject" firestore:"subject"`
-	Body      string    `json:"body" firestore:"body"`
-	CreatedAt time.Time `json:"createdAt" firestore:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt" firestore:"updatedAt"`
+	ID        string               `json:"id" firestore:"id"`
+	Name      string               `json:"name" firestore:"name"`
+	Subject   string               `json:"subject" firestore:"subject"`
+	Body      string               `json:"body" firestore:"body"`
+	Inputs    []EmailTemplateInput `json:"inputs,omitempty" firestore:"inputs"`
+	CreatedAt time.Time            `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt time.Time            `json:"updatedAt" firestore:"updatedAt"`
+}
+
+type EmailTemplateInput struct {
+	Key          string `json:"key" firestore:"key"`
+	Label        string `json:"label" firestore:"label"`
+	DefaultValue string `json:"defaultValue" firestore:"defaultValue"`
 }
 
 type EmailDelivery struct {

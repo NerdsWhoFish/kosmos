@@ -16,11 +16,11 @@ import {
   Edit3,
   FilePlus2,
   History,
+  Link2,
   Paperclip,
   Save,
   Trash2,
   UploadCloud,
-  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import {
@@ -35,9 +35,10 @@ import {
   RecordLink,
   shortDate,
 } from "../api";
-import { Modal } from "../components/Modal";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
+import { WorkflowPage } from "../components/WorkflowPage";
+import { ResourceRoute } from "../routing";
 
 type LinkOption = RecordLink & { label: string };
 type Draft = { title: string; body: string; links: RecordLink[] };
@@ -79,12 +80,17 @@ const markdownHighlight = HighlightStyle.define([
   { tag: [tags.meta, tags.punctuation], color: "var(--theme-muted)" },
 ]);
 
-export function Documents({ initialID = "" }: { initialID?: string }) {
+export function Documents({
+  route,
+  accountID,
+  navigate,
+}: {
+  route: ResourceRoute;
+  accountID: string;
+  navigate: (path: string) => void;
+}) {
   const [items, setItems] = useState<Document[]>([]);
-  const [selectedID, setSelectedID] = useState(initialID);
-  const [editorMode, setEditorMode] = useState<"create" | "edit" | null>(null);
   const [draft, setDraft] = useState<Draft>({ title: "", body: "", links: [] });
-  const [deleting, setDeleting] = useState<Document | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
@@ -92,8 +98,10 @@ export function Documents({ initialID = "" }: { initialID?: string }) {
   const [revisions, setRevisions] = useState<DocumentRevision[]>([]);
   const [linkOptions, setLinkOptions] = useState<LinkOption[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [deletingAttachmentID, setDeletingAttachmentID] = useState("");
+  const [copyNotice, setCopyNotice] = useState("");
   const attachmentVersion = useRef(0);
-  const selected = items.find((item) => item.id === selectedID);
+  const selected = items.find((item) => item.id === route.id);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -106,7 +114,6 @@ export function Documents({ initialID = "" }: { initialID?: string }) {
     ])
       .then(([documents, accounts, contacts, opportunities, costs]) => {
         setItems(documents.documents);
-        setSelectedID((current) => current || documents.documents[0]?.id || "");
         setLinkOptions([
           ...accounts.accounts.map((item) => ({
             type: "account" as const,
@@ -141,21 +148,18 @@ export function Documents({ initialID = "" }: { initialID?: string }) {
 
   useEffect(load, [load]);
   useEffect(() => {
-    if (initialID) setSelectedID(initialID);
-  }, [initialID]);
-  useEffect(() => {
     const requestVersion = ++attachmentVersion.current;
-    if (!selectedID) {
+    if (!route.id) {
       setAttachments([]);
       setRevisions([]);
       return;
     }
     Promise.all([
       api<{ revisions: DocumentRevision[] }>(
-        `/api/v1/documents/${selectedID}/revisions`,
+        `/api/v1/documents/${route.id}/revisions`,
       ),
       api<{ attachments: Attachment[] }>(
-        `/api/v1/attachments?recordType=document&recordId=${encodeURIComponent(selectedID)}`,
+        `/api/v1/attachments?recordType=document&recordId=${encodeURIComponent(route.id)}`,
       ),
     ])
       .then(([history, files]) => {
@@ -167,24 +171,25 @@ export function Documents({ initialID = "" }: { initialID?: string }) {
         setRevisions([]);
         if (attachmentVersion.current === requestVersion) setAttachments([]);
       });
-  }, [selectedID]);
+  }, [route.id]);
 
-  function openCreate() {
-    setDraft({ title: "", body: "", links: [] });
-    setFormError("");
-    setEditorMode("create");
-  }
-
-  function openEdit() {
-    if (!selected) return;
-    setDraft({
-      title: selected.title,
-      body: selected.body,
-      links: selected.links ?? [],
-    });
-    setFormError("");
-    setEditorMode("edit");
-  }
+  useEffect(() => {
+    if (route.action === "new") {
+      setDraft({
+        title: "",
+        body: "",
+        links: accountID ? [{ type: "account", id: accountID }] : [],
+      });
+      setFormError("");
+    } else if (route.action === "edit" && selected) {
+      setDraft({
+        title: selected.title,
+        body: selected.body,
+        links: selected.links ?? [],
+      });
+      setFormError("");
+    }
+  }, [accountID, route.action, route.id, selected]);
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -192,21 +197,20 @@ export function Documents({ initialID = "" }: { initialID?: string }) {
     setFormError("");
     try {
       const target =
-        editorMode === "edit" && selected
+        route.action === "edit" && selected
           ? `/api/v1/documents/${selected.id}`
           : "/api/v1/documents";
       const saved = await api<Document>(target, {
-        method: editorMode === "edit" ? "PATCH" : "POST",
+        method: route.action === "edit" ? "PATCH" : "POST",
         body: JSON.stringify(draft),
       });
       setItems((current) =>
-        editorMode === "edit"
+        route.action === "edit"
           ? current.map((item) => (item.id === saved.id ? saved : item))
           : [saved, ...current],
       );
-      setSelectedID(saved.id);
       setLinkOptions((current) =>
-        editorMode === "edit"
+        route.action === "edit"
           ? current.map((item) =>
               item.type === "document" && item.id === saved.id
                 ? { ...item, label: saved.title }
@@ -217,7 +221,7 @@ export function Documents({ initialID = "" }: { initialID?: string }) {
               { type: "document", id: saved.id, label: saved.title },
             ],
       );
-      setEditorMode(null);
+      navigate(`/documents/${saved.id}`);
     } catch (reason) {
       setFormError(
         reason instanceof Error ? reason.message : "Could not save document",
@@ -228,15 +232,13 @@ export function Documents({ initialID = "" }: { initialID?: string }) {
   }
 
   async function deleteDocument() {
-    if (!deleting) return;
+    if (!selected) return;
     setSaving(true);
     setFormError("");
     try {
-      await api(`/api/v1/documents/${deleting.id}`, { method: "DELETE" });
-      const remaining = items.filter((item) => item.id !== deleting.id);
-      setItems(remaining);
-      setSelectedID(remaining[0]?.id ?? "");
-      setDeleting(null);
+      await api(`/api/v1/documents/${selected.id}`, { method: "DELETE" });
+      setItems((current) => current.filter((item) => item.id !== selected.id));
+      navigate("/documents");
     } catch (reason) {
       setFormError(
         reason instanceof Error ? reason.message : "Could not delete document",
@@ -274,172 +276,243 @@ export function Documents({ initialID = "" }: { initialID?: string }) {
   }
 
   async function deleteAttachment(item: Attachment) {
-    await api(`/api/v1/attachments/${item.id}`, { method: "DELETE" });
-    attachmentVersion.current += 1;
-    setAttachments((current) =>
-      current.filter((candidate) => candidate.id !== item.id),
+    try {
+      await api(`/api/v1/attachments/${item.id}`, { method: "DELETE" });
+      attachmentVersion.current += 1;
+      setAttachments((current) =>
+        current.filter((candidate) => candidate.id !== item.id),
+      );
+      setDeletingAttachmentID("");
+    } catch (reason) {
+      setFormError(
+        reason instanceof Error ? reason.message : "Could not delete file",
+      );
+    }
+  }
+
+  async function copyDocumentLink() {
+    if (!selected) return;
+    await navigator.clipboard.writeText(
+      `${window.location.origin}/documents/${encodeURIComponent(selected.id)}`,
     );
+    setCopyNotice("Document link copied.");
   }
 
   if (loading) return <LoadingState label="Opening your documents" />;
   if (error) return <ErrorState message={error} retry={load} />;
 
-  return (
-    <>
+  if (route.action === "new" || route.action === "edit") {
+    if (route.action === "edit" && !selected)
+      return <ErrorState message="That document could not be found." />;
+    return (
+      <DocumentEditor
+        mode={route.action}
+        draft={draft}
+        options={linkOptions.filter(
+          (option) => option.type !== "document" || option.id !== selected?.id,
+        )}
+        saving={saving}
+        error={formError}
+        onDraft={setDraft}
+        onSave={save}
+        onClose={() =>
+          navigate(selected ? `/documents/${selected.id}` : "/documents")
+        }
+      />
+    );
+  }
+
+  if (route.action === "delete") {
+    if (!selected)
+      return <ErrorState message="That document could not be found." />;
+    return (
+      <WorkflowPage
+        eyebrow="Knowledge"
+        title="Delete this document?"
+        detail={`${selected.title} and its revision history will be permanently deleted. Attached files remain until removed separately.`}
+        backLabel="Keep document"
+        onBack={() => navigate(`/documents/${selected.id}`)}
+        tone="danger"
+      >
+        {formError && (
+          <p className="form-error" role="alert">
+            {formError}
+          </p>
+        )}
+        <div className="form-actions">
+          <button
+            className="secondary-button"
+            onClick={() => navigate(`/documents/${selected.id}`)}
+          >
+            Keep document
+          </button>
+          <button
+            className="danger-button"
+            onClick={deleteDocument}
+            disabled={saving}
+          >
+            <Trash2 size={16} /> {saving ? "Deleting..." : "Delete document"}
+          </button>
+        </div>
+      </WorkflowPage>
+    );
+  }
+
+  if (route.id) {
+    if (!selected)
+      return <ErrorState message="That document could not be found." />;
+    return (
       <Page
         eyebrow="Knowledge"
-        title="Documents"
-        detail="Write in Markdown, read it like a polished document, and keep the why beside the work."
+        title={selected.title}
+        detail={`Revision ${selected.revision || 1} · Updated ${shortDate(selected.updatedAt)}`}
         action={
-          <button className="primary-button" onClick={openCreate}>
-            <FilePlus2 size={17} /> New document
-          </button>
+          <div className="button-row page-actions">
+            <button className="secondary-button" onClick={copyDocumentLink}>
+              <Link2 size={16} /> Copy link
+            </button>
+            <button
+              className="secondary-button"
+              onClick={() => navigate(`/documents/${selected.id}/edit`)}
+            >
+              <Edit3 size={16} /> Edit
+            </button>
+            <button
+              className="danger-button"
+              onClick={() => navigate(`/documents/${selected.id}/delete`)}
+            >
+              <Trash2 size={16} /> Delete
+            </button>
+          </div>
         }
       >
-        {items.length ? (
-          <div className="document-layout">
-            <aside className="document-list" aria-label="Documents">
-              {items.map((item) => (
-                <button
-                  className={item.id === selectedID ? "active" : ""}
-                  key={item.id}
-                  onClick={() => setSelectedID(item.id)}
-                >
-                  <strong>{item.title}</strong>
-                  <small>Updated {shortDate(item.updatedAt)}</small>
-                </button>
-              ))}
-            </aside>
-            <section className="document-sheet">
-              {selected && (
-                <>
-                  <header>
-                    <div>
-                      <p className="eyebrow">
-                        Document · Revision {selected.revision || 1}
-                      </p>
-                      <h2>{selected.title}</h2>
-                      <small>Updated {shortDate(selected.updatedAt)}</small>
-                    </div>
-                    <div className="document-actions">
-                      <button className="secondary-button" onClick={openEdit}>
-                        <Edit3 size={16} /> Edit
-                      </button>
-                      <button
-                        className="icon-button danger-icon"
-                        aria-label={`Delete ${selected.title}`}
-                        onClick={() => setDeleting(selected)}
-                      >
-                        <Trash2 size={17} />
-                      </button>
-                    </div>
-                  </header>
-                  {!!selected.links?.length && (
-                    <div className="linked-records">
-                      {selected.links.map((link) => (
-                        <a
-                          href={recordHref(link)}
-                          key={`${link.type}:${link.id}`}
-                        >
-                          {linkLabel(link, linkOptions)}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                  <article className="markdown">
-                    <EmbeddedMarkdown
-                      body={
-                        selected.body ||
-                        "_This document is empty. Choose Edit to start writing._"
-                      }
-                      attachments={attachments}
-                    />
-                  </article>
-                  <DocumentAttachments
-                    items={attachments}
-                    onDelete={deleteAttachment}
-                  />
-                  <form className="document-upload" onSubmit={upload}>
-                    <label>
-                      <Paperclip size={16} /> Attach a file
-                      <input
-                        name="file"
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,application/pdf,text/plain"
-                        required
-                      />
-                    </label>
-                    <button className="secondary-button">
-                      <UploadCloud size={16} /> Upload
-                    </button>
-                  </form>
-                  {!!revisions.length && (
-                    <p className="revision-note">
-                      <History size={15} /> {revisions.length} prior version
-                      {revisions.length === 1 ? "" : "s"} safely retained
-                    </p>
-                  )}
-                </>
-              )}
-            </section>
-          </div>
-        ) : (
-          <EmptyState
-            title="No documents yet"
-            detail="Create a handbook, client brief, checklist, or anything else worth remembering."
-            action={
-              <button className="primary-button" onClick={openCreate}>
-                <FilePlus2 size={17} /> Create your first document
-              </button>
-            }
-          />
-        )}
-      </Page>
-      {editorMode && (
-        <DocumentEditor
-          mode={editorMode}
-          draft={draft}
-          options={linkOptions}
-          saving={saving}
-          error={formError}
-          onDraft={setDraft}
-          onSave={save}
-          onClose={() => setEditorMode(null)}
-        />
-      )}
-      {deleting && (
-        <Modal
-          eyebrow="Knowledge"
-          title="Delete this document?"
-          onClose={() => setDeleting(null)}
-        >
-          <p className="muted-copy">
-            {deleting.title} and its revision history will be permanently
-            deleted. Attached files remain available until removed separately.
+        <button className="back-button" onClick={() => navigate("/documents")}>
+          ← All documents
+        </button>
+        {copyNotice && (
+          <p className="inline-notice" role="status">
+            {copyNotice}
           </p>
+        )}
+        <section className="document-sheet document-detail-sheet">
+          {!!selected.links?.length && (
+            <div className="linked-records">
+              {selected.links.map((link) => (
+                <a href={recordHref(link)} key={`${link.type}:${link.id}`}>
+                  {linkLabel(link, linkOptions)}
+                </a>
+              ))}
+            </div>
+          )}
+          <article className="markdown">
+            <EmbeddedMarkdown
+              body={
+                selected.body ||
+                "_This document is empty. Choose Edit to start writing._"
+              }
+              attachments={attachments}
+            />
+          </article>
+        </section>
+        <section className="panel document-attachment-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Files</p>
+              <h2>Attachments</h2>
+              <p className="muted-copy">
+                Add supporting files, then embed images and PDFs with their
+                filename.
+              </p>
+            </div>
+          </div>
+          <DocumentAttachments
+            items={attachments}
+            deletingID={deletingAttachmentID}
+            onRequestDelete={(item) => setDeletingAttachmentID(item.id)}
+            onCancelDelete={() => setDeletingAttachmentID("")}
+            onDelete={deleteAttachment}
+          />
+          <form className="document-upload" onSubmit={upload}>
+            <label className="file-picker">
+              <span>
+                <Paperclip size={18} /> Choose a file
+              </span>
+              <input
+                name="file"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf,text/plain"
+                required
+              />
+            </label>
+            <button className="primary-button">
+              <UploadCloud size={16} /> Upload attachment
+            </button>
+          </form>
           {formError && (
             <p className="form-error" role="alert">
               {formError}
             </p>
           )}
-          <div className="form-actions">
-            <button
-              className="secondary-button"
-              onClick={() => setDeleting(null)}
+        </section>
+        {!!revisions.length && (
+          <p className="revision-note">
+            <History size={15} /> {revisions.length} prior version
+            {revisions.length === 1 ? "" : "s"} safely retained
+          </p>
+        )}
+      </Page>
+    );
+  }
+
+  return (
+    <Page
+      eyebrow="Knowledge"
+      title="Documents"
+      detail="Write in Markdown, read it like a polished document, and keep the why beside the work."
+      action={
+        <button
+          className="primary-button"
+          onClick={() => navigate("/documents/new")}
+        >
+          <FilePlus2 size={17} /> New document
+        </button>
+      }
+    >
+      {items.length ? (
+        <div className="document-index" aria-label="Documents">
+          {items.map((item) => (
+            <a
+              className="document-index-row"
+              href={`/documents/${encodeURIComponent(item.id)}`}
+              key={item.id}
+              onClick={(event) => {
+                event.preventDefault();
+                navigate(`/documents/${item.id}`);
+              }}
             >
-              Keep document
-            </button>
+              <span>
+                <strong>{item.title}</strong>
+                <small>Updated {shortDate(item.updatedAt)}</small>
+              </span>
+              <span className="document-open-label">Open document →</span>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          title="No documents yet"
+          detail="Create a handbook, client brief, checklist, or anything else worth remembering."
+          action={
             <button
-              className="danger-button"
-              onClick={deleteDocument}
-              disabled={saving}
+              className="primary-button"
+              onClick={() => navigate("/documents/new")}
             >
-              <Trash2 size={16} /> {saving ? "Deleting..." : "Delete document"}
+              <FilePlus2 size={17} /> Create your first document
             </button>
-          </div>
-        </Modal>
+          }
+        />
       )}
-    </>
+    </Page>
   );
 }
 
@@ -453,7 +526,7 @@ function DocumentEditor({
   onSave,
   onClose,
 }: {
-  mode: "create" | "edit";
+  mode: "new" | "edit";
   draft: Draft;
   options: LinkOption[];
   saving: boolean;
@@ -463,98 +536,106 @@ function DocumentEditor({
   onClose: () => void;
 }) {
   return (
-    <div
-      className="document-workspace"
-      role="dialog"
-      aria-modal="true"
-      aria-label={mode === "create" ? "Create document" : "Edit document"}
+    <WorkflowPage
+      eyebrow="Knowledge workspace"
+      title={mode === "new" ? "New document" : "Edit document"}
+      detail="Write without fighting a cramped overlay. Your editor and controls scroll with the page."
+      backLabel={mode === "new" ? "All documents" : "Back to document"}
+      onBack={onClose}
     >
-      <form onSubmit={onSave}>
-        <header>
-          <div>
-            <p className="eyebrow">Knowledge workspace</p>
-            <input
-              aria-label="Title"
-              value={draft.title}
+      <div className="document-workspace">
+        <form onSubmit={onSave}>
+          <header>
+            <div>
+              <input
+                aria-label="Title"
+                value={draft.title}
+                onChange={(event) =>
+                  onDraft({ ...draft, title: event.target.value })
+                }
+                maxLength={160}
+                placeholder="Untitled document"
+                required
+                autoFocus
+              />
+            </div>
+            <div className="document-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={onClose}
+              >
+                Cancel
+              </button>
+              <button className="primary-button" disabled={saving}>
+                <Save size={16} />{" "}
+                {saving
+                  ? "Saving..."
+                  : mode === "new"
+                    ? "Create document"
+                    : "Save document"}
+              </button>
+            </div>
+          </header>
+          <main>
+            <textarea
+              className="sr-only"
+              aria-label="Start writing in Markdown"
+              value={draft.body}
               onChange={(event) =>
-                onDraft({ ...draft, title: event.target.value })
+                onDraft({ ...draft, body: event.target.value })
               }
-              maxLength={160}
-              placeholder="Untitled document"
-              required
-              autoFocus
             />
-          </div>
-          <div className="document-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={onClose}
-            >
-              <X size={16} /> Cancel
-            </button>
-            <button className="primary-button" disabled={saving}>
-              <Save size={16} />{" "}
-              {saving
-                ? "Saving..."
-                : mode === "create"
-                  ? "Create document"
-                  : "Save document"}
-            </button>
-          </div>
-        </header>
-        <main>
-          <textarea
-            className="sr-only"
-            aria-label="Start writing in Markdown"
-            value={draft.body}
-            onChange={(event) =>
-              onDraft({ ...draft, body: event.target.value })
-            }
-          />
-          <CodeMirror
-            value={draft.body}
-            height="100%"
-            minHeight="320px"
-            theme={editorTheme}
-            extensions={[
-              markdown(),
-              syntaxHighlighting(markdownHighlight),
-              EditorView.lineWrapping,
-              EditorView.contentAttributes.of({
-                "aria-label": "Markdown editor",
-              }),
-            ]}
-            onChange={(body) => onDraft({ ...draft, body })}
-            placeholder="# Start writing"
-          />
-        </main>
-        <footer>
-          <LinkFields
-            links={draft.links}
-            options={options}
-            onChange={(links) => onDraft({ ...draft, links })}
-          />
-          {error && (
-            <p className="form-error" role="alert">
-              {error}
-            </p>
-          )}
-          <small>
-            Markdown is highlighted with line numbers. Add an uploaded file
-            using <code>[[filename]]</code>.
-          </small>
-        </footer>
-      </form>
-    </div>
+            <CodeMirror
+              value={draft.body}
+              height="100%"
+              minHeight="320px"
+              theme={editorTheme}
+              extensions={[
+                markdown(),
+                syntaxHighlighting(markdownHighlight),
+                EditorView.lineWrapping,
+                EditorView.contentAttributes.of({
+                  "aria-label": "Markdown editor",
+                }),
+              ]}
+              onChange={(body) => onDraft({ ...draft, body })}
+              placeholder="# Start writing"
+            />
+          </main>
+          <footer>
+            <LinkFields
+              links={draft.links}
+              options={options}
+              onChange={(links) => onDraft({ ...draft, links })}
+            />
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <small>
+              Markdown is highlighted with line numbers. Add an uploaded file
+              using <code>[[filename]]</code>.
+            </small>
+          </footer>
+        </form>
+      </div>
+    </WorkflowPage>
   );
 }
 
 function DocumentAttachments({
   items,
+  deletingID,
+  onRequestDelete,
+  onCancelDelete,
   onDelete,
 }: {
   items: Attachment[];
+  deletingID: string;
+  onRequestDelete: (item: Attachment) => void;
+  onCancelDelete: () => void;
   onDelete: (item: Attachment) => void;
 }) {
   if (!items.length) return null;
@@ -578,13 +659,28 @@ function DocumentAttachments({
             >
               <Download size={16} />
             </a>
-            <button
-              className="icon-button danger-icon"
-              aria-label={`Delete ${item.fileName}`}
-              onClick={() => onDelete(item)}
-            >
-              <Trash2 size={16} />
-            </button>
+            {deletingID === item.id ? (
+              <span className="inline-confirm">
+                <strong>Delete file?</strong>
+                <button className="text-button" onClick={onCancelDelete}>
+                  Keep
+                </button>
+                <button
+                  className="text-button danger-text"
+                  onClick={() => onDelete(item)}
+                >
+                  Delete
+                </button>
+              </span>
+            ) : (
+              <button
+                className="icon-button danger-icon"
+                aria-label={`Delete ${item.fileName}`}
+                onClick={() => onRequestDelete(item)}
+              >
+                <Trash2 size={16} />
+              </button>
+            )}
           </article>
         ))}
       </div>
@@ -711,7 +807,7 @@ function recordHref(link: RecordLink) {
   if (link.type === "contact") return `/contacts/${link.id}`;
   if (link.type === "opportunity") return "/opportunities";
   if (link.type === "cost") return "/operations";
-  return "/documents";
+  return `/documents/${link.id}`;
 }
 
 function linkLabel(link: RecordLink, options: LinkOption[]) {
