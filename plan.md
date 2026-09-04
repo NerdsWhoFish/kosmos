@@ -1,27 +1,24 @@
 # Kosmos delivery plan
 
-This checklist is the release source of truth. Check an item only after its backend, frontend, API contract, tests, and responsive behavior are complete where applicable.
+This checklist is the release source of truth. Check an item only after its backend, frontend, API contract, tests, responsive behavior, and production verification are complete where applicable.
 
-- [x] 1. Make landing-zone links organization-wide. Owners and admins configure them once on Overview, and every member sees the same links without setup.
-- [x] 2. Remove the redundant relationship count and second add-contact prompt from the bottom of Overview.
-- [x] 3. Show open, won, and lost opportunity counts and amounts on Overview.
-- [x] 4. Show Google Voice call and message actions on each contact screen.
-- [x] 5. Make opportunities belong to accounts, with a contact remaining optional context rather than the owner of the opportunity.
-- [x] 6. Support desktop drag and drop between opportunity pipeline stages, with an accessible non-drag fallback that also works on mobile.
-- [x] 7. Open the linked account when an opportunity is selected.
-- [x] 8. Create Kosmos documents directly from an account and show that account's documents newest first.
-- [x] 9. Split Opportunities into Pipeline, Won, and Lost tabs. Keep won and lost out of pipeline columns, allow desktop drops onto Won and Lost, and sort completed lists from most recent to oldest.
-- [x] 10. Repair and polish the Inbox layout on desktop and mobile.
-- [x] 11. Let Google Voice actions choose an existing contact or accept a manually entered phone number.
-- [x] 12. Show the supported email-template variables where templates are written.
-- [x] 13. Add an optional authenticated Tiller-to-Kosmos purchase webhook and admin product mapping so a purchased Tiller product records its transaction against a configured Kosmos account without requiring spreadsheet import.
-- [x] 14. Let owners and admins map each member's Google login to a verified Gmail send-as address, and send Kosmos email through that configured alias.
-- [x] 15. Support multiple websites when creating an account.
-- [x] 16. Optionally create the first contact atomically while creating an account.
-- [x] 17. Remove duplicate business-name fields from contacts and use the linked account as the business identity.
-- [x] 18. Keep prospect/customer lifecycle state on the account and opportunity, not the contact.
-- [x] 19. Add a read-only Cloudflare integration that links a domain to an account and creates idempotent renewal reminders 30, 14, and 7 days out. Cloudflare Registrar supplies automatic renewal dates; externally registered zones require a manual renewal date.
-- [x] 20. Let contacts store, edit, and open that person's LinkedIn profile.
-- [x] Run backend unit, race, vet, API-contract, and integration tests.
-- [x] Run frontend unit, responsive desktop/mobile, accessibility, and production-build tests.
-- [x] Release with Quill and deploy the complete checklist to production.
+- [ ] 1. Let owners and administrators edit and delete organization-wide landing-zone shortcuts.
+- [ ] 2. Let users delete an errant opportunity after explicit confirmation.
+- [ ] 3. Add comfortable separation between an account's relationship panels and Knowledge section.
+- [ ] 4. Add a dedicated, authenticated, mobile-first `/lead` intake flow optimized for fast entry at events.
+- [ ] 5. Make contact source an organization-wide picklist with an inline create-new-source flow.
+- [ ] 6. Make document creation and editing a full-width workspace on phones, tablets, and wide screens.
+- [ ] 7. Add Markdown syntax highlighting and line numbers to the document editor.
+- [ ] 8. Restyle account and contact document rows so they use the active theme instead of browser-default gray.
+- [ ] 9. Let users delete documents after explicit confirmation.
+- [ ] 10. Support `{{domains}}` in email templates and document the variable in the template UI.
+- [ ] 11. Add a Chrome and Safari Kosmos Companion extension that opens Google Voice with a contact's number prepared, plus in-app extension detection and installation guidance.
+- [ ] 12. Display the signed-in user's Google profile picture with an initials fallback.
+- [ ] 13. Let users upload files directly to Documents, download them, and embed attached images and PDFs with `[[filename]]` Markdown references.
+- [ ] 14. Use a contact's LinkedIn profile photo when LinkedIn provides a compliant, reliable way to retrieve and store it.
+- [ ] 15. Let users upload and display account and contact photos.
+- [ ] 16. Diagnose and repair the Sender addresses `502`, with useful user-facing errors and production verification.
+- [ ] 17. Let users attach a receipt while recording a business cost and show its download link with the cost.
+- [ ] Run backend unit, race, vet, API-contract, and integration tests.
+- [ ] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
+- [ ] Release with Quill and deploy the complete checklist to production through the pinned Spacelift module.
