@@ -6,6 +6,7 @@ import {
   FilePlus2,
   FileText,
   Globe2,
+  Pencil,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -21,6 +22,8 @@ import {
   Website,
 } from "../api";
 import { Modal } from "../components/Modal";
+import { ContactSourcePicker } from "../components/ContactSourcePicker";
+import { RecordPhoto } from "../components/RecordPhoto";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
 
@@ -44,8 +47,10 @@ export function Accounts({
   const [cloudflare, setCloudflare] = useState<CloudflareStatus | null>(null);
   const [domains, setDomains] = useState<CloudflareDomain[]>([]);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [linking, setLinking] = useState(false);
   const [websiteFields, setWebsiteFields] = useState([""]);
+  const [editWebsiteFields, setEditWebsiteFields] = useState([""]);
   const [includeContact, setIncludeContact] = useState(true);
   const [selectedDomain, setSelectedDomain] = useState("");
   const [loading, setLoading] = useState(true);
@@ -211,6 +216,53 @@ export function Accounts({
     }
   }
 
+  function openEdit() {
+    if (!selected) return;
+    setEditWebsiteFields(
+      accountWebsites(selected.account)
+        .map((website) => website.url)
+        .concat(accountWebsites(selected.account).length ? [] : [""]),
+    );
+    setFormError("");
+    setEditing(true);
+  }
+
+  async function updateAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    setSaving(true);
+    setFormError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const account = await api<Account>(
+        `/api/v1/accounts/${selected.account.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: form.get("name"),
+            billingEmail: form.get("billingEmail"),
+            status: form.get("status"),
+            notes: form.get("notes"),
+            websites: editWebsiteFields
+              .filter((url) => url.trim())
+              .map((url) => ({ url })),
+          }),
+        },
+      );
+      setSelected((current) => (current ? { ...current, account } : current));
+      setItems((current) =>
+        current.map((item) => (item.id === account.id ? account : item)),
+      );
+      setEditing(false);
+    } catch (reason) {
+      setFormError(
+        reason instanceof Error ? reason.message : "Could not update account",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function resetCreateForm() {
     setWebsiteFields([""]);
     setIncludeContact(true);
@@ -221,22 +273,134 @@ export function Accounts({
   if (error) return <ErrorState message={error} retry={load} />;
   if (selected)
     return (
-      <AccountView
-        detail={selected}
-        cloudflare={cloudflare}
-        navigate={navigate}
-        onLink={openDomainLink}
-        linking={linking}
-        domains={domains}
-        selectedDomain={selectedDomain}
-        setSelectedDomain={setSelectedDomain}
-        loadingDomains={loadingDomains}
-        saving={saving}
-        formError={formError}
-        onStatus={updateStatus}
-        onSubmitDomain={linkDomain}
-        onCloseDomain={() => setLinking(false)}
-      />
+      <>
+        <AccountView
+          detail={selected}
+          cloudflare={cloudflare}
+          navigate={navigate}
+          onLink={openDomainLink}
+          linking={linking}
+          domains={domains}
+          selectedDomain={selectedDomain}
+          setSelectedDomain={setSelectedDomain}
+          loadingDomains={loadingDomains}
+          saving={saving}
+          formError={formError}
+          onStatus={updateStatus}
+          onSubmitDomain={linkDomain}
+          onCloseDomain={() => setLinking(false)}
+          onEdit={openEdit}
+        />
+        {editing && (
+          <Modal
+            eyebrow="Relationships"
+            title={`Edit ${selected.account.name}`}
+            onClose={() => setEditing(false)}
+          >
+            <form onSubmit={updateAccount}>
+              <label>
+                Business name
+                <input
+                  name="name"
+                  defaultValue={selected.account.name}
+                  maxLength={160}
+                  required
+                  autoFocus
+                />
+              </label>
+              <div className="field-grid">
+                <label>
+                  Relationship
+                  <select name="status" defaultValue={selected.account.status}>
+                    <option value="prospect">Prospect</option>
+                    <option value="customer">Customer</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </label>
+                <label>
+                  Billing email
+                  <input
+                    name="billingEmail"
+                    type="email"
+                    defaultValue={selected.account.billingEmail}
+                  />
+                </label>
+              </div>
+              <fieldset className="form-section">
+                <legend>Websites and domains</legend>
+                <p className="field-help">
+                  Add, correct, or remove every domain tied to this account.
+                </p>
+                {editWebsiteFields.map((value, index) => (
+                  <div className="repeatable-field" key={index}>
+                    <label>
+                      Website {index + 1}
+                      <input
+                        value={value}
+                        onChange={(event) =>
+                          setEditWebsiteFields((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index ? event.target.value : item,
+                            ),
+                          )
+                        }
+                        placeholder="example.com"
+                        inputMode="url"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`Remove website ${index + 1}`}
+                      onClick={() =>
+                        setEditWebsiteFields((current) =>
+                          current.filter((_, itemIndex) => itemIndex !== index),
+                        )
+                      }
+                    >
+                      <Trash2 size={17} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() =>
+                    setEditWebsiteFields((current) => [...current, ""])
+                  }
+                >
+                  <Plus size={15} /> Add another website
+                </button>
+              </fieldset>
+              <label>
+                Notes
+                <textarea
+                  name="notes"
+                  rows={4}
+                  defaultValue={selected.account.notes}
+                />
+              </label>
+              {formError && (
+                <p className="form-error" role="alert">
+                  {formError}
+                </p>
+              )}
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setEditing(false)}
+                >
+                  Cancel
+                </button>
+                <button className="primary-button" disabled={saving}>
+                  {saving ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        )}
+      </>
     );
 
   return (
@@ -399,14 +563,7 @@ export function Accounts({
                       placeholder="https://www.linkedin.com/in/name"
                     />
                   </label>
-                  <label>
-                    Source
-                    <input
-                      name="contactSource"
-                      maxLength={100}
-                      placeholder="Referral, website, event"
-                    />
-                  </label>
+                  <ContactSourcePicker name="contactSource" />
                 </div>
               )}
             </fieldset>
@@ -456,6 +613,7 @@ function AccountView({
   onStatus,
   onSubmitDomain,
   onCloseDomain,
+  onEdit,
 }: {
   detail: AccountDetail;
   cloudflare: CloudflareStatus | null;
@@ -471,6 +629,7 @@ function AccountView({
   onStatus: (status: Account["status"]) => void;
   onSubmitDomain: (event: FormEvent<HTMLFormElement>) => void;
   onCloseDomain: () => void;
+  onEdit: () => void;
 }) {
   const websites = accountWebsites(detail.account);
   const domain = useMemo(
@@ -521,9 +680,12 @@ function AccountView({
         ← All accounts
       </button>
       <header className="account-hero">
-        <span className="record-avatar large">
-          <Building2 size={26} />
-        </span>
+        <RecordPhoto
+          recordType="account"
+          recordID={detail.account.id}
+          label={detail.account.name}
+          fallback={<Building2 size={26} />}
+        />
         <div>
           <label className="account-status-control">
             Relationship
@@ -550,6 +712,12 @@ function AccountView({
             </p>
           )}
         </div>
+        <button
+          className="secondary-button account-hero-action"
+          onClick={onEdit}
+        >
+          <Pencil size={16} /> Edit account
+        </button>
       </header>
       <section className="stats-row">
         <div className="stat-card blue">

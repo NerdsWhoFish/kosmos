@@ -19,8 +19,26 @@ import {
   shortDate,
 } from "../api";
 import { Modal } from "../components/Modal";
+import { GoogleVoiceButton } from "../components/GoogleVoiceButton";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
+
+export function mergeTemplate(
+  value: string,
+  contact?: Contact,
+  account?: Account,
+) {
+  return value
+    .replaceAll("{{name}}", contact?.name ?? "")
+    .replaceAll("{{company}}", account?.name ?? "")
+    .replaceAll(
+      "{{domains}}",
+      account?.websites
+        ?.map((website) => website.domain || website.url)
+        .filter(Boolean)
+        .join(", ") ?? "",
+    );
+}
 
 export function Communications() {
   const [status, setStatus] = useState<GoogleStatus | null>(null);
@@ -152,14 +170,10 @@ export function Communications() {
       (item) => item.email.toLowerCase() === draft.to.toLowerCase(),
     );
     const account = accounts.find((item) => item.id === contact?.accountId);
-    const merge = (value: string) =>
-      value
-        .replaceAll("{{name}}", contact?.name ?? "")
-        .replaceAll("{{company}}", account?.name ?? "");
     setDraft((current) => ({
       ...current,
-      subject: merge(template.subject),
-      body: merge(template.body),
+      subject: mergeTemplate(template.subject, contact, account),
+      body: mergeTemplate(template.body, contact, account),
     }));
     setNotice(
       contact
@@ -412,14 +426,7 @@ export function Communications() {
                 </button>
               </>
             )}
-            <a
-              className="primary-button"
-              href="https://voice.google.com/u/0/messages"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open Google Voice <ExternalLink size={15} />
-            </a>
+            <GoogleVoiceButton phone={phone} className="primary-button" />
           </div>
         </div>
         <div className="panel">
@@ -477,6 +484,9 @@ export function Communications() {
               </span>
               <span>
                 <code>{"{{company}}"}</code> account name
+              </span>
+              <span>
+                <code>{"{{domains}}"}</code> account domains
               </span>
             </div>
             <label>

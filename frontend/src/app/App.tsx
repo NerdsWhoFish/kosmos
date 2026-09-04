@@ -53,6 +53,11 @@ const Operations = lazy(() =>
     default: module.Operations,
   })),
 );
+const LeadIntake = lazy(() =>
+  import("../modules/LeadIntake").then((module) => ({
+    default: module.LeadIntake,
+  })),
+);
 
 type LocationState = { path: string; search: string };
 
@@ -141,6 +146,7 @@ function Route({
         navigate={navigate}
       />
     );
+  if (path === "/lead") return <LeadIntake navigate={navigate} />;
   if (path === "/accounts")
     return (
       <Accounts

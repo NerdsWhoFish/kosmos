@@ -8,7 +8,11 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
-const user = { email: "joey@nerdswhofish.com", name: "Joey Stout" };
+const user = {
+  email: "joey@nerdswhofish.com",
+  name: "Joey Stout",
+  picture: "https://images.example/joey.jpg",
+};
 const account = {
   id: "account-1",
   name: "River Labs",
@@ -59,6 +63,12 @@ const responses: Record<string, unknown> = {
     notifications: [],
   },
   "/api/v1/contacts": { contacts: [contact] },
+  "/api/v1/contact-sources": {
+    sources: [
+      { id: "event", name: "Event", createdAt: "", updatedAt: "" },
+      { id: "referral", name: "Referral", createdAt: "", updatedAt: "" },
+    ],
+  },
   "/api/v1/accounts": { accounts: [account] },
   "/api/v1/accounts/account-1": {
     account,
@@ -286,6 +296,8 @@ function mockAPI(authenticated = true) {
             status: body.status,
           }),
         );
+      if (url.pathname === "/api/v1/accounts/account-1" && method === "PATCH")
+        return Promise.resolve(json({ ...account, ...body }));
       if (url.pathname === "/api/v1/accounts/account-2")
         return Promise.resolve(
           json({
@@ -309,7 +321,7 @@ function mockAPI(authenticated = true) {
             {
               ...contact,
               id: "contact-2",
-              name: "Grace Hopper",
+              name: body.name,
               accountId: body.accountId,
             },
             201,
@@ -401,6 +413,11 @@ function mockAPI(authenticated = true) {
             updatedAt: "2026-09-04T13:00:00Z",
           }),
         );
+      if (
+        url.pathname === "/api/v1/opportunities/opportunity-1" &&
+        method === "DELETE"
+      )
+        return Promise.resolve(new Response(null, { status: 204 }));
       if (url.pathname === "/api/v1/documents" && method === "POST")
         return Promise.resolve(
           json(
@@ -415,6 +432,21 @@ function mockAPI(authenticated = true) {
             201,
           ),
         );
+      if (url.pathname === "/api/v1/documents/document-1" && method === "PATCH")
+        return Promise.resolve(
+          json({
+            ...(responses["/api/v1/documents"] as { documents: object[] })
+              .documents[0],
+            ...body,
+            revision: 2,
+            updatedAt: "2026-09-04T13:00:00Z",
+          }),
+        );
+      if (
+        url.pathname === "/api/v1/documents/document-1" &&
+        method === "DELETE"
+      )
+        return Promise.resolve(new Response(null, { status: 204 }));
       if (url.pathname === "/api/v1/costs" && method === "POST")
         return Promise.resolve(
           json(
@@ -445,6 +477,26 @@ function mockAPI(authenticated = true) {
               href: "https://example.com/reports",
               icon: "globe",
             },
+            201,
+          ),
+        );
+      if (url.pathname === "/api/v1/landing/buttons/docs" && method === "PATCH")
+        return Promise.resolve(
+          json({
+            ...(responses["/api/v1/landing"] as { buttons: object[] })
+              .buttons[0],
+            ...body,
+          }),
+        );
+      if (
+        url.pathname === "/api/v1/landing/buttons/docs" &&
+        method === "DELETE"
+      )
+        return Promise.resolve(new Response(null, { status: 204 }));
+      if (url.pathname === "/api/v1/contact-sources" && method === "POST")
+        return Promise.resolve(
+          json(
+            { id: "new-source", name: body.name, createdAt: "", updatedAt: "" },
             201,
           ),
         );
@@ -516,24 +568,41 @@ function mockAPI(authenticated = true) {
             matchStatus: body.matchStatus,
           }),
         );
-      if (url.pathname === "/api/v1/attachments" && method === "POST")
+      if (url.pathname === "/api/v1/attachments" && method === "POST") {
+        const form = init?.body as FormData;
+        const file = form.get("file") as File;
         return Promise.resolve(
           json(
             {
               id: "attachment-1",
-              fileName: "receipt.pdf",
-              contentType: "application/pdf",
-              size: 512,
-              kind: "receipt",
-              recordType: "cost",
-              recordId: "cost-1",
+              fileName:
+                form.get("kind") === "photo"
+                  ? "profile.png"
+                  : form.get("recordType") === "document"
+                    ? "guide.pdf"
+                    : "license.pdf",
+              contentType: file?.type || "application/pdf",
+              size: file?.size || 512,
+              kind: form.get("kind"),
+              recordType: form.get("recordType"),
+              recordId: form.get("recordId"),
               createdBy: user.email,
               createdAt: "2026-09-03T12:00:00Z",
               downloadUrl: "/download",
+              viewUrl:
+                form.get("kind") === "photo"
+                  ? "/profile.png"
+                  : "/download?disposition=inline",
             },
             201,
           ),
         );
+      }
+      if (
+        url.pathname.startsWith("/api/v1/attachments/") &&
+        method === "DELETE"
+      )
+        return Promise.resolve(new Response(null, { status: 204 }));
       const key = url.pathname + url.search;
       return Promise.resolve(
         json(responses[key] ?? responses[url.pathname] ?? {}),
@@ -579,6 +648,7 @@ describe("Kosmos application", () => {
 
   it.each([
     ["desktop", 1440],
+    ["tablet", 768],
     ["mobile", 390],
   ])(
     "keeps every core workspace workflow usable on %s",
@@ -846,6 +916,45 @@ describe("Kosmos application", () => {
     expect(new Headers(request?.[1]?.headers).get("X-Kosmos-CSRF")).toBe("1");
   });
 
+  it("lets an administrator edit and confirm deletion of a shortcut", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /edit field notes/i }));
+    fireEvent.change(screen.getByLabelText(/button name/i), {
+      target: { value: "Team handbook" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/landing/buttons/docs" &&
+              init?.method === "PATCH",
+          ),
+      ).toBe(true),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete field notes/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^delete shortcut$/i }));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/landing/buttons/docs" &&
+              init?.method === "DELETE",
+          ),
+      ).toBe(true),
+    );
+  });
+
   it("creates an account with multiple websites and its first contact", async () => {
     mockAPI();
     render(<App />);
@@ -860,7 +969,7 @@ describe("Kosmos application", () => {
     fireEvent.change(screen.getByLabelText(/business name/i), {
       target: { value: "Compiler Co" },
     });
-    fireEvent.change(screen.getByLabelText(/website 1/i), {
+    fireEvent.change(screen.getByRole("textbox", { name: /^website 1$/i }), {
       target: { value: "compiler.example" },
     });
     fireEvent.click(
@@ -937,6 +1046,260 @@ describe("Kosmos application", () => {
     expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
       linkedinUrl: "https://www.linkedin.com/in/ada-updated",
     });
+  });
+
+  it("uploads and displays a private contact photo", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Contacts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /ada angler/i }));
+    fireEvent.change(await screen.findByLabelText(/upload ada angler photo/i), {
+      target: {
+        files: [new File(["photo"], "profile.png", { type: "image/png" })],
+      },
+    });
+    expect(await screen.findByAltText(/ada angler profile/i)).toHaveAttribute(
+      "src",
+      "/profile.png",
+    );
+  });
+
+  it("edits an existing account and its domains", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Accounts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /river labs/i }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /edit account/i }),
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: /^website 1$/i }), {
+      target: { value: "https://new.river.example" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /add another website/i }),
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: /^website 2$/i }), {
+      target: { value: "shop.river.example" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => {
+      const request = vi
+        .mocked(fetch)
+        .mock.calls.find(
+          ([input, init]) =>
+            String(input) === "/api/v1/accounts/account-1" &&
+            init?.method === "PATCH",
+        );
+      expect(JSON.parse(String(request?.[1]?.body)).websites).toEqual([
+        { url: "https://new.river.example" },
+        { url: "shop.river.example" },
+      ]);
+    });
+  });
+
+  it("removes an existing domain from an account", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Accounts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /river labs/i }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /edit account/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /remove website 1/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => {
+      const request = vi
+        .mocked(fetch)
+        .mock.calls.find(
+          ([input, init]) =>
+            String(input) === "/api/v1/accounts/account-1" &&
+            init?.method === "PATCH",
+        );
+      expect(JSON.parse(String(request?.[1]?.body)).websites).toEqual([]);
+    });
+  });
+
+  it("captures a mobile event lead with a new organization source", async () => {
+    window.innerWidth = 390;
+    window.history.replaceState({}, "", "/lead");
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", { name: /capture the conversation/i });
+    fireEvent.change(screen.getByLabelText(/their name/i), {
+      target: { value: "Lin Fisher" },
+    });
+    fireEvent.change(screen.getByLabelText(/contact source/i), {
+      target: { value: "__new__" },
+    });
+    fireEvent.change(screen.getByLabelText(/new contact source/i), {
+      target: { value: "Fly fishing expo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save lead/i }));
+    expect(
+      await screen.findByText(/lin fisher is in kosmos/i),
+    ).toBeInTheDocument();
+    const request = vi
+      .mocked(fetch)
+      .mock.calls.find(
+        ([input, init]) =>
+          String(input) === "/api/v1/contacts" && init?.method === "POST",
+      );
+    expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+      name: "Lin Fisher",
+      source: "Fly fishing expo",
+    });
+  });
+
+  it("confirms opportunity and document deletion", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Opportunities" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete website refresh/i }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /^delete opportunity$/i }),
+    );
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/opportunities/opportunity-1" &&
+              init?.method === "DELETE",
+          ),
+      ).toBe(true),
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Documents" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete client kickoff/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^delete document$/i }));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/documents/document-1" &&
+              init?.method === "DELETE",
+          ),
+      ).toBe(true),
+    );
+  });
+
+  it("uploads document files and embeds PDFs by filename", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Documents" }));
+    const file = new File(["pdf"], "guide.pdf", { type: "application/pdf" });
+    const documentFile = await screen.findByLabelText(/attach a file/i);
+    fireEvent.change(documentFile, {
+      target: { files: [file] },
+    });
+    fireEvent.submit(documentFile.closest("form")!);
+    expect(await screen.findByText("guide.pdf")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText(/start writing in markdown/i), {
+      target: { value: "[[guide.pdf]]" },
+    });
+    expect(screen.getByLabelText(/start writing in markdown/i)).toHaveValue(
+      "[[guide.pdf]]",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /save document/i }));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/documents/document-1" &&
+              init?.method === "PATCH" &&
+              JSON.parse(String(init.body)).body === "[[guide.pdf]]",
+          ),
+      ).toBe(true),
+    );
+    expect(await screen.findByTitle("guide.pdf")).toHaveAttribute(
+      "src",
+      "/download?disposition=inline",
+    );
+  });
+
+  it("uploads a receipt while recording a cost", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Operations" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /record a cost/i }),
+    );
+    fireEvent.change(screen.getByLabelText(/description/i), {
+      target: { value: "License" },
+    });
+    fireEvent.change(screen.getByLabelText(/amount/i), {
+      target: { value: "42" },
+    });
+    const receipt = screen.getByLabelText(/receipt/i);
+    fireEvent.change(receipt, {
+      target: {
+        files: [
+          new File(["receipt"], "license.pdf", { type: "application/pdf" }),
+        ],
+      },
+    });
+    fireEvent.submit(receipt.closest("form")!);
+    expect(
+      await screen.findByRole("link", { name: /license.pdf/i }),
+    ).toHaveAttribute("href", "/download");
+  });
+
+  it("uses the Google profile picture and detects Kosmos Companion", async () => {
+    const postMessage = vi.spyOn(window, "postMessage");
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    expect(
+      document.querySelector(
+        '.avatar img[src="https://images.example/joey.jpg"]',
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "Contacts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /ada angler/i }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /google voice/i }),
+    );
+    expect(
+      await screen.findByText(/install kosmos companion/i),
+    ).toBeInTheDocument();
+    fireEvent(window, new CustomEvent("kosmos-companion-ready"));
+    fireEvent.click(screen.getByRole("button", { name: /google voice/i }));
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "KOSMOS_VOICE_PREPARE",
+        phone: contact.phone,
+      }),
+      window.location.origin,
+    );
   });
 
   it("creates an account document with the account link", async () => {
@@ -1053,6 +1416,7 @@ describe("Kosmos application", () => {
 
   it.each([
     ["desktop", 1440],
+    ["tablet", 768],
     ["mobile", 390],
   ])(
     "moves opportunities and opens their account on %s",

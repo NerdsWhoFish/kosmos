@@ -21,6 +21,9 @@ import {
   shortDate,
 } from "../api";
 import { Modal } from "../components/Modal";
+import { ContactSourcePicker } from "../components/ContactSourcePicker";
+import { GoogleVoiceButton } from "../components/GoogleVoiceButton";
+import { RecordPhoto } from "../components/RecordPhoto";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
 
@@ -243,9 +246,20 @@ export function Contacts({
         title="Contacts"
         detail="The people you talk to, linked to the businesses and opportunities they belong to."
         action={
-          <button className="primary-button" onClick={() => setCreating(true)}>
-            <Plus size={17} /> Add contact
-          </button>
+          <div className="button-row page-actions">
+            <button
+              className="secondary-button"
+              onClick={() => navigate("/lead")}
+            >
+              <ContactRound size={17} /> Quick lead
+            </button>
+            <button
+              className="primary-button"
+              onClick={() => setCreating(true)}
+            >
+              <Plus size={17} /> Add contact
+            </button>
+          </div>
         }
       >
         {contacts.length ? (
@@ -349,7 +363,12 @@ function ContactAccount({
         <ArrowLeft size={16} /> All contacts
       </button>
       <header className="account-hero">
-        <span className="record-avatar large">{initials(contact.name)}</span>
+        <RecordPhoto
+          recordType="contact"
+          recordID={contact.id}
+          label={contact.name}
+          fallback={initials(contact.name)}
+        />
         <div>
           <p className="eyebrow">Contact</p>
           <h1>{contact.name}</h1>
@@ -397,15 +416,11 @@ function ContactAccount({
           </a>
         )}
         {contact.phone && (
-          <a
-            href="https://voice.google.com/u/0/messages"
-            target="_blank"
-            rel="noreferrer"
-          >
+          <span className="account-fact-action">
             <ExternalLink size={16} />
             <small>Google Voice</small>
-            <strong>Call or message</strong>
-          </a>
+            <GoogleVoiceButton phone={contact.phone} />
+          </span>
         )}
       </section>
       <div className="account-grid">
@@ -572,15 +587,7 @@ function ContactForm({
             defaultValue={contact?.linkedinUrl}
           />
         </label>
-        <label>
-          Source
-          <input
-            name="source"
-            maxLength={100}
-            placeholder="Referral, website, event"
-            defaultValue={contact?.source}
-          />
-        </label>
+        <ContactSourcePicker defaultValue={contact?.source} />
       </div>
       {error && (
         <p className="form-error" role="alert">

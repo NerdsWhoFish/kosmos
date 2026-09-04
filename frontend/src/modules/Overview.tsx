@@ -5,10 +5,21 @@ import {
   CalendarDays,
   Globe2,
   Mail,
+  Pencil,
   Plus,
+  Trash2,
   Users,
 } from "lucide-react";
-import { Activity, api, Landing, Member, money, Summary, User } from "../api";
+import {
+  Activity,
+  api,
+  Landing,
+  Member,
+  money,
+  Shortcut,
+  Summary,
+  User,
+} from "../api";
 import { Modal } from "../components/Modal";
 import { ErrorState, LoadingState } from "../components/States";
 
@@ -45,6 +56,10 @@ export function Overview({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [shortcutOpen, setShortcutOpen] = useState(false);
+  const [editingShortcut, setEditingShortcut] = useState<Shortcut | null>(null);
+  const [deletingShortcut, setDeletingShortcut] = useState<Shortcut | null>(
+    null,
+  );
   const [shortcutError, setShortcutError] = useState("");
   const [saving, setSaving] = useState(false);
   const [canManageLanding, setCanManageLanding] = useState(false);
@@ -79,21 +94,27 @@ export function Overview({
 
   useEffect(load, [load]);
 
-  async function createShortcut(event: FormEvent<HTMLFormElement>) {
+  async function saveShortcut(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
     setShortcutError("");
     const form = new FormData(event.currentTarget);
     try {
-      await api("/api/v1/landing/buttons", {
-        method: "POST",
-        body: JSON.stringify({
-          label: form.get("label"),
-          description: form.get("description"),
-          href: form.get("href"),
-        }),
-      });
+      await api(
+        editingShortcut
+          ? `/api/v1/landing/buttons/${editingShortcut.id}`
+          : "/api/v1/landing/buttons",
+        {
+          method: editingShortcut ? "PATCH" : "POST",
+          body: JSON.stringify({
+            label: form.get("label"),
+            description: form.get("description"),
+            href: form.get("href"),
+          }),
+        },
+      );
       setShortcutOpen(false);
+      setEditingShortcut(null);
       load();
     } catch (reason) {
       setShortcutError(
@@ -102,6 +123,30 @@ export function Overview({
     } finally {
       setSaving(false);
     }
+  }
+
+  async function deleteShortcut() {
+    if (!deletingShortcut) return;
+    setSaving(true);
+    setShortcutError("");
+    try {
+      await api(`/api/v1/landing/buttons/${deletingShortcut.id}`, {
+        method: "DELETE",
+      });
+      setDeletingShortcut(null);
+      load();
+    } catch (reason) {
+      setShortcutError(
+        reason instanceof Error ? reason.message : "Could not delete shortcut",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openNewShortcut() {
+    setEditingShortcut(null);
+    setShortcutOpen(true);
   }
 
   const today = new Intl.DateTimeFormat("en-US", {
@@ -177,10 +222,7 @@ export function Overview({
               <h2>Landing zone</h2>
             </div>
             {canManageLanding && (
-              <button
-                className="text-button"
-                onClick={() => setShortcutOpen(true)}
-              >
+              <button className="text-button" onClick={openNewShortcut}>
                 <Plus size={15} /> Customize
               </button>
             )}
@@ -188,8 +230,8 @@ export function Overview({
           <div className="shortcut-grid">
             {landing.buttons.map((button) => {
               const Icon = iconMap[button.icon] ?? Globe2;
-              return (
-                <a className="shortcut-card" href={button.href} key={button.id}>
+              const link = (
+                <a className="shortcut-main" href={button.href}>
                   <span className="shortcut-icon">
                     <Icon size={20} />
                   </span>
@@ -200,11 +242,40 @@ export function Overview({
                   <ArrowUpRight className="shortcut-arrow" size={17} />
                 </a>
               );
+              return canManageLanding ? (
+                <article
+                  className="shortcut-card managed-shortcut"
+                  key={button.id}
+                >
+                  {link}
+                  <span className="shortcut-actions">
+                    <button
+                      aria-label={`Edit ${button.label}`}
+                      onClick={() => {
+                        setEditingShortcut(button);
+                        setShortcutOpen(true);
+                      }}
+                    >
+                      <Pencil size={15} />
+                    </button>
+                    <button
+                      aria-label={`Delete ${button.label}`}
+                      onClick={() => setDeletingShortcut(button)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </span>
+                </article>
+              ) : (
+                <article className="shortcut-card" key={button.id}>
+                  {link}
+                </article>
+              );
             })}
             {canManageLanding && (
               <button
                 className="shortcut-card add-card"
-                onClick={() => setShortcutOpen(true)}
+                onClick={openNewShortcut}
               >
                 <span className="shortcut-icon muted">
                   <Plus size={20} />
@@ -299,13 +370,22 @@ export function Overview({
       {shortcutOpen && (
         <Modal
           eyebrow="Landing zone"
-          title="Add a shortcut"
-          onClose={() => setShortcutOpen(false)}
+          title={editingShortcut ? "Edit shortcut" : "Add a shortcut"}
+          onClose={() => {
+            setShortcutOpen(false);
+            setEditingShortcut(null);
+          }}
         >
-          <form onSubmit={createShortcut}>
+          <form onSubmit={saveShortcut}>
             <label>
               Button name
-              <input name="label" maxLength={80} required autoFocus />
+              <input
+                name="label"
+                maxLength={80}
+                defaultValue={editingShortcut?.label}
+                required
+                autoFocus
+              />
             </label>
             <label>
               Link
@@ -313,12 +393,18 @@ export function Overview({
                 name="href"
                 inputMode="url"
                 placeholder="https://example.com"
+                defaultValue={editingShortcut?.href}
                 required
               />
             </label>
             <label>
               Description
-              <textarea name="description" maxLength={180} rows={3} />
+              <textarea
+                name="description"
+                maxLength={180}
+                rows={3}
+                defaultValue={editingShortcut?.description}
+              />
             </label>
             {shortcutError && (
               <p className="form-error" role="alert">
@@ -329,15 +415,54 @@ export function Overview({
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => setShortcutOpen(false)}
+                onClick={() => {
+                  setShortcutOpen(false);
+                  setEditingShortcut(null);
+                }}
               >
                 Cancel
               </button>
               <button className="primary-button" disabled={saving}>
-                {saving ? "Saving..." : "Save shortcut"}
+                {saving
+                  ? "Saving..."
+                  : editingShortcut
+                    ? "Save changes"
+                    : "Save shortcut"}
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+      {deletingShortcut && (
+        <Modal
+          eyebrow="Landing zone"
+          title="Delete this shortcut?"
+          onClose={() => setDeletingShortcut(null)}
+        >
+          <p className="muted-copy">
+            {deletingShortcut.label} will disappear for everyone in the
+            organization.
+          </p>
+          {shortcutError && (
+            <p className="form-error" role="alert">
+              {shortcutError}
+            </p>
+          )}
+          <div className="form-actions">
+            <button
+              className="secondary-button"
+              onClick={() => setDeletingShortcut(null)}
+            >
+              Keep shortcut
+            </button>
+            <button
+              className="danger-button"
+              onClick={deleteShortcut}
+              disabled={saving}
+            >
+              <Trash2 size={16} /> {saving ? "Deleting..." : "Delete shortcut"}
+            </button>
+          </div>
         </Modal>
       )}
     </>

@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { CircleDollarSign, Plus } from "lucide-react";
+import { CircleDollarSign, Plus, Trash2 } from "lucide-react";
 import {
   Account,
   api,
@@ -42,6 +42,7 @@ export function Opportunities({
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<Opportunity | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -119,6 +120,25 @@ export function Opportunities({
       setError(
         reason instanceof Error ? reason.message : "Could not move opportunity",
       );
+    }
+  }
+
+  async function deleteOpportunity() {
+    if (!deleting) return;
+    setSaving(true);
+    setFormError("");
+    try {
+      await api(`/api/v1/opportunities/${deleting.id}`, { method: "DELETE" });
+      setItems((current) => current.filter((item) => item.id !== deleting.id));
+      setDeleting(null);
+    } catch (reason) {
+      setFormError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not delete opportunity",
+      );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -234,6 +254,7 @@ export function Opportunities({
                           onMove={move}
                           onOpen={openAccount}
                           onKeyOpen={keyOpen}
+                          onDelete={setDeleting}
                           onDragStart={(event) => {
                             setDraggedID(item.id);
                             event.dataTransfer.effectAllowed = "move";
@@ -263,6 +284,7 @@ export function Opportunities({
                 onMove={move}
                 onOpen={openAccount}
                 onKeyOpen={keyOpen}
+                onDelete={setDeleting}
                 onDragStart={(event) => {
                   setDraggedID(item.id);
                   event.dataTransfer.effectAllowed = "move";
@@ -374,6 +396,38 @@ export function Opportunities({
           </form>
         </Modal>
       )}
+      {deleting && (
+        <Modal
+          eyebrow="Pipeline"
+          title="Delete this opportunity?"
+          onClose={() => setDeleting(null)}
+        >
+          <p className="muted-copy">
+            {deleting.name} will be permanently removed from the pipeline.
+          </p>
+          {formError && (
+            <p className="form-error" role="alert">
+              {formError}
+            </p>
+          )}
+          <div className="form-actions">
+            <button
+              className="secondary-button"
+              onClick={() => setDeleting(null)}
+            >
+              Keep opportunity
+            </button>
+            <button
+              className="danger-button"
+              onClick={deleteOpportunity}
+              disabled={saving}
+            >
+              <Trash2 size={16} />{" "}
+              {saving ? "Deleting..." : "Delete opportunity"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -386,6 +440,7 @@ function OpportunityCard({
   onMove,
   onOpen,
   onKeyOpen,
+  onDelete,
   onDragStart,
 }: {
   item: Opportunity;
@@ -395,6 +450,7 @@ function OpportunityCard({
   onMove: (item: Opportunity, stage: string) => void;
   onOpen: (item: Opportunity) => void;
   onKeyOpen: (event: KeyboardEvent, item: Opportunity) => void;
+  onDelete: (item: Opportunity) => void;
   onDragStart: (event: DragEvent<HTMLElement>) => void;
 }) {
   return (
@@ -438,6 +494,16 @@ function OpportunityCard({
           ))}
         </select>
       </label>
+      <button
+        className="opportunity-delete"
+        aria-label={`Delete ${item.name}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onDelete(item);
+        }}
+      >
+        <Trash2 size={14} /> Delete
+      </button>
     </article>
   );
 }

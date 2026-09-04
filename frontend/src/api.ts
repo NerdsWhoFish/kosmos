@@ -47,6 +47,12 @@ export type Contact = {
   createdAt: string;
   updatedAt: string;
 };
+export type ContactSource = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
 export type Opportunity = {
   id: string;
   name: string;
@@ -248,6 +254,7 @@ export type Attachment = {
   createdBy: string;
   createdAt: string;
   downloadUrl: string;
+  viewUrl: string;
 };
 export type AuditEntry = {
   id: string;
