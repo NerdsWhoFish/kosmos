@@ -92,7 +92,7 @@ func TestProcessRole(t *testing.T) {
 func TestReleaseBuildsArtifactsBeforeTheContainer(t *testing.T) {
 	repositoryRoot := filepath.Join("..", "..", "..")
 	files := map[string]string{}
-	for _, path := range []string{".github/workflows/release.yml", ".goreleaser.yaml", "Dockerfile"} {
+	for _, path := range []string{".github/workflows/release.yml", ".gitignore", ".goreleaser.yaml", "Dockerfile"} {
 		contents, err := os.ReadFile(filepath.Join(repositoryRoot, path))
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
@@ -105,6 +105,9 @@ func TestReleaseBuildsArtifactsBeforeTheContainer(t *testing.T) {
 	}
 	if !strings.Contains(files[".goreleaser.yaml"], "main: ./backend/cmd/kosmos") {
 		t.Fatal("GoReleaser must build the Kosmos server")
+	}
+	if !strings.Contains(files[".gitignore"], "gha-creds-*.json") {
+		t.Fatal("Google authentication credentials must not dirty the GoReleaser checkout")
 	}
 	dockerfile := files["Dockerfile"]
 	for _, forbidden := range []string{"FROM golang:", "FROM node:", "go build", "npm run build"} {
