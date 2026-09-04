@@ -71,12 +71,17 @@ run "bootstrap_defaults" {
   }
 
   assert {
+    condition     = var.uptime_check_enabled
+    error_message = "reusable deployments must retain uptime monitoring by default"
+  }
+
+  assert {
     condition     = google_cloud_tasks_queue.jobs.rate_limits[0].max_concurrent_dispatches == 1
     error_message = "the async queue must serialize Google Contacts mutations and preserve the near-free cost cap"
   }
 
   assert {
-    condition     = length(google_firestore_index.pagination) == 4
+    condition     = length(google_firestore_index.pagination) == 5
     error_message = "filtered cursor pagination must ship its required Firestore indexes"
   }
 
@@ -109,6 +114,7 @@ run "production_service" {
     manage_grafana              = true
     grafana_faro_app_id         = "902"
     integration_secret_value    = "test-only-integration-secret-value"
+    uptime_check_enabled        = false
   }
 
   assert {
@@ -197,13 +203,13 @@ run "production_service" {
   }
 
   assert {
-    condition     = length(google_monitoring_alert_policy.uptime) == 1 && length(google_monitoring_alert_policy.job_failures) == 1 && length(google_monitoring_alert_policy.scheduler_failures) == 1 && google_monitoring_alert_policy.queue_backlog.enabled
-    error_message = "production must alert on downtime, job failures, scheduler failures, and queue backlog"
+    condition     = length(google_monitoring_alert_policy.uptime) == 0 && length(google_monitoring_alert_policy.job_failures) == 1 && length(google_monitoring_alert_policy.scheduler_failures) == 1 && google_monitoring_alert_policy.queue_backlog.enabled
+    error_message = "production must disable only the opted-out uptime alert and retain operational alerts"
   }
 
   assert {
-    condition     = length(google_monitoring_uptime_check_config.health) == 1 && google_monitoring_uptime_check_config.health[0].monitored_resource[0].labels.host == "kosmos.nerdswhofish.com"
-    error_message = "production must monitor the public health endpoint"
+    condition     = length(google_monitoring_uptime_check_config.health) == 0
+    error_message = "production must omit the opted-out public health check"
   }
 
 

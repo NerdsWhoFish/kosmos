@@ -225,6 +225,12 @@ variable "allow_unauthenticated" {
   default     = true
 }
 
+variable "uptime_check_enabled" {
+  description = "Run the public health probe and evaluate its availability alert."
+  type        = bool
+  default     = true
+}
+
 variable "attachments_bucket_name" {
   description = "Globally unique private attachment bucket name. Null derives it from project_id."
   type        = string

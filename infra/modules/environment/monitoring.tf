@@ -6,7 +6,7 @@ locals {
 }
 
 resource "google_monitoring_alert_policy" "uptime" {
-  count = local.deploy_service && var.public_url != null ? 1 : 0
+  count = local.deploy_service && var.public_url != null && var.uptime_check_enabled ? 1 : 0
 
   project      = var.project_id
   display_name = "Kosmos ${var.environment} unavailable"

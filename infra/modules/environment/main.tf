@@ -637,7 +637,7 @@ resource "google_monitoring_alert_policy" "server_errors" {
 }
 
 resource "google_monitoring_uptime_check_config" "health" {
-  count = local.deploy_service && var.public_url != null ? 1 : 0
+  count = local.deploy_service && var.public_url != null && var.uptime_check_enabled ? 1 : 0
 
   lifecycle {
     create_before_destroy = true
