@@ -79,6 +79,11 @@ run "bootstrap_defaults" {
     condition     = length(google_firestore_index.pagination) == 4
     error_message = "filtered cursor pagination must ship its required Firestore indexes"
   }
+
+  assert {
+    condition     = google_project_service.required["gmail.googleapis.com"].service == "gmail.googleapis.com"
+    error_message = "the environment must enable the Gmail API used by Google Workspace jobs"
+  }
 }
 
 run "production_service" {

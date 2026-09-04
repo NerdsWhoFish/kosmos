@@ -95,6 +95,7 @@ locals {
     "cloudtasks.googleapis.com",
     "cloudscheduler.googleapis.com",
     "firestore.googleapis.com",
+    "gmail.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
     "logging.googleapis.com",
