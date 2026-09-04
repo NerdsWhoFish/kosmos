@@ -26,6 +26,7 @@ locals {
     },
     var.public_url == null ? {} : { KOSMOS_PUBLIC_URL = var.public_url },
     var.google_client_id == null ? {} : { GOOGLE_CLIENT_ID = var.google_client_id },
+    length(var.allowed_google_domains) == 0 ? {} : { KOSMOS_ALLOWED_GOOGLE_DOMAINS = join(",", sort(tolist(var.allowed_google_domains))) },
     var.faro_url == null ? {} : { KOSMOS_FARO_URL = var.faro_url },
     var.otel_exporter_otlp_endpoint == null ? {} : { OTEL_EXPORTER_OTLP_ENDPOINT = var.otel_exporter_otlp_endpoint },
   )

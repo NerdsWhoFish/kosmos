@@ -77,6 +77,7 @@ run "production_service" {
     image_digest                = "us-east1-docker.pkg.dev/kosmos-production/kosmos/kosmos@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     public_url                  = "https://cast.nerdswhofish.com"
     google_client_id            = "client.apps.googleusercontent.com"
+    allowed_google_domains      = ["nerdswhofish.com", "theoutdoorprogrammer.com", "apollorion.com"]
     faro_url                    = "https://faro.example.com/collect"
     otel_exporter_otlp_endpoint = "https://otlp.example.com/otlp"
     billing_account_id          = "000000-000000-000000"
@@ -101,6 +102,11 @@ run "production_service" {
   assert {
     condition     = google_cloud_run_v2_service.kosmos[0].template[0].scaling[0].max_instance_count == 3
     error_message = "production must retain the default cost cap"
+  }
+
+  assert {
+    condition     = contains([for env in google_cloud_run_v2_service.kosmos[0].template[0].containers[0].env : env.value if env.name == "KOSMOS_ALLOWED_GOOGLE_DOMAINS"], "apollorion.com,nerdswhofish.com,theoutdoorprogrammer.com")
+    error_message = "production must pass the sorted Google domain allowlist to Cloud Run"
   }
 
   assert {

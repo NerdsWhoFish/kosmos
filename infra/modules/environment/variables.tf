@@ -82,6 +82,17 @@ variable "google_client_id" {
   nullable    = true
 }
 
+variable "allowed_google_domains" {
+  description = "Verified Google email domains allowed to receive a Kosmos session. Production deployments must provide at least one."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for domain in var.allowed_google_domains : can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", domain))])
+    error_message = "allowed_google_domains must contain lowercase DNS domain names."
+  }
+}
+
 variable "faro_url" {
   description = "Optional Grafana Faro collector URL returned through runtime configuration."
   type        = string

@@ -12,7 +12,7 @@ make dev
 
 The API runs on `http://localhost:8080`. The frontend development server runs on `http://localhost:5173`.
 
-Google login requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a random `KOSMOS_SESSION_SECRET` of at least 32 bytes. Set `KOSMOS_GCP_PROJECT` to use Firestore. Without it, the same landing-zone API uses an in-memory store for local development.
+Google login requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a random `KOSMOS_SESSION_SECRET` of at least 32 bytes. Production also requires `KOSMOS_ALLOWED_GOOGLE_DOMAINS`, a comma-separated list of verified email domains allowed to receive a session. Set `KOSMOS_GCP_PROJECT` to use Firestore. Without it, the same landing-zone API uses an in-memory store for local development.
 
 ## Deployment
 

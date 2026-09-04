@@ -25,10 +25,12 @@ const (
 )
 
 type Google struct {
-	clientID     string
-	clientSecret string
-	publicURL    string
-	sessionKey   []byte
+	clientID       string
+	clientSecret   string
+	publicURL      string
+	sessionKey     []byte
+	production     bool
+	allowedDomains map[string]struct{}
 
 	mu       sync.Mutex
 	provider *oidc.Provider
@@ -49,10 +51,12 @@ type session struct {
 
 func NewGoogle() *Google {
 	return &Google{
-		clientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		clientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		publicURL:    strings.TrimRight(os.Getenv("KOSMOS_PUBLIC_URL"), "/"),
-		sessionKey:   []byte(os.Getenv("KOSMOS_SESSION_SECRET")),
+		clientID:       os.Getenv("GOOGLE_CLIENT_ID"),
+		clientSecret:   os.Getenv("GOOGLE_CLIENT_SECRET"),
+		publicURL:      strings.TrimRight(os.Getenv("KOSMOS_PUBLIC_URL"), "/"),
+		sessionKey:     []byte(os.Getenv("KOSMOS_SESSION_SECRET")),
+		production:     os.Getenv("KOSMOS_ENV") == "production",
+		allowedDomains: parseDomains(os.Getenv("KOSMOS_ALLOWED_GOOGLE_DOMAINS")),
 	}
 }
 
@@ -115,6 +119,10 @@ func (g *Google) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Google identity was incomplete", http.StatusUnauthorized)
 		return
 	}
+	if !g.allowsEmail(claims.Email) {
+		http.Error(w, "This Google account is not allowed to use Kosmos", http.StatusForbidden)
+		return
+	}
 	if len(g.sessionKey) < 32 {
 		http.Error(w, "session signing is not configured", http.StatusServiceUnavailable)
 		return
@@ -151,11 +159,14 @@ func (g *Google) CurrentUser(r *http.Request) (User, error) {
 	if err := g.verifySession(cookie.Value, &current); err != nil || time.Now().After(current.ExpiresAt) {
 		return User{}, errors.New("invalid session")
 	}
+	if !g.allowsEmail(current.User.Email) {
+		return User{}, errors.New("session user is no longer allowed")
+	}
 	return current.User, nil
 }
 
 func (g *Google) oauthConfig(ctx context.Context, r *http.Request) (*oauth2.Config, error) {
-	if g.clientID == "" || g.clientSecret == "" || len(g.sessionKey) < 32 {
+	if g.clientID == "" || g.clientSecret == "" || len(g.sessionKey) < 32 || (g.production && len(g.allowedDomains) == 0) {
 		return nil, errors.New("Google OAuth environment is incomplete")
 	}
 	g.mu.Lock()
@@ -207,6 +218,30 @@ func (g *Google) verifySession(value string, target *session) error {
 }
 
 func (g *Google) secureCookies() bool { return os.Getenv("KOSMOS_ENV") == "production" }
+
+func (g *Google) allowsEmail(email string) bool {
+	if len(g.allowedDomains) == 0 {
+		return !g.production
+	}
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	local, domain, ok := strings.Cut(normalized, "@")
+	if !ok || local == "" || domain == "" || strings.Contains(domain, "@") {
+		return false
+	}
+	_, ok = g.allowedDomains[domain]
+	return ok
+}
+
+func parseDomains(value string) map[string]struct{} {
+	domains := make(map[string]struct{})
+	for _, domain := range strings.Split(value, ",") {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if domain != "" && !strings.Contains(domain, "@") {
+			domains[domain] = struct{}{}
+		}
+	}
+	return domains
+}
 
 func signature(key []byte, value string) string {
 	mac := hmac.New(sha256.New, key)
