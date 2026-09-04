@@ -92,6 +92,45 @@ func TestOrganizationSharesShortcutsAndRestrictsManagement(t *testing.T) {
 	if response.Buttons[len(response.Buttons)-1].Label != "Shared docs" {
 		t.Fatalf("organization shortcut missing: %#v", response.Buttons)
 	}
+
+	buttonID := response.Buttons[len(response.Buttons)-1].ID
+	deniedEdit := httptest.NewRecorder()
+	mux.ServeHTTP(deniedEdit, httptest.NewRequest(http.MethodPatch, "/api/v1/landing/buttons/"+buttonID, bytes.NewBufferString(`{"label":"Nope","href":"/"}`)))
+	if deniedEdit.Code != http.StatusForbidden {
+		t.Fatalf("member edit status = %d, want %d", deniedEdit.Code, http.StatusForbidden)
+	}
+
+	edit := httptest.NewRequest(http.MethodPatch, "/api/v1/landing/buttons/"+buttonID, bytes.NewBufferString(`{"label":"Team docs","description":"Shared knowledge","href":"/documents"}`))
+	edit.Header.Set("X-Test-Role", "admin")
+	edited := httptest.NewRecorder()
+	mux.ServeHTTP(edited, edit)
+	if edited.Code != http.StatusOK {
+		t.Fatalf("admin edit status = %d, want %d: %s", edited.Code, http.StatusOK, edited.Body.String())
+	}
+	var updated Button
+	if err := json.NewDecoder(edited.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Label != "Team docs" || updated.Href != "/documents" {
+		t.Fatalf("updated shortcut = %#v", updated)
+	}
+
+	remove := httptest.NewRequest(http.MethodDelete, "/api/v1/landing/buttons/"+buttonID, nil)
+	remove.Header.Set("X-Test-Role", "admin")
+	deleted := httptest.NewRecorder()
+	mux.ServeHTTP(deleted, remove)
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("admin delete status = %d, want %d: %s", deleted.Code, http.StatusNoContent, deleted.Body.String())
+	}
+
+	after := httptest.NewRecorder()
+	mux.ServeHTTP(after, httptest.NewRequest(http.MethodGet, "/api/v1/landing", nil))
+	if err := json.NewDecoder(after.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Buttons) != 3 {
+		t.Fatalf("buttons after delete = %d, want 3", len(response.Buttons))
+	}
 }
 
 func TestModuleRequiresAuthentication(t *testing.T) {

@@ -102,6 +102,25 @@ func TestWorkspaceCoreFlow(t *testing.T) {
 	if !completed.Completed {
 		t.Fatal("reminder was not completed")
 	}
+	performNoContent(t, mux, http.MethodDelete, "/api/v1/opportunities/"+opportunity.ID)
+	performNoContent(t, mux, http.MethodDelete, "/api/v1/documents/"+document.ID)
+	performJSON[map[string]any](t, mux, http.MethodDelete, "/api/v1/opportunities/"+opportunity.ID, "", http.StatusNotFound)
+	performJSON[map[string]any](t, mux, http.MethodDelete, "/api/v1/documents/"+document.ID, "", http.StatusNotFound)
+}
+
+func TestContactSourcesCombineDefaultsAndOrganizationChoices(t *testing.T) {
+	mux := http.NewServeMux()
+	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
+	created := performJSON[ContactSource](t, mux, http.MethodPost, "/api/v1/contact-sources", `{"name":"Fishing expo"}`, http.StatusCreated)
+	if created.Name != "Fishing expo" {
+		t.Fatalf("source = %#v", created)
+	}
+	response := performJSON[struct {
+		Sources []ContactSource `json:"sources"`
+	}](t, mux, http.MethodGet, "/api/v1/contact-sources", "", http.StatusOK)
+	if len(response.Sources) < 6 || response.Sources[len(response.Sources)-1].Name != "Website" {
+		t.Fatalf("sources = %#v", response.Sources)
+	}
 }
 
 func TestWorkspaceSearchesRecords(t *testing.T) {
@@ -315,4 +334,13 @@ func performJSON[T any](t *testing.T, handler http.Handler, method, target, body
 		t.Fatalf("decode %s %s: %v", method, target, err)
 	}
 	return response
+}
+
+func performNoContent(t *testing.T, handler http.Handler, method, target string) {
+	t.Helper()
+	record := httptest.NewRecorder()
+	handler.ServeHTTP(record, httptest.NewRequest(method, target, nil))
+	if record.Code != http.StatusNoContent {
+		t.Fatalf("%s %s status = %d, want %d: %s", method, target, record.Code, http.StatusNoContent, record.Body.String())
+	}
 }

@@ -14,6 +14,7 @@ import (
 type BlobStore interface {
 	Put(context.Context, string, string, io.Reader) error
 	Open(context.Context, string) (io.ReadCloser, error)
+	Delete(context.Context, string) error
 }
 
 type MemoryBlobStore struct {
@@ -44,6 +45,16 @@ func (s *MemoryBlobStore) Open(_ context.Context, name string) (io.ReadCloser, e
 	return io.NopCloser(bytes.NewReader(append([]byte(nil), value...))), nil
 }
 
+func (s *MemoryBlobStore) Delete(_ context.Context, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.blobs[name]; !ok {
+		return errNotFound
+	}
+	delete(s.blobs, name)
+	return nil
+}
+
 type GCSBlobStore struct{ bucket *storage.BucketHandle }
 
 func NewGCSBlobStore(client *storage.Client, bucket string) *GCSBlobStore {
@@ -68,4 +79,13 @@ func (s *GCSBlobStore) Open(ctx context.Context, name string) (io.ReadCloser, er
 		return nil, errNotFound
 	}
 	return reader, err
+}
+
+func (s *GCSBlobStore) Delete(ctx context.Context, name string) error {
+	err := s.bucket.Object(name).Delete(ctx)
+	var apiError *googleapi.Error
+	if errors.As(err, &apiError) && apiError.Code == 404 {
+		return errNotFound
+	}
+	return err
 }

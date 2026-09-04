@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/mail"
@@ -26,6 +27,7 @@ import (
 	platformmodules "github.com/NerdsWhoFish/kosmos/backend/internal/platform/modules"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 	"golang.org/x/oauth2"
+	"google.golang.org/api/googleapi"
 )
 
 const maxUploadSize = 10 << 20
@@ -147,6 +149,7 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/attachments", m.uploadAttachment)
 	mux.HandleFunc("GET /api/v1/attachments", m.attachments)
 	mux.HandleFunc("GET /api/v1/attachments/{id}/download", m.downloadAttachment)
+	mux.HandleFunc("DELETE /api/v1/attachments/{id}", m.deleteAttachment)
 	mux.HandleFunc("GET /api/v1/audit", m.auditEntries)
 	mux.HandleFunc("GET /api/v1/exports/{kind}", m.exportRecords)
 	mux.HandleFunc("GET /api/v1/voice/link", m.voiceLink)
@@ -333,7 +336,7 @@ func (m *Module) configureSendAs(w http.ResponseWriter, r *http.Request) {
 	if !verified {
 		aliases, aliasErr := m.google.SendAsAliases(r.Context(), token)
 		if aliasErr != nil {
-			writeError(w, http.StatusBadGateway, "send_as_check_failed", "Google could not verify this sender address. Reconnect Google Workspace and try again")
+			writeSendAsProviderError(w, r, aliasErr)
 			return
 		}
 		for _, alias := range aliases {
@@ -359,6 +362,28 @@ func (m *Module) configureSendAs(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = m.audit(r.Context(), scope, actor.Email, "gmail.send_as_mapped", "member", member.ID, "Mapped "+member.Email+" to "+request.Email)
 	writeJSON(w, http.StatusOK, mapping)
+}
+
+func writeSendAsProviderError(w http.ResponseWriter, r *http.Request, err error) {
+	statusCode := http.StatusBadGateway
+	code := "send_as_check_failed"
+	message := "Google could not verify this sender address. Try again in a moment"
+	providerCode := 0
+	providerReason := "unknown"
+	var apiError *googleapi.Error
+	if errors.As(err, &apiError) {
+		providerCode = apiError.Code
+		if len(apiError.Errors) > 0 {
+			providerReason = apiError.Errors[0].Reason
+		}
+		if apiError.Code == http.StatusUnauthorized || apiError.Code == http.StatusForbidden {
+			statusCode = http.StatusConflict
+			code = "send_as_permission_required"
+			message = "Reconnect Google Workspace to grant sender-address access, then try again"
+		}
+	}
+	slog.WarnContext(r.Context(), "gmail sender alias verification failed", "provider.status_code", providerCode, "provider.reason", providerReason)
+	writeError(w, statusCode, code, message)
 }
 
 func (m *Module) pipelineStages(w http.ResponseWriter, r *http.Request) {
@@ -680,12 +705,20 @@ func (m *Module) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := normalizedOr(r.FormValue("kind"), "attachment")
 	recordType := strings.TrimSpace(r.FormValue("recordType"))
-	if !oneOf(kind, "attachment", "receipt") || recordType == "" || strings.TrimSpace(r.FormValue("recordId")) == "" {
+	if !oneOf(kind, "attachment", "receipt", "photo") || recordType == "" || strings.TrimSpace(r.FormValue("recordId")) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_attachment", "Choose a supported file kind and record")
 		return
 	}
 	if kind == "receipt" && recordType != "cost" {
 		writeError(w, http.StatusBadRequest, "invalid_receipt", "Receipts must be linked to a cost")
+		return
+	}
+	if kind == "photo" && !oneOf(recordType, "account", "contact") {
+		writeError(w, http.StatusBadRequest, "invalid_photo", "Photos must be linked to an account or contact")
+		return
+	}
+	if kind == "photo" && !strings.HasPrefix(contentType, "image/") {
+		writeError(w, http.StatusBadRequest, "invalid_photo", "Account and contact photos must be JPEG, PNG, or WebP images")
 		return
 	}
 	id, err := newID()
@@ -704,6 +737,7 @@ func (m *Module) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.DownloadURL = m.downloadURL(scope, item.ID, time.Now().Add(15*time.Minute))
+	item.ViewURL = item.DownloadURL + "&disposition=inline"
 	_ = m.audit(r.Context(), scope, actor.Email, "attachment.uploaded", "attachment", item.ID, item.FileName)
 	writeJSON(w, http.StatusCreated, item)
 }
@@ -727,6 +761,7 @@ func (m *Module) attachments(w http.ResponseWriter, r *http.Request) {
 	}
 	for index := range items {
 		items[index].DownloadURL = m.downloadURL(scope, items[index].ID, time.Now().Add(15*time.Minute))
+		items[index].ViewURL = items[index].DownloadURL + "&disposition=inline"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"attachments": items, "page": metadata})
 }
@@ -751,9 +786,40 @@ func (m *Module) downloadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer reader.Close()
 	w.Header().Set("Content-Type", item.ContentType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", item.FileName))
+	disposition := "attachment"
+	if r.URL.Query().Get("disposition") == "inline" {
+		disposition = "inline"
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'self'")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disposition, item.FileName))
 	w.Header().Set("Cache-Control", "private, no-store")
 	_, _ = io.Copy(w, reader)
+}
+
+func (m *Module) deleteAttachment(w http.ResponseWriter, r *http.Request) {
+	scope, actor, ok := m.authorize(w, r)
+	if !ok {
+		return
+	}
+	var item Attachment
+	if err := m.store.Get(r.Context(), scope, "attachments", r.PathValue("id"), &item); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "attachment_not_found", "Attachment was not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "attachment_delete_failed", "Could not delete attachment")
+		return
+	}
+	if err := m.blobs.Delete(r.Context(), item.ObjectName); err != nil && !errors.Is(err, errNotFound) {
+		writeError(w, http.StatusInternalServerError, "attachment_delete_failed", "Could not delete attachment")
+		return
+	}
+	if err := m.store.Delete(r.Context(), scope, "attachments", item.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "attachment_delete_failed", "Could not delete attachment")
+		return
+	}
+	_ = m.audit(r.Context(), scope, actor.Email, "attachment.deleted", "attachment", item.ID, item.FileName)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m *Module) auditEntries(w http.ResponseWriter, r *http.Request) {

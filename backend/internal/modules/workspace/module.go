@@ -38,6 +38,13 @@ type Contact struct {
 	UpdatedAt   time.Time `json:"updatedAt" firestore:"updatedAt"`
 }
 
+type ContactSource struct {
+	ID        string    `json:"id" firestore:"-"`
+	Name      string    `json:"name" firestore:"name"`
+	CreatedAt time.Time `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt" firestore:"updatedAt"`
+}
+
 type Website struct {
 	URL         string `json:"url" firestore:"url"`
 	Domain      string `json:"domain" firestore:"domain"`
@@ -206,10 +213,13 @@ type Store interface {
 	GetContact(context.Context, string, string) (Contact, error)
 	CreateContact(context.Context, string, Contact) (Contact, error)
 	UpdateContact(context.Context, string, string, ContactPatch) (Contact, error)
+	ListContactSources(context.Context, string) ([]ContactSource, error)
+	CreateContactSource(context.Context, string, ContactSource) (ContactSource, error)
 	ListOpportunities(context.Context, string) ([]Opportunity, error)
 	GetOpportunity(context.Context, string, string) (Opportunity, error)
 	CreateOpportunity(context.Context, string, Opportunity) (Opportunity, error)
 	UpdateOpportunity(context.Context, string, string, OpportunityPatch) (Opportunity, error)
+	DeleteOpportunity(context.Context, string, string) error
 	ListActivities(context.Context, string) ([]Activity, error)
 	CreateActivity(context.Context, string, Activity) (Activity, error)
 	ListReminders(context.Context, string) ([]Reminder, error)
@@ -218,6 +228,7 @@ type Store interface {
 	ListDocuments(context.Context, string) ([]Document, error)
 	CreateDocument(context.Context, string, Document) (Document, error)
 	UpdateDocument(context.Context, string, string, DocumentPatch) (Document, error)
+	DeleteDocument(context.Context, string, string) error
 	ListDocumentRevisions(context.Context, string, string) ([]DocumentRevision, error)
 	CreateDocumentRevision(context.Context, string, DocumentRevision) (DocumentRevision, error)
 	ListCosts(context.Context, string) ([]Cost, error)

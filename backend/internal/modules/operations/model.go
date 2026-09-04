@@ -164,6 +164,7 @@ type Attachment struct {
 	CreatedBy   string    `json:"createdBy" firestore:"createdBy"`
 	CreatedAt   time.Time `json:"createdAt" firestore:"createdAt"`
 	DownloadURL string    `json:"downloadUrl,omitempty" firestore:"-"`
+	ViewURL     string    `json:"viewUrl,omitempty" firestore:"-"`
 }
 
 type AuditEntry struct {

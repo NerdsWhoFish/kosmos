@@ -29,9 +29,12 @@ func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/contacts", m.createContact)
 	mux.HandleFunc("GET /api/v1/contacts/{id}", m.getContact)
 	mux.HandleFunc("PATCH /api/v1/contacts/{id}", m.updateContact)
+	mux.HandleFunc("GET /api/v1/contact-sources", m.listContactSources)
+	mux.HandleFunc("POST /api/v1/contact-sources", m.createContactSource)
 	mux.HandleFunc("GET /api/v1/opportunities", m.listOpportunities)
 	mux.HandleFunc("POST /api/v1/opportunities", m.createOpportunity)
 	mux.HandleFunc("PATCH /api/v1/opportunities/{id}", m.updateOpportunity)
+	mux.HandleFunc("DELETE /api/v1/opportunities/{id}", m.deleteOpportunity)
 	mux.HandleFunc("GET /api/v1/activities", m.listActivities)
 	mux.HandleFunc("POST /api/v1/activities", m.createActivity)
 	mux.HandleFunc("GET /api/v1/reminders", m.listReminders)
@@ -40,6 +43,7 @@ func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/documents", m.listDocuments)
 	mux.HandleFunc("POST /api/v1/documents", m.createDocument)
 	mux.HandleFunc("PATCH /api/v1/documents/{id}", m.updateDocument)
+	mux.HandleFunc("DELETE /api/v1/documents/{id}", m.deleteDocument)
 	mux.HandleFunc("GET /api/v1/documents/{id}/revisions", m.documentRevisions)
 	mux.HandleFunc("GET /api/v1/costs", m.listCosts)
 	mux.HandleFunc("POST /api/v1/costs", m.createCost)
@@ -82,6 +86,10 @@ func (m Module) createAccount(w http.ResponseWriter, r *http.Request) {
 	normalizeContact(request.PrimaryContact)
 	if message := validateContact(*request.PrimaryContact); message != "" {
 		writeError(w, http.StatusBadRequest, "invalid_contact", message)
+		return
+	}
+	if err := m.ensureContactSource(r.Context(), scope, request.PrimaryContact.Source); err != nil {
+		writeError(w, http.StatusInternalServerError, "contact_source_save_failed", "Could not save contact source")
 		return
 	}
 	account, contact, err := m.store.CreateAccountWithContact(r.Context(), scope, request.Account, *request.PrimaryContact)
@@ -219,6 +227,10 @@ func (m Module) createContact(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := m.ensureContactSource(r.Context(), scope, contact.Source); err != nil {
+		writeError(w, http.StatusInternalServerError, "contact_source_save_failed", "Could not save contact source")
+		return
+	}
 	created, err := m.store.CreateContact(r.Context(), scope, contact)
 	respondCreated(w, created, err, "contact_save_failed", "Could not save contact")
 }
@@ -243,8 +255,109 @@ func (m Module) updateContact(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if patch.Source != nil {
+		if err := m.ensureContactSource(r.Context(), scope, *patch.Source); err != nil {
+			writeError(w, http.StatusInternalServerError, "contact_source_save_failed", "Could not save contact source")
+			return
+		}
+	}
 	updated, err := m.store.UpdateContact(r.Context(), scope, r.PathValue("id"), patch)
 	respondUpdated(w, updated, err, "contact_not_found", "Contact not found", "contact_save_failed", "Could not save contact")
+}
+
+func (m Module) listContactSources(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	items, err := m.store.ListContactSources(r.Context(), scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "contact_sources_load_failed", "Could not load contact sources")
+		return
+	}
+	items = mergeDefaultContactSources(items)
+	page, err := pagination.Parse(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_page", err.Error())
+		return
+	}
+	metadata, err := pagination.Apply(&items, page, pagination.Spec{Key: "workspace.contact-sources", OrderBy: "name", Direction: pagination.Ascending, ValueKind: pagination.StringValue})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_page", "Pagination cursor is invalid")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sources": items, "page": metadata})
+}
+
+func (m Module) createContactSource(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	var item ContactSource
+	if !decodeJSON(w, r, &item) {
+		return
+	}
+	item.Name = strings.TrimSpace(item.Name)
+	if item.Name == "" || len(item.Name) > 80 {
+		writeError(w, http.StatusBadRequest, "invalid_contact_source", "Source name must be between 1 and 80 characters")
+		return
+	}
+	existing, err := m.store.ListContactSources(r.Context(), scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "contact_source_save_failed", "Could not save contact source")
+		return
+	}
+	for _, source := range mergeDefaultContactSources(existing) {
+		if strings.EqualFold(source.Name, item.Name) {
+			writeJSON(w, http.StatusOK, source)
+			return
+		}
+	}
+	created, err := m.store.CreateContactSource(r.Context(), scope, item)
+	respondCreated(w, created, err, "contact_source_save_failed", "Could not save contact source")
+}
+
+func mergeDefaultContactSources(custom []ContactSource) []ContactSource {
+	createdAt := time.Unix(0, 0).UTC()
+	items := []ContactSource{
+		{ID: "event", Name: "Event", CreatedAt: createdAt, UpdatedAt: createdAt},
+		{ID: "outbound", Name: "Outbound", CreatedAt: createdAt, UpdatedAt: createdAt},
+		{ID: "referral", Name: "Referral", CreatedAt: createdAt, UpdatedAt: createdAt},
+		{ID: "social-media", Name: "Social media", CreatedAt: createdAt, UpdatedAt: createdAt},
+		{ID: "website", Name: "Website", CreatedAt: createdAt, UpdatedAt: createdAt},
+	}
+	for _, source := range custom {
+		duplicate := false
+		for _, current := range items {
+			if strings.EqualFold(current.Name, source.Name) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			items = append(items, source)
+		}
+	}
+	return items
+}
+
+func (m Module) ensureContactSource(ctx context.Context, scope, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	items, err := m.store.ListContactSources(ctx, scope)
+	if err != nil {
+		return err
+	}
+	for _, source := range mergeDefaultContactSources(items) {
+		if strings.EqualFold(source.Name, name) {
+			return nil
+		}
+	}
+	_, err = m.store.CreateContactSource(ctx, scope, ContactSource{Name: name})
+	return err
 }
 
 func (m Module) listOpportunities(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +434,21 @@ func (m Module) updateOpportunity(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := m.store.UpdateOpportunity(r.Context(), scope, r.PathValue("id"), patch)
 	respondUpdated(w, updated, err, "opportunity_not_found", "Opportunity not found", "opportunity_save_failed", "Could not save opportunity")
+}
+
+func (m Module) deleteOpportunity(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	if err := m.store.DeleteOpportunity(r.Context(), scope, r.PathValue("id")); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "opportunity_not_found", "Opportunity not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "opportunity_delete_failed", "Could not delete opportunity")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m Module) resolveOpportunityLinks(ctx context.Context, scope string, item *Opportunity) string {
@@ -496,6 +624,21 @@ func (m Module) updateDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := m.store.UpdateDocument(r.Context(), scope, r.PathValue("id"), patch)
 	respondUpdated(w, updated, err, "document_not_found", "Document not found", "document_save_failed", "Could not save document")
+}
+
+func (m Module) deleteDocument(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	if err := m.store.DeleteDocument(r.Context(), scope, r.PathValue("id")); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "document_not_found", "Document not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "document_delete_failed", "Could not delete document")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m Module) documentRevisions(w http.ResponseWriter, r *http.Request) {

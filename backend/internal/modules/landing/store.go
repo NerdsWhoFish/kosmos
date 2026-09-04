@@ -10,6 +10,8 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type Button struct {
@@ -24,7 +26,11 @@ type Button struct {
 type Store interface {
 	ListButtons(context.Context, string) ([]Button, error)
 	CreateButton(context.Context, string, Button) (Button, error)
+	UpdateButton(context.Context, string, string, Button) (Button, error)
+	DeleteButton(context.Context, string, string) error
 }
+
+var errNotFound = errors.New("shortcut not found")
 
 type MemoryStore struct {
 	mu      sync.Mutex
@@ -60,6 +66,33 @@ func (s *MemoryStore) CreateButton(_ context.Context, owner string, button Butto
 	button.CreatedAt = time.Now().UTC()
 	s.buttons[owner] = append(s.buttons[owner], button)
 	return button, nil
+}
+
+func (s *MemoryStore) UpdateButton(_ context.Context, owner, id string, button Button) (Button, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.buttons[owner] {
+		if s.buttons[owner][index].ID != id {
+			continue
+		}
+		button.CreatedAt = s.buttons[owner][index].CreatedAt
+		s.buttons[owner][index] = button
+		return button, nil
+	}
+	return Button{}, errNotFound
+}
+
+func (s *MemoryStore) DeleteButton(_ context.Context, owner, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for index := range s.buttons[owner] {
+		if s.buttons[owner][index].ID != id {
+			continue
+		}
+		s.buttons[owner] = append(s.buttons[owner][:index], s.buttons[owner][index+1:]...)
+		return nil
+	}
+	return errNotFound
 }
 
 type FirestoreStore struct {
@@ -114,6 +147,37 @@ func (s *FirestoreStore) CreateButton(ctx context.Context, owner string, button 
 		return Button{}, err
 	}
 	return button, nil
+}
+
+func (s *FirestoreStore) UpdateButton(ctx context.Context, owner, id string, button Button) (Button, error) {
+	document := s.collection(owner).Doc(id)
+	snapshot, err := document.Get(ctx)
+	if status.Code(err) == codes.NotFound {
+		return Button{}, errNotFound
+	}
+	if err != nil {
+		return Button{}, err
+	}
+	var current Button
+	if err := snapshot.DataTo(&current); err != nil {
+		return Button{}, err
+	}
+	button.CreatedAt = current.CreatedAt
+	if _, err := document.Set(ctx, button); err != nil {
+		return Button{}, err
+	}
+	return button, nil
+}
+
+func (s *FirestoreStore) DeleteButton(ctx context.Context, owner, id string) error {
+	document := s.collection(owner).Doc(id)
+	if _, err := document.Get(ctx); status.Code(err) == codes.NotFound {
+		return errNotFound
+	} else if err != nil {
+		return err
+	}
+	_, err := document.Delete(ctx)
+	return err
 }
 
 func (s *FirestoreStore) collection(owner string) *firestore.CollectionRef {

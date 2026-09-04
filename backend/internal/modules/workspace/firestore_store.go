@@ -111,6 +111,24 @@ func updateRecord[T any](ctx context.Context, store *FirestoreStore, scope, coll
 	return getRecord(ctx, store, scope, collection, id, assignID)
 }
 
+func deleteRecord(ctx context.Context, store *FirestoreStore, scope, collection, id string) error {
+	ctx, span := otel.Tracer("github.com/NerdsWhoFish/kosmos/workspace").Start(ctx, "firestore.delete")
+	span.SetAttributes(attribute.String("db.collection.name", collection))
+	defer span.End()
+	document := store.collection(scope, collection).Doc(id)
+	if _, err := document.Get(ctx); status.Code(err) == codes.NotFound {
+		return errNotFound
+	} else if err != nil {
+		span.RecordError(err)
+		return err
+	}
+	if _, err := document.Delete(ctx); err != nil {
+		span.RecordError(err)
+		return err
+	}
+	return nil
+}
+
 func (s *FirestoreStore) ListAccounts(ctx context.Context, scope string) ([]Account, error) {
 	return listRecords(ctx, s, scope, "accounts", "updatedAt", firestore.Desc, func(item *Account, id string) { item.ID = id })
 }
@@ -290,6 +308,16 @@ func (s *FirestoreStore) UpdateContact(ctx context.Context, scope, id string, pa
 	return updateRecord(ctx, s, scope, "contacts", id, updates, func(item *Contact, id string) { item.ID = id })
 }
 
+func (s *FirestoreStore) ListContactSources(ctx context.Context, scope string) ([]ContactSource, error) {
+	return listRecords(ctx, s, scope, "contactSources", "name", firestore.Asc, func(item *ContactSource, id string) { item.ID = id })
+}
+
+func (s *FirestoreStore) CreateContactSource(ctx context.Context, scope string, item ContactSource) (ContactSource, error) {
+	return createRecord(ctx, s, scope, "contactSources", item, func(item *ContactSource, id string, now time.Time) {
+		item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
+	})
+}
+
 func (s *FirestoreStore) ListOpportunities(ctx context.Context, scope string) ([]Opportunity, error) {
 	return listRecords(ctx, s, scope, "opportunities", "updatedAt", firestore.Desc, func(item *Opportunity, id string) { item.ID = id })
 }
@@ -322,6 +350,10 @@ func (s *FirestoreStore) UpdateOpportunity(ctx context.Context, scope, id string
 	appendStringUpdate("closeDate", patch.CloseDate)
 	appendStringUpdate("ownerEmail", patch.OwnerEmail)
 	return updateRecord(ctx, s, scope, "opportunities", id, updates, func(item *Opportunity, id string) { item.ID = id })
+}
+
+func (s *FirestoreStore) DeleteOpportunity(ctx context.Context, scope, id string) error {
+	return deleteRecord(ctx, s, scope, "opportunities", id)
 }
 
 func (s *FirestoreStore) ListActivities(ctx context.Context, scope string) ([]Activity, error) {
@@ -379,6 +411,31 @@ func (s *FirestoreStore) UpdateDocument(ctx context.Context, scope, id string, p
 	}
 	updates = append(updates, firestore.Update{Path: "revision", Value: firestore.Increment(1)})
 	return updateRecord(ctx, s, scope, "documents", id, updates, func(item *Document, id string) { item.ID = id })
+}
+
+func (s *FirestoreStore) DeleteDocument(ctx context.Context, scope, id string) error {
+	document := s.collection(scope, "documents").Doc(id)
+	if _, err := document.Get(ctx); status.Code(err) == codes.NotFound {
+		return errNotFound
+	} else if err != nil {
+		return err
+	}
+	batch := s.client.Batch()
+	batch.Delete(document)
+	iter := s.collection(scope, "documentRevisions").Where("documentId", "==", id).Documents(ctx)
+	defer iter.Stop()
+	for {
+		revision, err := iter.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		batch.Delete(revision.Ref)
+	}
+	_, err := batch.Commit(ctx)
+	return err
 }
 
 func (s *FirestoreStore) ListDocumentRevisions(ctx context.Context, scope, documentID string) ([]DocumentRevision, error) {

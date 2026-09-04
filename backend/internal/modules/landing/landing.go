@@ -2,6 +2,7 @@ package landing
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -36,6 +37,8 @@ func (Module) Manifest() platformmodules.Manifest {
 func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/landing", m.landing)
 	mux.HandleFunc("POST /api/v1/landing/buttons", m.createButton)
+	mux.HandleFunc("PATCH /api/v1/landing/buttons/{id}", m.updateButton)
+	mux.HandleFunc("DELETE /api/v1/landing/buttons/{id}", m.deleteButton)
 }
 
 type landingResponse struct {
@@ -96,6 +99,62 @@ func (m Module) createButton(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+func (m Module) updateButton(w http.ResponseWriter, r *http.Request) {
+	owner, ok := m.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	if m.manager != nil && m.manager(r) != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "owner or administrator access required"})
+		return
+	}
+	var button Button
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&button); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid shortcut"})
+		return
+	}
+	button.ID = r.PathValue("id")
+	button.Label = strings.TrimSpace(button.Label)
+	button.Description = strings.TrimSpace(button.Description)
+	button.Href = strings.TrimSpace(button.Href)
+	button.Icon = "globe"
+	if err := validateButton(button); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	updated, err := m.store.UpdateButton(r.Context(), owner, button.ID, button)
+	if errors.Is(err, errNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "shortcut not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not save shortcut"})
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (m Module) deleteButton(w http.ResponseWriter, r *http.Request) {
+	owner, ok := m.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	if m.manager != nil && m.manager(r) != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "owner or administrator access required"})
+		return
+	}
+	if err := m.store.DeleteButton(r.Context(), owner, r.PathValue("id")); errors.Is(err, errNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "shortcut not found"})
+		return
+	} else if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not delete shortcut"})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m Module) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {

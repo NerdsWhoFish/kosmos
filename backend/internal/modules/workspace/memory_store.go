@@ -16,6 +16,7 @@ import (
 type memoryWorkspace struct {
 	accounts          []Account
 	contacts          []Contact
+	contactSources    []ContactSource
 	opportunities     []Opportunity
 	activities        []Activity
 	reminders         []Reminder
@@ -173,6 +174,8 @@ func (s *MemoryStore) ListPage(ctx context.Context, scope, collection string, re
 		source, err = s.ListAccounts(ctx, scope)
 	case "contacts":
 		source, err = s.ListContacts(ctx, scope)
+	case "contactSources":
+		source, err = s.ListContactSources(ctx, scope)
 	case "opportunities":
 		source, err = s.ListOpportunities(ctx, scope)
 	case "activities":
@@ -217,6 +220,26 @@ func (s *MemoryStore) GetContact(_ context.Context, scope, id string) (Contact, 
 		}
 	}
 	return Contact{}, errNotFound
+}
+
+func (s *MemoryStore) ListContactSources(_ context.Context, scope string) ([]ContactSource, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]ContactSource(nil), s.workspace(scope).contactSources...), nil
+}
+
+func (s *MemoryStore) CreateContactSource(_ context.Context, scope string, item ContactSource) (ContactSource, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, err := newID()
+	if err != nil {
+		return ContactSource{}, err
+	}
+	now := time.Now().UTC()
+	item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
+	workspace := s.workspace(scope)
+	workspace.contactSources = append(workspace.contactSources, item)
+	return item, nil
 }
 
 func (s *MemoryStore) CreateContact(_ context.Context, scope string, item Contact) (Contact, error) {
@@ -296,6 +319,20 @@ func (s *MemoryStore) UpdateOpportunity(_ context.Context, scope, id string, pat
 		return workspace.opportunities[index], nil
 	}
 	return Opportunity{}, errNotFound
+}
+
+func (s *MemoryStore) DeleteOpportunity(_ context.Context, scope, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspace(scope)
+	for index := range workspace.opportunities {
+		if workspace.opportunities[index].ID != id {
+			continue
+		}
+		workspace.opportunities = append(workspace.opportunities[:index], workspace.opportunities[index+1:]...)
+		return nil
+	}
+	return errNotFound
 }
 
 func (s *MemoryStore) ListActivities(_ context.Context, scope string) ([]Activity, error) {
@@ -423,6 +460,32 @@ func (s *MemoryStore) UpdateDocument(_ context.Context, scope, id string, patch 
 		return workspace.documents[index], nil
 	}
 	return Document{}, errNotFound
+}
+
+func (s *MemoryStore) DeleteDocument(_ context.Context, scope, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspace(scope)
+	found := false
+	for index := range workspace.documents {
+		if workspace.documents[index].ID != id {
+			continue
+		}
+		workspace.documents = append(workspace.documents[:index], workspace.documents[index+1:]...)
+		found = true
+		break
+	}
+	if !found {
+		return errNotFound
+	}
+	kept := workspace.documentRevisions[:0]
+	for _, revision := range workspace.documentRevisions {
+		if revision.DocumentID != id {
+			kept = append(kept, revision)
+		}
+	}
+	workspace.documentRevisions = kept
+	return nil
 }
 
 func (s *MemoryStore) ListCosts(_ context.Context, scope string) ([]Cost, error) {

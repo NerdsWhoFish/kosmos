@@ -144,6 +144,37 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /landing/buttons/{id}:
+    parameters:
+      - $ref: '#/components/parameters/RecordID'
+    patch:
+      operationId: updateLandingButton
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ButtonInput'
+      responses:
+        '200':
+          description: Shortcut updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Button'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteLandingButton
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Shortcut deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
   /notifications:
     get:
       operationId: listNotifications
@@ -191,6 +222,46 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /contact-sources:
+    get:
+      operationId: listContactSources
+      responses:
+        '200':
+          description: Organization-wide contact source choices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContactSource'
+    post:
+      operationId: createContactSource
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+      responses:
+        '201':
+          description: Contact source created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactSource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
   /leads:
     get:
       operationId: listLeads
@@ -367,6 +438,16 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteOpportunity
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Opportunity deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
   /activities:
     get:
       operationId: listActivities
@@ -525,6 +606,16 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteDocument
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Document and its revision history deleted
         '404':
           $ref: '#/components/responses/NotFound'
   /documents/{id}/revisions:
@@ -1023,7 +1114,7 @@ paths:
                   format: binary
                 kind:
                   type: string
-                  enum: [attachment, receipt]
+                  enum: [attachment, receipt, photo]
                 recordType:
                   type: string
                 recordId:
@@ -1031,6 +1122,17 @@ paths:
       responses:
         '201':
           description: Private attachment stored
+  /attachments/{id}:
+    delete:
+      operationId: deleteAttachment
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Attachment metadata and private object deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
   /attachments/{id}/download:
     get:
       operationId: downloadAttachment
@@ -1555,6 +1657,21 @@ components:
               type: string
             icon:
               type: string
+    ContactSource:
+      type: object
+      required: [id, name, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          maxLength: 100
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     Notification:
       type: object
       required: [id, title, summary, kind, createdAt, href]
@@ -2311,7 +2428,7 @@ components:
           minimum: 0
         kind:
           type: string
-          enum: [attachment, receipt]
+          enum: [attachment, receipt, photo]
         recordType:
           type: string
         recordId:
@@ -2324,6 +2441,10 @@ components:
           format: date-time
         downloadUrl:
           type: string
+          format: uri-reference
+        viewUrl:
+          type: string
+          format: uri-reference
     AuditEntry:
       type: object
       required: [id, actor, action, entityType, entityId, summary, createdAt]

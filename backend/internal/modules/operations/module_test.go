@@ -16,6 +16,7 @@ import (
 	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/workspace"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 	"golang.org/x/oauth2"
+	"google.golang.org/api/googleapi"
 )
 
 type fakeGoogle struct {
@@ -25,6 +26,7 @@ type fakeGoogle struct {
 	mailCalls   *int
 	tillerCalls *int
 	aliases     []string
+	aliasesErr  error
 	sentFrom    *string
 	mailErr     error
 	tillerErr   error
@@ -41,7 +43,7 @@ func (f fakeGoogle) Send(_ context.Context, _ *oauth2.Token, from, _, _, _ strin
 }
 
 func (f fakeGoogle) SendAsAliases(context.Context, *oauth2.Token) ([]string, error) {
-	return f.aliases, nil
+	return f.aliases, f.aliasesErr
 }
 
 func (f fakeGoogle) RecentMail(context.Context, *oauth2.Token, time.Time) ([]MailMetadata, error) {
@@ -396,6 +398,25 @@ func TestAdminMapsVerifiedGmailSendAsAlias(t *testing.T) {
 	}
 }
 
+func TestSendAsPermissionFailureRequestsReconnect(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	module.google = fakeGoogle{aliasesErr: &googleapi.Error{Code: http.StatusForbidden, Message: "insufficient authentication scopes"}}
+	members := performJSON[struct {
+		Members []Member `json:"members"`
+	}](t, mux, http.MethodGet, "/api/v1/members", "", http.StatusOK)
+	if err := module.SaveGoogleGrant(context.Background(), Identity{Email: "owner@nerdswhofish.com"}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	response := performJSON[struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}](t, mux, http.MethodPut, "/api/v1/members/"+members.Members[0].ID+"/send-as", `{"email":"hello@nerdswhofish.com"}`, http.StatusConflict)
+	if response.Error.Code != "send_as_permission_required" {
+		t.Fatalf("error code = %q", response.Error.Code)
+	}
+}
+
 func TestContactIntakeDeduplicatesAndNotifies(t *testing.T) {
 	_, mux, workspaceStore := newTestModule(t)
 	body := `{"name":"Ada Angler","email":"ada@example.com","message":"Need a website","source":"website"}`
@@ -458,10 +479,23 @@ func TestPrivateAttachmentUsesExpiringDownload(t *testing.T) {
 	if !strings.Contains(attachment.DownloadURL, "expires=") || !strings.Contains(attachment.DownloadURL, "signature=") {
 		t.Fatalf("download URL is not signed: %q", attachment.DownloadURL)
 	}
+	if !strings.Contains(attachment.ViewURL, "disposition=inline") {
+		t.Fatalf("view URL is not inline: %q", attachment.ViewURL)
+	}
 	download := httptest.NewRecorder()
 	mux.ServeHTTP(download, httptest.NewRequest(http.MethodGet, attachment.DownloadURL, nil))
 	if download.Code != http.StatusOK || download.Body.String() != "receipt" {
 		t.Fatalf("download = %d %q", download.Code, download.Body.String())
+	}
+	deleted := httptest.NewRecorder()
+	mux.ServeHTTP(deleted, httptest.NewRequest(http.MethodDelete, "/api/v1/attachments/"+attachment.ID, nil))
+	if deleted.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d: %s", deleted.Code, deleted.Body.String())
+	}
+	missing := httptest.NewRecorder()
+	mux.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, attachment.DownloadURL, nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("deleted attachment download = %d", missing.Code)
 	}
 }
 
