@@ -45,4 +45,4 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] Run backend and frontend tests for items 28 through 30, including responsive phone and desktop coverage.
 - [x] Release v0.3.2 and deploy items 28 through 30 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.6.0.
 - [x] Run backend and frontend verification for items 31 through 35 across phone, tablet, laptop, and desktop viewports.
-- [ ] Release and deploy items 31 through 35 to production with Quill's GoReleaser-then-Docker artifact flow.
+- [x] Release v0.3.3 and deploy items 31 through 35 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.6.0.
