@@ -216,6 +216,14 @@ const responses: Record<string, unknown> = {
     },
     connectUrl: "/auth/connect/workspace",
   },
+  "/api/v1/integrations/google-contacts": {
+    connected: true,
+    googleEmail: "shared.voice@gmail.com",
+    connectUrl: "/auth/connect/voice-contacts",
+    pending: 0,
+    failed: 0,
+    synced: 1,
+  },
   "/api/v1/integrations/cloudflare": { connected: false },
   "/api/v1/email/send-as": { mappings: [] },
   "/api/v1/integrations/tiller/webhook": {
@@ -329,6 +337,11 @@ function mockAPI(authenticated = true) {
         );
       if (url.pathname === "/api/v1/contacts/contact-1" && method === "PATCH")
         return Promise.resolve(json({ ...contact, ...body }));
+      if (
+        url.pathname === "/api/v1/contacts/contact-1" &&
+        method === "DELETE"
+      )
+        return Promise.resolve(new Response(null, { status: 204 }));
       if (
         url.pathname === "/api/v1/members/member-1/send-as" &&
         method === "PUT"
@@ -515,6 +528,16 @@ function mockAPI(authenticated = true) {
         return Promise.resolve(
           json({ id: "tiller-job-1", status: "accepted" }, 202),
         );
+      if (
+        url.pathname === "/api/v1/integrations/google-contacts/sync" &&
+        method === "POST"
+      )
+        return Promise.resolve(json({ status: "accepted", queued: 1 }, 202));
+      if (
+        url.pathname === "/api/v1/integrations/google-contacts" &&
+        method === "DELETE"
+      )
+        return Promise.resolve(new Response(null, { status: 204 }));
       if (url.pathname === "/api/v1/integrations/tiller" && method === "PUT")
         return Promise.resolve(
           json(
@@ -1412,6 +1435,63 @@ describe("Kosmos application", () => {
         /prod_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa · river labs/i,
       ),
     ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["desktop", 1440],
+    ["mobile", 390],
+  ])("manages the shared Google Voice contacts account on %s", async (_name, width) => {
+    window.innerWidth = width;
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Settings" }));
+    expect(
+      await screen.findByRole("heading", { name: /shared contacts connected/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("shared.voice@gmail.com")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /sync now/i }));
+    expect(
+      await screen.findByText(/1 kosmos contact queued/i),
+    ).toBeInTheDocument();
+    expect(
+      vi.mocked(fetch).mock.calls.some(
+        ([input, init]) =>
+          String(input) === "/api/v1/integrations/google-contacts/sync" &&
+          init?.method === "POST",
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["desktop", 1440],
+    ["mobile", 390],
+  ])("deletes a contact on %s", async (_name, width) => {
+    window.innerWidth = width;
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Contacts" }));
+    fireEvent.click(await screen.findByRole("button", { name: /ada angler/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+    expect(
+      await screen.findByRole("heading", { name: /delete this contact/i }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /delete contact/i }));
+    expect(
+      await screen.findByRole("heading", { name: "Contacts" }),
+    ).toBeInTheDocument();
+    expect(
+      vi.mocked(fetch).mock.calls.some(
+        ([input, init]) =>
+          String(input) === "/api/v1/contacts/contact-1" &&
+          init?.method === "DELETE",
+      ),
+    ).toBe(true);
   });
 
   it.each([

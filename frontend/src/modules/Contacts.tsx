@@ -10,6 +10,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  Trash2,
 } from "lucide-react";
 import {
   Account,
@@ -44,6 +45,7 @@ export function Contacts({
   const [selectedID, setSelectedID] = useState(initialID);
   const [creating, setCreating] = useState(openNew);
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
@@ -172,6 +174,27 @@ export function Contacts({
     }
   }
 
+  async function deleteContact() {
+    if (!selected) return;
+    setSaving(true);
+    setFormError("");
+    try {
+      await api(`/api/v1/contacts/${selected.id}`, { method: "DELETE" });
+      setContacts((current) =>
+        current.filter((contact) => contact.id !== selected.id),
+      );
+      setDeleting(false);
+      setSelectedID("");
+      navigate("/contacts");
+    } catch (reason) {
+      setFormError(
+        reason instanceof Error ? reason.message : "Could not delete contact",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function addReminder(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selected) return;
@@ -216,6 +239,7 @@ export function Contacts({
           actionError={actionError}
           onBack={() => navigate("/contacts")}
           onEdit={() => setEditing(true)}
+          onDelete={() => setDeleting(true)}
           onActivity={addActivity}
           onReminder={addReminder}
         />
@@ -234,6 +258,40 @@ export function Contacts({
               onSubmit={updateContact}
               onCancel={() => setEditing(false)}
             />
+          </Modal>
+        )}
+        {deleting && (
+          <Modal
+            eyebrow="Relationships"
+            title="Delete this contact?"
+            onClose={() => setDeleting(false)}
+          >
+            <p className="muted-copy">
+              {selected.name} will be permanently removed from Kosmos and from
+              the connected shared Google Contacts account after its queued
+              sync completes.
+            </p>
+            {formError && (
+              <p className="form-error" role="alert">
+                {formError}
+              </p>
+            )}
+            <div className="form-actions">
+              <button
+                className="secondary-button"
+                onClick={() => setDeleting(false)}
+              >
+                Keep contact
+              </button>
+              <button
+                className="danger-button"
+                onClick={deleteContact}
+                disabled={saving}
+              >
+                <Trash2 size={16} />
+                {saving ? "Deleting..." : "Delete contact"}
+              </button>
+            </div>
           </Modal>
         )}
       </>
@@ -334,6 +392,7 @@ function ContactAccount({
   actionError,
   onBack,
   onEdit,
+  onDelete,
   onActivity,
   onReminder,
 }: {
@@ -345,6 +404,7 @@ function ContactAccount({
   actionError: string;
   onBack: () => void;
   onEdit: () => void;
+  onDelete: () => void;
   onActivity: (event: FormEvent<HTMLFormElement>) => void;
   onReminder: (event: FormEvent<HTMLFormElement>) => void;
 }) {
@@ -374,12 +434,14 @@ function ContactAccount({
           <h1>{contact.name}</h1>
           <p className="subhead">{account?.name || "No account linked"}</p>
         </div>
-        <button
-          className="secondary-button account-hero-action"
-          onClick={onEdit}
-        >
-          <Pencil size={16} /> Edit
-        </button>
+        <div className="button-row account-hero-action">
+          <button className="secondary-button" onClick={onEdit}>
+            <Pencil size={16} /> Edit
+          </button>
+          <button className="danger-button" onClick={onDelete}>
+            <Trash2 size={16} /> Delete
+          </button>
+        </div>
       </header>
       {actionError && (
         <p className="form-error action-error" role="alert">

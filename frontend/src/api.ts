@@ -186,6 +186,14 @@ export type GoogleStatus = {
   connection: GoogleConnection | null;
   connectUrl: string;
 };
+export type GoogleContactsStatus = {
+  connected: boolean;
+  googleEmail: string;
+  connectUrl: string;
+  pending: number;
+  failed: number;
+  synced: number;
+};
 export type SendAsMapping = {
   id: string;
   memberId: string;

@@ -1,8 +1,10 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
+  BookUser,
   Cloud,
   KeyRound,
   Mail,
+  RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
   Unplug,
@@ -15,6 +17,7 @@ import {
   api,
   AuditEntry,
   CloudflareStatus,
+  GoogleContactsStatus,
   GoogleStatus,
   Member,
   PipelineStage,
@@ -32,6 +35,8 @@ export function Settings({ user }: { user: User }) {
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [google, setGoogle] = useState<GoogleStatus | null>(null);
+  const [googleContacts, setGoogleContacts] =
+    useState<GoogleContactsStatus | null>(null);
   const [cloudflare, setCloudflare] = useState<CloudflareStatus | null>(null);
   const [sendAsMappings, setSendAsMappings] = useState<SendAsMapping[]>([]);
   const [sendAsDrafts, setSendAsDrafts] = useState<Record<string, string>>({});
@@ -46,6 +51,7 @@ export function Settings({ user }: { user: User }) {
   const [cloudflareError, setCloudflareError] = useState("");
   const [integrationNotice, setIntegrationNotice] = useState("");
   const [savingCloudflare, setSavingCloudflare] = useState(false);
+  const [savingGoogleContacts, setSavingGoogleContacts] = useState(false);
   const [savingSendAs, setSavingSendAs] = useState("");
   const [savingTiller, setSavingTiller] = useState(false);
 
@@ -87,12 +93,16 @@ export function Settings({ user }: { user: User }) {
               .then((result) => setSendAsMappings(result.mappings ?? []))
               .catch((reason: Error) => setError(reason.message));
             void Promise.all([
+              api<GoogleContactsStatus>(
+                "/api/v1/integrations/google-contacts",
+              ),
               api<TillerWebhookStatus>("/api/v1/integrations/tiller/webhook"),
               api<{ mappings: TillerProductMapping[] }>(
                 "/api/v1/integrations/tiller/product-mappings",
               ),
             ])
-              .then(([status, mappings]) => {
+              .then(([contactsStatus, status, mappings]) => {
+                setGoogleContacts(contactsStatus);
                 setTillerWebhook(status);
                 setTillerMappings(mappings.mappings ?? []);
               })
@@ -195,6 +205,60 @@ export function Settings({ user }: { user: User }) {
       );
     } finally {
       setSavingCloudflare(false);
+    }
+  }
+
+  async function syncGoogleContacts() {
+    setSavingGoogleContacts(true);
+    setIntegrationNotice("");
+    try {
+      const result = await api<{ queued: number }>(
+        "/api/v1/integrations/google-contacts/sync",
+        { method: "POST" },
+      );
+      const status = await api<GoogleContactsStatus>(
+        "/api/v1/integrations/google-contacts",
+      );
+      setGoogleContacts(status);
+      setIntegrationNotice(
+        `${result.queued} Kosmos contact${result.queued === 1 ? "" : "s"} queued for Google Contacts sync.`,
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not synchronize Google Contacts",
+      );
+    } finally {
+      setSavingGoogleContacts(false);
+    }
+  }
+
+  async function disconnectGoogleContacts() {
+    setSavingGoogleContacts(true);
+    setIntegrationNotice("");
+    try {
+      await api("/api/v1/integrations/google-contacts", { method: "DELETE" });
+      setGoogleContacts((current) => ({
+        connected: false,
+        googleEmail: "",
+        connectUrl:
+          current?.connectUrl ?? "/auth/connect/voice-contacts",
+        pending: 0,
+        failed: current?.failed ?? 0,
+        synced: current?.synced ?? 0,
+      }));
+      setIntegrationNotice(
+        "Shared Google Contacts disconnected. Existing contacts in Google were kept.",
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not disconnect Google Contacts",
+      );
+    } finally {
+      setSavingGoogleContacts(false);
     }
   }
 
@@ -477,6 +541,68 @@ export function Settings({ user }: { user: User }) {
               );
             })}
           </div>
+        </section>
+      )}
+      {canManage && (
+        <section className="panel lower-panel integration-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Google Voice contacts</p>
+              <h2>
+                {googleContacts?.connected
+                  ? "Shared contacts connected"
+                  : "Connect the shared account"}
+              </h2>
+            </div>
+            <BookUser size={20} />
+          </div>
+          <p className="muted-copy">
+            Connect the separate Google account your team shares for Google
+            Voice. Kosmos will keep that account&apos;s Google Contacts in sync
+            when contacts are created, edited, or deleted.
+          </p>
+          {googleContacts?.connected ? (
+            <div className="integration-connected">
+              <p className="inline-notice">
+                <span className="security-dot" /> {googleContacts.googleEmail}
+                <small>
+                  {googleContacts.synced} synced · {googleContacts.pending}{" "}
+                  pending · {googleContacts.failed} failed
+                </small>
+              </p>
+              <div className="button-row">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={savingGoogleContacts}
+                  onClick={syncGoogleContacts}
+                >
+                  <RefreshCw size={16} />
+                  {savingGoogleContacts ? "Queueing..." : "Sync now"}
+                </button>
+                <a className="text-button" href={googleContacts.connectUrl}>
+                  Reconnect account
+                </a>
+                <button
+                  className="text-button"
+                  type="button"
+                  disabled={savingGoogleContacts}
+                  onClick={disconnectGoogleContacts}
+                >
+                  Disconnect
+                </button>
+              </div>
+            </div>
+          ) : (
+            <a
+              className="primary-button"
+              href={
+                googleContacts?.connectUrl ?? "/auth/connect/voice-contacts"
+              }
+            >
+              <BookUser size={16} /> Connect shared Google account
+            </a>
+          )}
         </section>
       )}
       <section className="panel lower-panel integration-panel">

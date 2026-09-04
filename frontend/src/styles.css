@@ -1680,8 +1680,9 @@ select:focus-visible {
 .account-hero > div {
   flex: 1;
 }
-.account-hero-action {
+.account-hero > .account-hero-action {
   flex: 0 0 auto;
+  margin-top: 0;
 }
 .account-status-control {
   align-items: center;
@@ -2995,6 +2996,16 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.integration-connected .inline-notice {
+  flex-wrap: wrap;
+}
+
+.integration-connected .inline-notice small {
+  flex-basis: 100%;
+  padding-left: 17px;
+  color: var(--theme-muted);
 }
 
 .success-notice {
