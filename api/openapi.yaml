@@ -323,6 +323,17 @@ paths:
       responses:
         '200':
           description: Account updated
+    delete:
+      operationId: deleteAccount
+      description: Permanently deletes the account and its linked workspace records. Documents with other links are preserved.
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Account and linked workspace records deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
   /intake/contact:
     post:
       operationId: ingestContactForm
@@ -1242,9 +1253,32 @@ paths:
           in: query
           schema:
             type: string
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [call, message]
       responses:
         '200':
-          description: Google Voice, native call, and native SMS links
+          description: Shared-account Google Voice, native call, and native SMS links
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [googleVoiceUrl, googleAccount, callUrl, smsUrl]
+                properties:
+                  googleVoiceUrl:
+                    type: string
+                    format: uri
+                  googleAccount:
+                    type: string
+                    format: email
+                  callUrl:
+                    type: string
+                  smsUrl:
+                    type: string
+        '409':
+          description: Shared Google Voice account is not connected
   /jobs/schedule:
     post:
       operationId: scheduleIntegrationJobs
