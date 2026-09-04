@@ -38,6 +38,11 @@ output "runtime_service_account" {
   description = "Cloud Run runtime service account."
 }
 
+output "worker_service_account" {
+  value       = google_service_account.worker.email
+  description = "Dedicated private job worker service account."
+}
+
 output "firestore_database" {
   value       = google_firestore_database.kosmos.name
   description = "Firestore database name."
@@ -75,5 +80,5 @@ output "release_image" {
 
 output "secret_ids" {
   value       = { for key, secret in google_secret_manager_secret.runtime : key => secret.secret_id }
-  description = "Secret Manager containers whose payloads are populated outside Git."
+  description = "Secret Manager containers. The integration key is written through an ephemeral module input; other payloads are populated outside Git."
 }

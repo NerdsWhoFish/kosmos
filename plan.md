@@ -157,8 +157,8 @@ The OpenTofu stack provisions, per environment:
 - project APIs and required service enablement
 - Artifact Registry repository for immutable Kosmos images
 - Cloud Run service with minimum instances set to zero by default
-- dedicated runtime service account with least-privilege roles
-- Secret Manager secrets and version references for OAuth, session signing, database, storage, Tiller, and telemetry credentials
+- dedicated web and private-worker service accounts with least-privilege roles
+- Secret Manager secrets and version references for OAuth, separate session and integration signing, and telemetry credentials
 - Cloud Storage bucket for attachments and receipts, with uniform bucket-level access, retention, lifecycle rules, and public access prevention
 - Firestore Native mode database, indexes, backup policy, and retention configuration for the near-free default
 - Cloud Tasks or Pub/Sub for retries and work that cannot depend on a live request
@@ -166,7 +166,7 @@ The OpenTofu stack provisions, per environment:
 - Artifact deploy policy, revision labels, startup/readiness configuration, and rollback-safe traffic management
 - log-based metrics, uptime checks, alert policies, and notification channels
 
-The environment module provisions the Cloud Run application boundary, Artifact Registry, runtime and release identities, required APIs, secret containers and access bindings, Firestore, private attachment storage, budget controls, and public invocation policy. Queue, Cloudflare, and Grafana resources join this same application boundary when those capabilities are implemented. Keeping one tested environment topology prevents deployment roots from rebuilding application-specific wiring or drifting away from the near-free defaults.
+The environment module provisions the Cloud Run web and private-worker boundary, Artifact Registry, runtime and release identities, required APIs, Secret Manager integration, Firestore and its pagination indexes, private attachment storage, Cloud Tasks, Cloud Scheduler, budget controls, public invocation policy, Grafana dashboards, and alert rules. The configurations repository manages the Cloudflare Worker route alongside the environment consumer. Keeping one tested environment topology prevents deployment roots from rebuilding application-specific wiring or drifting away from the near-free defaults.
 
 Cloud Run is stateless. Background work uses a queue because scale-to-zero instances do not run continuously. The web service must not depend on local disk for user data.
 

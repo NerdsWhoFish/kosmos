@@ -152,19 +152,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Notification feed
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [notifications, page]
-                properties:
-                  notifications:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Notification'
-                  page:
-                    $ref: '#/components/schemas/Page'
+          $ref: '#/components/responses/NotificationList'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '400':
@@ -211,19 +199,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Contacts currently classified as leads
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [leads, page]
-                properties:
-                  leads:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Contact'
-                  page:
-                    $ref: '#/components/schemas/Page'
+          $ref: '#/components/responses/LeadList'
   /accounts:
     get:
       operationId: listAccounts
@@ -232,19 +208,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Prospect and customer accounts
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [accounts, page]
-                properties:
-                  accounts:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Account'
-                  page:
-                    $ref: '#/components/schemas/Page'
+          $ref: '#/components/responses/AccountList'
     post:
       operationId: createAccount
       parameters:
@@ -554,7 +518,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Immutable prior document revisions
+          $ref: '#/components/responses/DocumentRevisionList'
   /costs:
     get:
       operationId: listCosts
@@ -622,7 +586,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Organization members and roles
+          $ref: '#/components/responses/MemberList'
   /members/{id}:
     patch:
       operationId: updateMember
@@ -642,7 +606,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Ordered organization pipeline stages
+          $ref: '#/components/responses/PipelineStageList'
     post:
       operationId: createPipelineStage
       parameters:
@@ -693,7 +657,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Reusable outbound email templates
+          $ref: '#/components/responses/EmailTemplateList'
     post:
       operationId: createEmailTemplate
       parameters:
@@ -720,6 +684,10 @@ paths:
       responses:
         '202':
           description: Relevant inbound message metadata synchronization queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcceptedJob'
   /email/messages:
     get:
       operationId: listRelevantMail
@@ -728,7 +696,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Metadata for mail from known contacts
+          $ref: '#/components/responses/MailMetadataList'
   /integrations/google:
     get:
       operationId: getGoogleConnection
@@ -752,6 +720,10 @@ paths:
       responses:
         '202':
           description: Idempotent Tiller import queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcceptedJob'
   /transactions:
     get:
       operationId: listTransactions
@@ -760,7 +732,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Imported transactions and match states
+          $ref: '#/components/responses/TransactionList'
   /transactions/{id}:
     patch:
       operationId: reviewTransactionMatch
@@ -778,7 +750,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Private attachment metadata with expiring download links
+          $ref: '#/components/responses/AttachmentList'
     post:
       operationId: uploadAttachment
       parameters:
@@ -830,7 +802,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Security-sensitive and externally visible changes
+          $ref: '#/components/responses/AuditEntryList'
   /exports/{kind}:
     get:
       operationId: exportRecords
@@ -961,6 +933,20 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    NotificationList:
+      description: Notification feed
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [notifications, page]
+            properties:
+              notifications:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+              page:
+                $ref: '#/components/schemas/Page'
     ContactList:
       description: Contacts
       content:
@@ -973,6 +959,34 @@ components:
                 type: array
                 items:
                   $ref: '#/components/schemas/Contact'
+              page:
+                $ref: '#/components/schemas/Page'
+    LeadList:
+      description: Contacts currently classified as leads
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [leads, page]
+            properties:
+              leads:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Contact'
+              page:
+                $ref: '#/components/schemas/Page'
+    AccountList:
+      description: Prospect and customer accounts
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [accounts, page]
+            properties:
+              accounts:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Account'
               page:
                 $ref: '#/components/schemas/Page'
     OpportunityList:
@@ -1045,6 +1059,118 @@ components:
                   $ref: '#/components/schemas/Cost'
               page:
                 $ref: '#/components/schemas/Page'
+    DocumentRevisionList:
+      description: Immutable prior document revisions
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [revisions, page]
+            properties:
+              revisions:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DocumentRevision'
+              page:
+                $ref: '#/components/schemas/Page'
+    MemberList:
+      description: Organization members and roles
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [members, page]
+            properties:
+              members:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Member'
+              page:
+                $ref: '#/components/schemas/Page'
+    PipelineStageList:
+      description: Ordered organization pipeline stages
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [stages, page]
+            properties:
+              stages:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PipelineStage'
+              page:
+                $ref: '#/components/schemas/Page'
+    EmailTemplateList:
+      description: Reusable outbound email templates
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [templates, page]
+            properties:
+              templates:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EmailTemplate'
+              page:
+                $ref: '#/components/schemas/Page'
+    MailMetadataList:
+      description: Metadata for mail from known contacts
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [messages, page]
+            properties:
+              messages:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MailMetadata'
+              page:
+                $ref: '#/components/schemas/Page'
+    TransactionList:
+      description: Imported transactions and match states
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [transactions, page]
+            properties:
+              transactions:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Transaction'
+              page:
+                $ref: '#/components/schemas/Page'
+    AttachmentList:
+      description: Private attachment metadata with expiring download links
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [attachments, page]
+            properties:
+              attachments:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Attachment'
+              page:
+                $ref: '#/components/schemas/Page'
+    AuditEntryList:
+      description: Security-sensitive and externally visible changes
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [entries, page]
+            properties:
+              entries:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEntry'
+              page:
+                $ref: '#/components/schemas/Page'
   schemas:
     Page:
       type: object
@@ -1056,6 +1182,17 @@ components:
           maximum: 100
         nextCursor:
           type: string
+    AcceptedJob:
+      type: object
+      additionalProperties: false
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          const: accepted
     IntegrationJob:
       type: object
       required: [id, type, scope, connectionId]
@@ -1180,6 +1317,9 @@ components:
           format: date-time
         href:
           type: string
+        readAt:
+          type: string
+          format: date-time
     Landing:
       type: object
       required: [buttons, notifications]
@@ -1420,6 +1560,28 @@ components:
             revision:
               type: integer
               minimum: 1
+    DocumentRevision:
+      type: object
+      required: [id, documentId, title, body, links, revision, createdAt]
+      properties:
+        id:
+          type: string
+        documentId:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecordLink'
+        revision:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
     RecordLink:
       type: object
       required: [type, id]
@@ -1504,6 +1666,177 @@ components:
         reviewState:
           type: string
           enum: [ready, review, complete]
+    Member:
+      type: object
+      required: [id, email, name, role, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [owner, admin, member, viewer]
+        status:
+          type: string
+          enum: [active, disabled]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    PipelineStage:
+      type: object
+      required: [id, name, position, probability, closed, won, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          maxLength: 80
+        position:
+          type: integer
+          minimum: 0
+        probability:
+          type: integer
+          minimum: 0
+          maximum: 100
+        closed:
+          type: boolean
+        won:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    EmailTemplate:
+      type: object
+      required: [id, name, subject, body, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+          maxLength: 100000
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    MailMetadata:
+      type: object
+      required: [id, from, subject, snippet, receivedAt, threadId, createdAt]
+      properties:
+        id:
+          type: string
+        from:
+          type: string
+        subject:
+          type: string
+        snippet:
+          type: string
+        receivedAt:
+          type: string
+          format: date-time
+        contactId:
+          type: string
+        threadId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    Transaction:
+      type: object
+      required: [id, externalId, date, description, merchant, amountCents, source, matchStatus, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        externalId:
+          type: string
+        date:
+          type: string
+          format: date
+        description:
+          type: string
+        merchant:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+        source:
+          type: string
+        matchStatus:
+          type: string
+          enum: [matched, review, ignored]
+        contactId:
+          type: string
+        costId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Attachment:
+      type: object
+      required: [id, fileName, contentType, size, kind, recordType, recordId, createdBy, createdAt]
+      properties:
+        id:
+          type: string
+        fileName:
+          type: string
+        contentType:
+          type: string
+        size:
+          type: integer
+          format: int64
+          minimum: 0
+        kind:
+          type: string
+          enum: [attachment, receipt]
+        recordType:
+          type: string
+        recordId:
+          type: string
+        createdBy:
+          type: string
+          format: email
+        createdAt:
+          type: string
+          format: date-time
+        downloadUrl:
+          type: string
+    AuditEntry:
+      type: object
+      required: [id, actor, action, entityType, entityId, summary, createdAt]
+      properties:
+        id:
+          type: string
+        actor:
+          type: string
+        action:
+          type: string
+        entityType:
+          type: string
+        entityId:
+          type: string
+        summary:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
     Summary:
       type: object
       required: [contacts, openOpportunities, pipelineAmountCents, followUpsDue, currentMonthCostCents, recentActivities]

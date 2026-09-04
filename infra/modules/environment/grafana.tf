@@ -102,7 +102,7 @@ resource "grafana_dashboard" "kosmos" {
             uid  = var.grafana_logs_datasource_uid
           }
           editorMode   = "code"
-          expr         = "quantile_over_time(0.95, {service_name=\"kosmos\"} | http_route != \"\" | unwrap duration_ms [$__interval])"
+          expr         = "quantile_over_time(0.95, {service_name=\"kosmos\"} | http_route != \"\" | unwrap duration_ms [$__interval]) by ()"
           legendFormat = "p95"
           queryType    = "range"
           refId        = "A"
@@ -156,7 +156,7 @@ resource "grafana_dashboard" "kosmos" {
             uid  = var.grafana_logs_datasource_uid
           }
           editorMode = "code"
-          expr       = "sum(count_over_time({service_name=\"kosmos\", detected_level=\"error\"}[$__range]))"
+          expr       = "sum(count_over_time({service_name=\"kosmos\"} | detected_level=\"error\" [$__range]))"
           queryType  = "instant"
           refId      = "A"
         }]
@@ -226,7 +226,7 @@ resource "grafana_dashboard" "kosmos" {
             uid  = var.grafana_logs_datasource_uid
           }
           editorMode = "code"
-          expr       = "{service_name=\"kosmos\", detected_level=\"error\"}"
+          expr       = "{service_name=\"kosmos\"} | detected_level=\"error\""
           queryType  = "range"
           refId      = "A"
         }]
@@ -261,7 +261,7 @@ resource "grafana_dashboard" "kosmos" {
             uid  = var.grafana_logs_datasource_uid
           }
           editorMode = "code"
-          expr       = "{app_id=\"902\"} | detected_level=\"error\""
+          expr       = "{app_id=\"${var.grafana_faro_app_id}\"} | detected_level=\"error\""
           queryType  = "range"
           refId      = "A"
         }]
@@ -328,7 +328,7 @@ resource "grafana_rule_group" "kosmos" {
           uid  = var.grafana_logs_datasource_uid
         }
         editorMode    = "code"
-        expr          = "sum(count_over_time({app_id=\"902\", detected_level=\"error\"}[5m]))"
+        expr          = "sum(count_over_time({app_id=\"${var.grafana_faro_app_id}\"} | detected_level=\"error\" [5m]))"
         intervalMs    = 1000
         maxDataPoints = 43200
         queryType     = "range"

@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { ExternalLink, Mail, MessageSquareText, Plus, RefreshCw, Send } from 'lucide-react'
-import { api, Contact, EmailTemplate, GoogleStatus, MailMessage, Notification, shortDate } from '../api'
+import { AcceptedJob, api, Contact, EmailTemplate, GoogleStatus, MailMessage, Notification, shortDate } from '../api'
 import { Modal } from '../components/Modal'
 import { Page } from '../components/Page'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
@@ -15,6 +15,7 @@ export function Communications() {
   const [notice, setNotice] = useState('')
   const [templateOpen, setTemplateOpen] = useState(false)
   const [sending, setSending] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [phone, setPhone] = useState('')
 	const [contacts, setContacts] = useState<Contact[]>([])
 	const [draft, setDraft] = useState({ to: '', subject: '', body: '' })
@@ -59,13 +60,15 @@ export function Communications() {
   }
 
   async function syncMail() {
-    setNotice('Checking Gmail for customer replies...')
+    setSyncing(true)
+    setNotice('Queueing a Gmail check...')
     try {
-      const result = await api<{ newMessages: number }>('/api/v1/email/sync', { method: 'POST' })
-      setNotice(result.newMessages ? `${result.newMessages} new customer email${result.newMessages === 1 ? '' : 's'} found.` : 'No new customer email found.')
-      load()
+      await api<AcceptedJob>('/api/v1/email/sync', { method: 'POST' })
+      setNotice('Gmail check queued. New customer replies will appear here and in notifications when it finishes.')
     } catch (reason) {
       setNotice(reason instanceof Error ? reason.message : 'Could not sync Gmail')
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -94,7 +97,7 @@ export function Communications() {
 
   return <Page eyebrow="Conversations" title="Communications" detail="Send intentional emails, notice customer replies, and jump into Google Voice without turning Kosmos into another inbox.">
     {!status?.connected && <section className="tip-banner integration-banner"><span className="tip-icon"><Mail size={20} /></span><span><strong>Connect Google Workspace</strong><small>Grant Gmail compose and metadata access plus read-only Tiller sheet access. Kosmos never stores message bodies from your inbox.</small></span><a className="banner-button" href={status?.connectUrl ?? '/auth/connect/workspace'}>Connect Google <ExternalLink size={15} /></a></section>}
-    {status?.connected && <div className="status-strip"><span className="security-dot" /><strong>{status.connection?.googleEmail}</strong> is connected <button className="text-button" onClick={syncMail}><RefreshCw size={15} /> Check for replies</button></div>}
+    {status?.connected && <div className="status-strip"><span className="security-dot" /><strong>{status.connection?.googleEmail}</strong> is connected <button className="text-button" onClick={syncMail} disabled={syncing}><RefreshCw size={15} /> {syncing ? 'Queueing...' : 'Check for replies'}</button></div>}
     {notice && <p className="inline-notice" role="status">{notice}</p>}
     <section className="split-grid">
       <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Outbound</p><h2>Send one good email</h2></div><button className="text-button" onClick={() => setTemplateOpen(true)}><Plus size={15} /> Template</button></div>

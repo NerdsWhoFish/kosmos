@@ -63,6 +63,29 @@ variable "image_digest" {
   }
 }
 
+variable "integration_secret_value" {
+  description = "Encryption and signing key for provider tokens and attachment links. Supplied write-only and never persisted in state."
+  type        = string
+  sensitive   = true
+  ephemeral   = true
+
+  validation {
+    condition     = length(var.integration_secret_value) >= 32
+    error_message = "integration_secret_value must contain at least 32 characters."
+  }
+}
+
+variable "integration_secret_version" {
+  description = "Monotonic write-only version used to rotate the integration secret."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.integration_secret_version >= 1 && floor(var.integration_secret_version) == var.integration_secret_version
+    error_message = "integration_secret_version must be a positive integer."
+  }
+}
+
 variable "service_name" {
   description = "Cloud Run service name."
   type        = string
@@ -276,6 +299,18 @@ variable "manage_grafana" {
   description = "Manage the Kosmos Grafana dashboard and application alert rules."
   type        = bool
   default     = false
+}
+
+variable "grafana_faro_app_id" {
+  description = "Grafana Frontend Observability application ID used by dashboards and alert rules."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = !var.manage_grafana || (var.grafana_faro_app_id != null && can(regex("^[0-9]+$", var.grafana_faro_app_id)))
+    error_message = "grafana_faro_app_id must be a numeric application ID when manage_grafana is enabled."
+  }
 }
 
 variable "grafana_logs_datasource_uid" {

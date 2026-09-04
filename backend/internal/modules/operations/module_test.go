@@ -8,11 +8,13 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/workspace"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 	"golang.org/x/oauth2"
 )
 
@@ -128,6 +130,93 @@ func TestGoogleMailAndTillerFlow(t *testing.T) {
 	}](t, mux, http.MethodGet, "/api/v1/transactions", "", http.StatusOK)
 	if len(transactions.Transactions) != 1 || transactions.Transactions[0].MatchStatus != "matched" {
 		t.Fatalf("unexpected transactions: %#v", transactions.Transactions)
+	}
+}
+
+func TestGoogleConnectionSecretMigration(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	legacyKey := []byte("legacy-secret-0123456789abcdef0123")
+	currentKey := []byte("current-secret-0123456789abcdef012")
+	legacy := NewModule(store, NewMemoryBlobStore(), workspace.NewMemoryStore(), nil, "nerds-who-fish", legacyKey, fakeGoogle{})
+	if err := legacy.SaveGoogleGrant(ctx, Identity{Email: "owner@nerdswhofish.com"}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh"}); err != nil {
+		t.Fatal(err)
+	}
+	current := NewModule(store, NewMemoryBlobStore(), workspace.NewMemoryStore(), nil, "nerds-who-fish", currentKey, fakeGoogle{})
+	migrated, err := current.MigrateGoogleConnectionSecrets(ctx, legacyKey)
+	if err != nil || migrated != 1 {
+		t.Fatalf("migration = %d, %v", migrated, err)
+	}
+	if _, _, err := current.connectionToken(ctx, "nerds-who-fish", "owner@nerdswhofish.com"); err != nil {
+		t.Fatalf("open migrated token: %v", err)
+	}
+	migrated, err = current.MigrateGoogleConnectionSecrets(ctx, legacyKey)
+	if err != nil || migrated != 0 {
+		t.Fatalf("repeat migration = %d, %v", migrated, err)
+	}
+}
+
+func TestOverlappingIntegrationJobsCreateBusinessEffectsOnce(t *testing.T) {
+	module, _, workspaceStore := newTestModule(t)
+	ctx := context.Background()
+	if _, err := workspaceStore.CreateContact(ctx, "nerds-who-fish", workspace.Contact{Name: "Ada", Company: "River Labs", Email: "ada@example.com", Status: "lead"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.SaveGoogleGrant(ctx, Identity{Email: "owner@nerdswhofish.com"}, &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	connectionID := memberID("owner@nerdswhofish.com")
+	var connection GoogleConnection
+	if err := module.store.Get(ctx, "nerds-who-fish", "googleConnections", connectionID, &connection); err != nil {
+		t.Fatal(err)
+	}
+	connection.Tiller = &TillerSettings{SpreadsheetID: "sheet-1", Range: "Transactions!A:Z"}
+	if err := module.store.Put(ctx, "nerds-who-fish", "googleConnections", connectionID, connection); err != nil {
+		t.Fatal(err)
+	}
+
+	runTwice := func(run func(string) error) {
+		t.Helper()
+		errors := make(chan error, 2)
+		for _, jobID := range []string{"manual-job", "scheduled-job"} {
+			go func(id string) { errors <- run(id) }(jobID)
+		}
+		for range 2 {
+			if err := <-errors; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	runTwice(func(jobID string) error {
+		_, err := module.syncEmailConnection(ctx, "nerds-who-fish", connectionID, "system", jobID)
+		return err
+	})
+	runTwice(func(jobID string) error {
+		_, _, err := module.syncTillerConnection(ctx, "nerds-who-fish", connectionID, "system", jobID)
+		return err
+	})
+
+	assertCount := func(collection string, target any, want int) {
+		t.Helper()
+		if err := module.store.List(ctx, "nerds-who-fish", collection, target); err != nil {
+			t.Fatal(err)
+		}
+		value := reflect.ValueOf(target)
+		if got := value.Elem().Len(); got != want {
+			t.Fatalf("%s count = %d, want %d", collection, got, want)
+		}
+	}
+	assertCount("mailMetadata", &[]MailMetadata{}, 1)
+	assertCount("transactions", &[]Transaction{}, 1)
+	assertCount("notifications", &[]Notification{}, 2)
+	audits := []AuditEntry{}
+	assertCount("audit", &audits, 3)
+	actions := map[string]int{}
+	for _, entry := range audits {
+		actions[entry.Action]++
+	}
+	if actions["email.synced"] != 1 || actions["tiller.synced"] != 1 {
+		t.Fatalf("integration audit actions = %#v", actions)
 	}
 }
 
@@ -367,6 +456,30 @@ func TestOperationsListsArePaginated(t *testing.T) {
 		t.Fatalf("second page = %#v", second)
 	}
 	performJSON[map[string]any](t, mux, http.MethodGet, "/api/v1/members?cursor=broken", "", http.StatusBadRequest)
+}
+
+func TestOperationsListHandlersUsePagedStore(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	store := &operationsPageSpy{Store: module.store}
+	module.store = store
+	performJSON[map[string]any](t, mux, http.MethodGet, "/api/v1/members?limit=1", "", http.StatusOK)
+	if store.calls != 1 || store.collection != "members" || store.request.Limit != 1 {
+		t.Fatalf("paged store calls = %d, collection = %q, request = %#v", store.calls, store.collection, store.request)
+	}
+}
+
+type operationsPageSpy struct {
+	Store
+	calls      int
+	collection string
+	request    pagination.Request
+}
+
+func (s *operationsPageSpy) ListPage(ctx context.Context, scope, collection string, request pagination.Request, spec pagination.Spec, target any) (pagination.Metadata, error) {
+	s.calls++
+	s.collection = collection
+	s.request = request
+	return s.Store.ListPage(ctx, scope, collection, request, spec, target)
 }
 
 func performJSON[T any](t *testing.T, handler http.Handler, method, target, body string, wantStatus int) T {

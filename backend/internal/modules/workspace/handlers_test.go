@@ -2,12 +2,15 @@ package workspace
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 )
 
 func TestWorkspaceCoreFlow(t *testing.T) {
@@ -168,6 +171,34 @@ func TestWorkspaceListsRejectMalformedPagination(t *testing.T) {
 	if response.Error.Code != "invalid_pagination" || response.Error.Message != "cursor is invalid" {
 		t.Fatalf("unexpected error: %#v", response.Error)
 	}
+}
+
+func TestWorkspaceListHandlersUsePagedStore(t *testing.T) {
+	base := NewMemoryStore()
+	if _, err := base.CreateContact(context.Background(), "nerds-who-fish", Contact{Name: "Paged", Status: "lead"}); err != nil {
+		t.Fatal(err)
+	}
+	store := &workspacePageSpy{Store: base}
+	mux := http.NewServeMux()
+	NewModule(store, func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
+	performJSON[map[string]any](t, mux, http.MethodGet, "/api/v1/contacts?limit=1", "", http.StatusOK)
+	if store.calls != 1 || store.collection != "contacts" || store.request.Limit != 1 {
+		t.Fatalf("paged store calls = %d, collection = %q, request = %#v", store.calls, store.collection, store.request)
+	}
+}
+
+type workspacePageSpy struct {
+	Store
+	calls      int
+	collection string
+	request    pagination.Request
+}
+
+func (s *workspacePageSpy) ListPage(ctx context.Context, scope, collection string, request pagination.Request, spec pagination.Spec, target any) (pagination.Metadata, error) {
+	s.calls++
+	s.collection = collection
+	s.request = request
+	return s.Store.ListPage(ctx, scope, collection, request, spec, target)
 }
 
 func TestWorkspaceRejectsInvalidRecords(t *testing.T) {

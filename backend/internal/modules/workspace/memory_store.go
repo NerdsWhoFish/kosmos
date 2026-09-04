@@ -4,8 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"reflect"
 	"sync"
 	"time"
+
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 )
 
 type memoryWorkspace struct {
@@ -55,6 +59,43 @@ func (s *MemoryStore) workspace(scope string) *memoryWorkspace {
 		s.workspaces[scope] = workspace
 	}
 	return workspace
+}
+
+func (s *MemoryStore) ListPage(ctx context.Context, scope, collection string, request pagination.Request, spec pagination.Spec, target any) (pagination.Metadata, error) {
+	var source any
+	var err error
+	switch collection {
+	case "accounts":
+		source, err = s.ListAccounts(ctx, scope)
+	case "contacts":
+		source, err = s.ListContacts(ctx, scope)
+	case "opportunities":
+		source, err = s.ListOpportunities(ctx, scope)
+	case "activities":
+		source, err = s.ListActivities(ctx, scope)
+	case "reminders":
+		source, err = s.ListReminders(ctx, scope)
+	case "documents":
+		source, err = s.ListDocuments(ctx, scope)
+	case "documentRevisions":
+		s.mu.Lock()
+		source = append([]DocumentRevision(nil), s.workspace(scope).documentRevisions...)
+		s.mu.Unlock()
+	case "costs":
+		source, err = s.ListCosts(ctx, scope)
+	default:
+		return pagination.Metadata{}, errors.New("unknown workspace collection")
+	}
+	if err != nil {
+		return pagination.Metadata{}, err
+	}
+	targetValue := reflect.ValueOf(target)
+	sourceValue := reflect.ValueOf(source)
+	if targetValue.Kind() != reflect.Pointer || targetValue.Elem().Type() != sourceValue.Type() {
+		return pagination.Metadata{}, errors.New("pagination target does not match collection")
+	}
+	targetValue.Elem().Set(sourceValue)
+	return pagination.Apply(target, request, spec)
 }
 
 func (s *MemoryStore) ListContacts(_ context.Context, scope string) ([]Contact, error) {

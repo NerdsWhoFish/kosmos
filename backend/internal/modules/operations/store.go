@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"cloud.google.com/go/firestore"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/firestorepage"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 	"google.golang.org/api/iterator"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -17,6 +19,7 @@ var errAlreadyExists = errors.New("record already exists")
 
 type Store interface {
 	List(context.Context, string, string, any) error
+	ListPage(context.Context, string, string, pagination.Request, pagination.Spec, any) (pagination.Metadata, error)
 	Get(context.Context, string, string, string, any) error
 	Put(context.Context, string, string, string, any) error
 	Create(context.Context, string, string, string, any) error
@@ -49,6 +52,13 @@ func (s *MemoryStore) List(_ context.Context, scope, collection string, target a
 	}
 	targetValue.Elem().Set(items)
 	return nil
+}
+
+func (s *MemoryStore) ListPage(ctx context.Context, scope, collection string, request pagination.Request, spec pagination.Spec, target any) (pagination.Metadata, error) {
+	if err := s.List(ctx, scope, collection, target); err != nil {
+		return pagination.Metadata{}, err
+	}
+	return pagination.Apply(target, request, spec)
 }
 
 func (s *MemoryStore) Get(_ context.Context, scope, collection, id string, target any) error {
@@ -137,6 +147,10 @@ func (s *FirestoreStore) List(ctx context.Context, scope, collection string, tar
 	}
 	targetValue.Elem().Set(values)
 	return nil
+}
+
+func (s *FirestoreStore) ListPage(ctx context.Context, scope, collection string, request pagination.Request, spec pagination.Spec, target any) (pagination.Metadata, error) {
+	return firestorepage.List(ctx, s.collection(scope, collection), request, spec, target)
 }
 
 func (s *FirestoreStore) Get(ctx context.Context, scope, collection, id string, target any) error {

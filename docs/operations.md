@@ -4,7 +4,7 @@
 
 Kosmos owns no passwords. Google authenticates users, and production admits only verified identities from the configured domains. The first approved user atomically becomes the organization owner. Later approved users start as members. Owners and administrators can assign owner, admin, member, or read-only viewer roles and can disable access.
 
-Google Workspace access is a separate incremental grant for Gmail compose, Gmail metadata, and read-only Google Sheets. Refresh tokens are encrypted at rest with a key derived from `KOSMOS_SESSION_SECRET`. Rotating that secret intentionally invalidates saved provider tokens, so users reconnect Google afterward. Register one OAuth redirect URI at `https://<host>/auth/callback`.
+Google Workspace access is a separate incremental grant for Gmail compose, Gmail metadata, and read-only Google Sheets. Refresh tokens are encrypted at rest with `KOSMOS_INTEGRATION_SECRET`, which is distinct from the web-only `KOSMOS_SESSION_SECRET`. The first split-key deployment migrates existing provider tokens from the session key before the web service accepts traffic. Later integration-key rotation intentionally invalidates saved provider tokens and attachment links, so users reconnect Google afterward. Register one OAuth redirect URI at `https://<host>/auth/callback`.
 
 ## Public contact form
 
@@ -16,7 +16,7 @@ Outbound email always requires an explicit user action and an `Idempotency-Key` 
 
 Tiller import expects a header row with `Date`, `Description`, and `Amount`. `Merchant` and `Transaction ID` are optional. The default range is `Transactions!A:Z`. Stable transaction IDs make imports replay-safe. One deterministic contact match is accepted; zero or multiple matches enter the review queue.
 
-Manual Gmail and Tiller synchronization requests return HTTP 202 after creating an idempotent Cloud Task. They never wait for Google APIs in the browser request. Cloud Scheduler queues a synchronization pass at the top of every hour from 9 AM through 5 PM, Monday through Friday, in `America/New_York`. The private `kosmos-jobs` Cloud Run service executes tasks with a dedicated OIDC invoker identity. Both web and worker services scale to zero. Investigate failed work in the Cloud Tasks queue first; provider failures return a retryable 5xx response and use bounded exponential backoff.
+Manual Gmail and Tiller synchronization requests return HTTP 202 after creating an idempotent Cloud Task. They never wait for Google APIs in the browser request. Cloud Scheduler queues a synchronization pass at the top of every hour from 9 AM through 5 PM, Monday through Friday, in `America/New_York`. The private `kosmos-jobs` Cloud Run service executes tasks with a dedicated worker identity and a separate OIDC invoker identity. Transactional record creation and effect-derived notification keys make overlapping manual and scheduled work replay-safe. Both web and worker services scale to zero. Investigate failed work in the Cloud Tasks queue first; provider failures return a retryable 5xx response and use bounded exponential backoff.
 
 List endpoints default to 50 records and accept `limit` values through 100 plus the opaque `cursor` returned by the previous response. The browser follows cursors automatically so every record remains reachable without a desktop-only or mobile-only paging workflow.
 

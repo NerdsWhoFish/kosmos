@@ -81,7 +81,17 @@ func main() {
 		user, err := googleAuth.CurrentUser(r)
 		return organizationID, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, err
 	}
-	operationsModule := operations.NewModule(operationsStore, blobStore, workspaceStore, identity, organizationID, []byte(os.Getenv("KOSMOS_SESSION_SECRET")), operations.NewLiveGoogleProvider(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")), operations.WithJobQueue(jobQueue))
+	integrationKey := integrationSecret()
+	operationsModule := operations.NewModule(operationsStore, blobStore, workspaceStore, identity, organizationID, integrationKey, operations.NewLiveGoogleProvider(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")), operations.WithJobQueue(jobQueue))
+	if role == "web" {
+		migrated, err := operationsModule.MigrateGoogleConnectionSecrets(context.Background(), []byte(os.Getenv("KOSMOS_SESSION_SECRET")))
+		if err != nil {
+			logger.Warn("Google connection secret migration incomplete", "error", err)
+		}
+		if migrated > 0 {
+			logger.Info("Google connection secrets migrated", "connection.count", migrated)
+		}
+	}
 	scope := func(r *http.Request) (string, error) {
 		_, actor, err := identity(r)
 		if err != nil {
@@ -129,6 +139,14 @@ func main() {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func integrationSecret() []byte {
+	value := os.Getenv("KOSMOS_INTEGRATION_SECRET")
+	if value == "" {
+		value = os.Getenv("KOSMOS_SESSION_SECRET")
+	}
+	return []byte(value)
 }
 
 func processRole(value string) (string, error) {

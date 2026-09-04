@@ -25,8 +25,9 @@ run "bootstrap_defaults" {
   command = plan
 
   variables {
-    project_id  = "kosmos-test"
-    environment = "test"
+    project_id               = "kosmos-test"
+    environment              = "test"
+    integration_secret_value = "test-only-integration-secret-value"
   }
 
   assert {
@@ -55,7 +56,7 @@ run "bootstrap_defaults" {
   }
 
   assert {
-    condition     = length(output.secret_ids) == 3
+    condition     = length(output.secret_ids) == 4
     error_message = "all runtime secret containers must be managed by the environment module"
   }
 
@@ -72,6 +73,11 @@ run "bootstrap_defaults" {
   assert {
     condition     = google_cloud_tasks_queue.jobs.rate_limits[0].max_concurrent_dispatches == 2
     error_message = "the async queue must keep a conservative near-free concurrency cap"
+  }
+
+  assert {
+    condition     = length(google_firestore_index.pagination) == 4
+    error_message = "filtered cursor pagination must ship its required Firestore indexes"
   }
 }
 
@@ -91,6 +97,8 @@ run "production_service" {
     billing_account_id          = "000000-000000-000000"
     budget_notification_email   = "owner@example.com"
     manage_grafana              = true
+    grafana_faro_app_id         = "902"
+    integration_secret_value    = "test-only-integration-secret-value"
   }
 
   assert {
@@ -111,6 +119,16 @@ run "production_service" {
   assert {
     condition     = google_cloud_run_v2_service.jobs[0].template[0].scaling[0].min_instance_count == 0 && google_cloud_run_v2_service.jobs[0].template[0].scaling[0].max_instance_count == 1
     error_message = "the private worker must scale to zero with a one-instance cost cap"
+  }
+
+  assert {
+    condition     = google_cloud_run_v2_service.jobs[0].template[0].service_account == google_service_account.worker.email
+    error_message = "the private worker must use its dedicated least-privilege identity"
+  }
+
+  assert {
+    condition     = length([for env in google_cloud_run_v2_service.jobs[0].template[0].containers[0].env : env if env.name == "KOSMOS_SESSION_SECRET"]) == 0
+    error_message = "the private worker must not receive the web session-signing secret"
   }
 
   assert {

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/firestorepage"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/api/iterator"
@@ -23,6 +25,10 @@ func NewFirestoreStore(client *firestore.Client) *FirestoreStore {
 
 func (s *FirestoreStore) collection(scope, name string) *firestore.CollectionRef {
 	return s.client.Collection("organizations").Doc(scope).Collection(name)
+}
+
+func (s *FirestoreStore) ListPage(ctx context.Context, scope, collection string, request pagination.Request, spec pagination.Spec, target any) (pagination.Metadata, error) {
+	return firestorepage.List(ctx, s.collection(scope, collection), request, spec, target)
 }
 
 func listRecords[T any](ctx context.Context, store *FirestoreStore, scope, collection, orderBy string, direction firestore.Direction, assignID func(*T, string)) ([]T, error) {

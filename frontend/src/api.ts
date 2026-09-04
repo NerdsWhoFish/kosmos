@@ -23,6 +23,7 @@ export type Transaction = { id: string; externalId: string; date: string; descri
 export type Attachment = { id: string; fileName: string; contentType: string; size: number; kind: string; recordType: string; recordId: string; createdBy: string; createdAt: string; downloadUrl: string }
 export type AuditEntry = { id: string; actor: string; action: string; entityType: string; entityId: string; summary: string; createdAt: string }
 export type ModuleManifest = { name: string; navigation: { path: string; label: string; icon: string }[]; permissions: string[]; resources: string[]; eventTypes?: string[]; backgroundJobs?: string[]; searchProviders?: string[]; documentLinkTargets?: string[] }
+export type AcceptedJob = { id: string; status: 'accepted' }
 
 type APIError = { error?: string | { message?: string } }
 type PageMetadata = { nextCursor?: string }

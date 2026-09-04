@@ -4,6 +4,7 @@ locals {
   public_host             = var.public_url == null ? null : regex("^https://([^/]+)", var.public_url)[0]
   attachments_bucket      = coalesce(var.attachments_bucket_name, "${var.project_id}-attachments")
   runtime_service_account = "${local.name_prefix}-runtime"
+  worker_service_account  = "${local.name_prefix}-worker"
   release_service_account = "${local.name_prefix}-releaser"
   job_invoker_account     = "${local.name_prefix}-job-invoker"
   operations_runbook_url  = "https://github.com/NerdsWhoFish/kosmos/blob/main/docs/operations.md"
@@ -15,32 +16,79 @@ locals {
   secret_ids = {
     google_client_secret  = "${local.name_prefix}-google-client-secret"
     session_secret        = "${local.name_prefix}-session-secret"
+    integration_secret    = "${local.name_prefix}-integration-secret"
     otel_exporter_headers = "${local.name_prefix}-otel-exporter-headers"
   }
-  secret_environment = merge(
-    { KOSMOS_SESSION_SECRET = "session_secret" },
+  web_secret_environment = merge(
+    {
+      KOSMOS_SESSION_SECRET     = "session_secret"
+      KOSMOS_INTEGRATION_SECRET = "integration_secret"
+    },
     var.google_client_id == null ? {} : { GOOGLE_CLIENT_SECRET = "google_client_secret" },
     var.otel_exporter_otlp_endpoint == null ? {} : { OTEL_EXPORTER_OTLP_HEADERS = "otel_exporter_headers" },
   )
-  environment_variables = merge(
+  worker_secret_environment = merge(
+    { KOSMOS_INTEGRATION_SECRET = "integration_secret" },
+    var.google_client_id == null ? {} : { GOOGLE_CLIENT_SECRET = "google_client_secret" },
+    var.otel_exporter_otlp_endpoint == null ? {} : { OTEL_EXPORTER_OTLP_HEADERS = "otel_exporter_headers" },
+  )
+  base_environment_variables = merge(
     {
-      KOSMOS_ENV                = var.environment
-      KOSMOS_GCP_PROJECT        = var.project_id
-      KOSMOS_ORGANIZATION_ID    = var.organization_id
-      KOSMOS_ATTACHMENTS_BUCKET = local.attachments_bucket
+      KOSMOS_ENV             = var.environment
+      KOSMOS_GCP_PROJECT     = var.project_id
+      KOSMOS_ORGANIZATION_ID = var.organization_id
     },
-    var.public_url == null ? {} : { KOSMOS_PUBLIC_URL = var.public_url },
     var.google_client_id == null ? {} : { GOOGLE_CLIENT_ID = var.google_client_id },
-    length(var.allowed_google_domains) == 0 ? {} : { KOSMOS_ALLOWED_GOOGLE_DOMAINS = join(",", sort(tolist(var.allowed_google_domains))) },
-    var.faro_url == null ? {} : { KOSMOS_FARO_URL = var.faro_url },
     var.otel_exporter_otlp_endpoint == null ? {} : { OTEL_EXPORTER_OTLP_ENDPOINT = var.otel_exporter_otlp_endpoint },
   )
-  job_environment_variables = merge(local.environment_variables, {
+  web_environment_variables = merge(
+    local.base_environment_variables,
+    { KOSMOS_ATTACHMENTS_BUCKET = local.attachments_bucket },
+    var.public_url == null ? {} : { KOSMOS_PUBLIC_URL = var.public_url },
+    length(var.allowed_google_domains) == 0 ? {} : { KOSMOS_ALLOWED_GOOGLE_DOMAINS = join(",", sort(tolist(var.allowed_google_domains))) },
+    var.faro_url == null ? {} : { KOSMOS_FARO_URL = var.faro_url },
+  )
+  job_environment_variables = merge(local.base_environment_variables, {
     KOSMOS_PROCESS_ROLE   = "jobs"
     KOSMOS_TASKS_PROJECT  = var.project_id
     KOSMOS_TASKS_LOCATION = var.region
     KOSMOS_TASKS_QUEUE    = google_cloud_tasks_queue.jobs.name
   })
+  pagination_indexes = {
+    activities = {
+      collection = "activities"
+      fields = [
+        { path = "contactId", order = "ASCENDING" },
+        { path = "occurredAt", order = "DESCENDING" },
+        { path = "__name__", order = "DESCENDING" },
+      ]
+    }
+    attachments = {
+      collection = "attachments"
+      fields = [
+        { path = "recordType", order = "ASCENDING" },
+        { path = "recordId", order = "ASCENDING" },
+        { path = "createdAt", order = "DESCENDING" },
+        { path = "__name__", order = "DESCENDING" },
+      ]
+    }
+    document_revisions = {
+      collection = "documentRevisions"
+      fields = [
+        { path = "documentId", order = "ASCENDING" },
+        { path = "createdAt", order = "DESCENDING" },
+        { path = "__name__", order = "DESCENDING" },
+      ]
+    }
+    leads = {
+      collection = "contacts"
+      fields = [
+        { path = "status", order = "ASCENDING" },
+        { path = "updatedAt", order = "DESCENDING" },
+        { path = "__name__", order = "DESCENDING" },
+      ]
+    }
+  }
   required_services = toset([
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
@@ -91,6 +139,24 @@ resource "google_firestore_database" "kosmos" {
   delete_protection_state           = "DELETE_PROTECTION_ENABLED"
 
   depends_on = [google_project_service.required]
+}
+
+resource "google_firestore_index" "pagination" {
+  for_each = local.pagination_indexes
+
+  project         = var.project_id
+  database        = google_firestore_database.kosmos.name
+  collection      = each.value.collection
+  query_scope     = "COLLECTION"
+  deletion_policy = "ABANDON"
+
+  dynamic "fields" {
+    for_each = each.value.fields
+    content {
+      field_path = fields.value.path
+      order      = fields.value.order
+    }
+  }
 }
 
 resource "google_cloud_tasks_queue" "jobs" {
@@ -149,6 +215,12 @@ resource "google_service_account" "runtime" {
   display_name = "Kosmos ${var.environment} runtime"
 }
 
+resource "google_service_account" "worker" {
+  project      = var.project_id
+  account_id   = local.worker_service_account
+  display_name = "Kosmos ${var.environment} worker"
+}
+
 resource "google_service_account" "job_invoker" {
   project      = var.project_id
   account_id   = local.job_invoker_account
@@ -167,10 +239,27 @@ resource "google_project_iam_member" "runtime_tasks" {
   member  = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+resource "google_project_iam_member" "worker_firestore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.worker.email}"
+}
+
+resource "google_project_iam_member" "worker_tasks" {
+  project = var.project_id
+  role    = "roles/cloudtasks.enqueuer"
+  member  = "serviceAccount:${google_service_account.worker.email}"
+}
+
 resource "google_service_account_iam_member" "runtime_job_invoker" {
+  for_each = toset([
+    google_service_account.runtime.email,
+    google_service_account.worker.email,
+  ])
+
   service_account_id = google_service_account.job_invoker.name
   role               = "roles/iam.serviceAccountUser"
-  member             = "serviceAccount:${google_service_account.runtime.email}"
+  member             = "serviceAccount:${each.value}"
 }
 
 resource "google_storage_bucket_iam_member" "runtime_attachments" {
@@ -238,6 +327,12 @@ resource "google_secret_manager_secret" "runtime" {
   depends_on = [google_project_service.required]
 }
 
+resource "google_secret_manager_secret_version" "integration" {
+  secret                 = google_secret_manager_secret.runtime["integration_secret"].id
+  secret_data_wo         = var.integration_secret_value
+  secret_data_wo_version = var.integration_secret_version
+}
+
 resource "google_secret_manager_secret_iam_member" "runtime" {
   for_each = google_secret_manager_secret.runtime
 
@@ -245,6 +340,15 @@ resource "google_secret_manager_secret_iam_member" "runtime" {
   secret_id = each.value.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "worker" {
+  for_each = local.worker_secret_environment
+
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime[each.value].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.worker.email}"
 }
 
 resource "google_cloud_run_v2_service" "kosmos" {
@@ -276,7 +380,7 @@ resource "google_cloud_run_v2_service" "kosmos" {
       }
 
       dynamic "env" {
-        for_each = merge(local.environment_variables, {
+        for_each = merge(local.web_environment_variables, {
           KOSMOS_PROCESS_ROLE                = "web"
           KOSMOS_TASKS_PROJECT               = var.project_id
           KOSMOS_TASKS_LOCATION              = var.region
@@ -292,7 +396,7 @@ resource "google_cloud_run_v2_service" "kosmos" {
       }
 
       dynamic "env" {
-        for_each = local.secret_environment
+        for_each = local.web_secret_environment
         content {
           name = env.key
           value_source {
@@ -309,6 +413,7 @@ resource "google_cloud_run_v2_service" "kosmos" {
   depends_on = [
     google_project_iam_member.runtime_firestore,
     google_secret_manager_secret_iam_member.runtime,
+    google_secret_manager_secret_version.integration,
     google_storage_bucket_iam_member.runtime_attachments,
   ]
 }
@@ -323,7 +428,7 @@ resource "google_cloud_run_v2_service" "jobs" {
   deletion_protection = true
 
   template {
-    service_account = google_service_account.runtime.email
+    service_account = google_service_account.worker.email
 
     scaling {
       min_instance_count = 0
@@ -352,7 +457,7 @@ resource "google_cloud_run_v2_service" "jobs" {
       }
 
       dynamic "env" {
-        for_each = local.secret_environment
+        for_each = local.worker_secret_environment
         content {
           name = env.key
           value_source {
@@ -367,11 +472,11 @@ resource "google_cloud_run_v2_service" "jobs" {
   }
 
   depends_on = [
-    google_project_iam_member.runtime_firestore,
-    google_project_iam_member.runtime_tasks,
+    google_project_iam_member.worker_firestore,
+    google_project_iam_member.worker_tasks,
     google_service_account_iam_member.runtime_job_invoker,
-    google_secret_manager_secret_iam_member.runtime,
-    google_storage_bucket_iam_member.runtime_attachments,
+    google_secret_manager_secret_iam_member.worker,
+    google_secret_manager_secret_version.integration,
   ]
 }
 

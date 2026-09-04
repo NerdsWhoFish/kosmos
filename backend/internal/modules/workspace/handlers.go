@@ -48,9 +48,7 @@ func (m Module) listAccounts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := m.store.ListAccounts(r.Context(), scope)
-	sortAccounts(items)
-	respondList(w, r, items, err, "accounts")
+	respondStoreList[Account](w, r, m.store, scope, "accounts", "accounts", pagination.Spec{Key: "workspace.accounts", OrderBy: "updatedAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue})
 }
 
 func (m Module) createAccount(w http.ResponseWriter, r *http.Request) {
@@ -127,19 +125,7 @@ func (m Module) listLeads(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	contacts, err := m.store.ListContacts(r.Context(), scope)
-	if err != nil {
-		respondList(w, r, []Contact{}, err, "leads")
-		return
-	}
-	leads := make([]Contact, 0)
-	for _, contact := range contacts {
-		if contact.Status == "lead" {
-			leads = append(leads, contact)
-		}
-	}
-	sortContacts(leads)
-	respondList(w, r, leads, nil, "leads")
+	respondStoreList[Contact](w, r, m.store, scope, "contacts", "leads", pagination.Spec{Key: "workspace.leads", OrderBy: "updatedAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue, Filters: []pagination.Filter{{Field: "status", Value: "lead"}}})
 }
 
 func (m Module) listContacts(w http.ResponseWriter, r *http.Request) {
@@ -147,9 +133,7 @@ func (m Module) listContacts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	contacts, err := m.store.ListContacts(r.Context(), scope)
-	sortContacts(contacts)
-	respondList(w, r, contacts, err, "contacts")
+	respondStoreList[Contact](w, r, m.store, scope, "contacts", "contacts", pagination.Spec{Key: "workspace.contacts", OrderBy: "updatedAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue})
 }
 
 func (m Module) getContact(w http.ResponseWriter, r *http.Request) {
@@ -210,9 +194,7 @@ func (m Module) listOpportunities(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := m.store.ListOpportunities(r.Context(), scope)
-	sortOpportunities(items)
-	respondList(w, r, items, err, "opportunities")
+	respondStoreList[Opportunity](w, r, m.store, scope, "opportunities", "opportunities", pagination.Spec{Key: "workspace.opportunities", OrderBy: "updatedAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue})
 }
 
 func (m Module) createOpportunity(w http.ResponseWriter, r *http.Request) {
@@ -256,12 +238,12 @@ func (m Module) listActivities(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := m.store.ListActivities(r.Context(), scope)
-	if err == nil && r.URL.Query().Get("contactId") != "" {
-		items = filterActivities(items, r.URL.Query().Get("contactId"))
+	contactID := r.URL.Query().Get("contactId")
+	spec := pagination.Spec{Key: "workspace.activities:" + contactID, OrderBy: "occurredAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue}
+	if contactID != "" {
+		spec.Filters = []pagination.Filter{{Field: "contactId", Value: contactID}}
 	}
-	sortActivities(items)
-	respondList(w, r, items, err, "activities")
+	respondStoreList[Activity](w, r, m.store, scope, "activities", "activities", spec)
 }
 
 func (m Module) createActivity(w http.ResponseWriter, r *http.Request) {
@@ -294,9 +276,7 @@ func (m Module) listReminders(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := m.store.ListReminders(r.Context(), scope)
-	sortReminders(items)
-	respondList(w, r, items, err, "reminders")
+	respondStoreList[Reminder](w, r, m.store, scope, "reminders", "reminders", pagination.Spec{Key: "workspace.reminders", OrderBy: "dueAt", Direction: pagination.Ascending, ValueKind: pagination.TimeValue})
 }
 
 func (m Module) createReminder(w http.ResponseWriter, r *http.Request) {
@@ -341,9 +321,7 @@ func (m Module) listDocuments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := m.store.ListDocuments(r.Context(), scope)
-	sortDocuments(items)
-	respondList(w, r, items, err, "documents")
+	respondStoreList[Document](w, r, m.store, scope, "documents", "documents", pagination.Spec{Key: "workspace.documents", OrderBy: "updatedAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue})
 }
 
 func (m Module) createDocument(w http.ResponseWriter, r *http.Request) {
@@ -409,9 +387,8 @@ func (m Module) documentRevisions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := m.store.ListDocumentRevisions(r.Context(), scope, r.PathValue("id"))
-	sortDocumentRevisions(items)
-	respondList(w, r, items, err, "revisions")
+	documentID := r.PathValue("id")
+	respondStoreList[DocumentRevision](w, r, m.store, scope, "documentRevisions", "revisions", pagination.Spec{Key: "workspace.document-revisions:" + documentID, OrderBy: "createdAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue, Filters: []pagination.Filter{{Field: "documentId", Value: documentID}}})
 }
 
 func (m Module) listCosts(w http.ResponseWriter, r *http.Request) {
@@ -419,9 +396,7 @@ func (m Module) listCosts(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := m.store.ListCosts(r.Context(), scope)
-	sortCosts(items)
-	respondList(w, r, items, err, "costs")
+	respondStoreList[Cost](w, r, m.store, scope, "costs", "costs", pagination.Spec{Key: "workspace.costs", OrderBy: "incurredOn", Direction: pagination.Descending, ValueKind: pagination.StringValue})
 }
 
 func (m Module) createCost(w http.ResponseWriter, r *http.Request) {
@@ -643,20 +618,22 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
 
-func respondList[T any](w http.ResponseWriter, r *http.Request, items []T, err error, key string) {
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, key+"_load_failed", "Could not load "+key)
-		return
-	}
-	if items == nil {
-		items = []T{}
-	}
+func respondStoreList[T any](w http.ResponseWriter, r *http.Request, store Store, scope, collection, key string, spec pagination.Spec) {
 	page, err := pagination.Parse(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pagination", err.Error())
 		return
 	}
-	items, metadata := pagination.Slice(items, page)
+	items := make([]T, 0)
+	metadata, err := store.ListPage(r.Context(), scope, collection, page, spec, &items)
+	if errors.Is(err, pagination.ErrInvalidCursor) {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", err.Error())
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, key+"_load_failed", "Could not load "+key)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{key: items, "page": metadata})
 }
 

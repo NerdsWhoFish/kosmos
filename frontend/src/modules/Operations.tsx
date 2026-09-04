@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { Download, FileUp, RefreshCw, Sheet, UploadCloud } from 'lucide-react'
-import { api, Attachment, Contact, Cost, Document, GoogleStatus, money, Opportunity, Transaction } from '../api'
+import { AcceptedJob, api, Attachment, Contact, Cost, Document, GoogleStatus, money, Opportunity, Transaction } from '../api'
 import { Page } from '../components/Page'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
 
@@ -11,6 +11,7 @@ export function Operations() {
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+	const [syncing, setSyncing] = useState(false)
 	const [recordType, setRecordType] = useState('document')
 	const [records, setRecords] = useState<Record<string, { id: string; label: string }[]>>({ document: [], cost: [], contact: [], opportunity: [] })
 
@@ -32,12 +33,16 @@ export function Operations() {
   }
 
   async function syncTiller() {
-    setNotice('Reading the Tiller sheet...')
+    setSyncing(true)
+    setNotice('Queueing a Tiller import...')
     try {
-      const result = await api<{ newTransactions: number }>('/api/v1/integrations/tiller/sync', { method: 'POST' })
-      setNotice(`${result.newTransactions} new transaction${result.newTransactions === 1 ? '' : 's'} imported.`)
-      load()
-    } catch (reason) { setNotice(reason instanceof Error ? reason.message : 'Could not sync Tiller') }
+      await api<AcceptedJob>('/api/v1/integrations/tiller/sync', { method: 'POST' })
+      setNotice('Tiller import queued. Imported transactions and anything needing review will appear here when it finishes.')
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : 'Could not sync Tiller')
+    } finally {
+      setSyncing(false)
+    }
   }
 
   async function upload(event: FormEvent<HTMLFormElement>) {
@@ -67,7 +72,7 @@ export function Operations() {
   return <Page eyebrow="Back office" title="Business operations" detail="Bring in transactions, keep receipts and files private, and export clean records when your accountant asks.">
     {notice && <p className="inline-notice" role="status">{notice}</p>}
     <section className="split-grid">
-      <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Tiller</p><h2>Transaction import</h2></div>{google?.connection?.tiller && <button className="text-button" onClick={syncTiller}><RefreshCw size={15} /> Sync now</button>}</div>
+      <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Tiller</p><h2>Transaction import</h2></div>{google?.connection?.tiller && <button className="text-button" onClick={syncTiller} disabled={syncing}><RefreshCw size={15} /> {syncing ? 'Queueing...' : 'Sync now'}</button>}</div>
         {!google?.connected ? <EmptyState title="Connect Google first" detail="Tiller lives in Google Sheets, so the Google Workspace connection provides read-only access." /> : <form onSubmit={configureTiller}><label>Spreadsheet ID<input name="spreadsheetId" defaultValue={google.connection?.tiller?.spreadsheetId} required placeholder="From the Google Sheets URL" /></label><label>Sheet range<input name="range" defaultValue={google.connection?.tiller?.range ?? 'Transactions!A:Z'} required /></label><button className="primary-button"><Sheet size={16} /> Save Tiller connection</button></form>}
       </div>
       <div className="panel"><p className="eyebrow">Portable by design</p><h2>Exports</h2><p className="muted-copy">Download ordinary CSV files. Your business data is not trapped in Kosmos.</p><div className="button-stack"><a className="secondary-button" href="/api/v1/exports/contacts"><Download size={16} /> Export contacts</a><a className="secondary-button" href="/api/v1/exports/costs"><Download size={16} /> Export costs</a></div></div>

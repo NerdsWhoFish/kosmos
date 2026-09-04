@@ -17,6 +17,47 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type openAPIContract struct {
+	Paths      map[string]openAPIPathItem `yaml:"paths"`
+	Components struct {
+		Responses map[string]openAPIResponse `yaml:"responses"`
+		Schemas   map[string]openAPISchema   `yaml:"schemas"`
+	} `yaml:"components"`
+}
+
+type openAPIPathItem struct {
+	Get  openAPIOperation `yaml:"get"`
+	Post openAPIOperation `yaml:"post"`
+}
+
+type openAPIOperation struct {
+	Parameters []openAPIReference         `yaml:"parameters"`
+	Responses  map[string]openAPIResponse `yaml:"responses"`
+}
+
+type openAPIReference struct {
+	Ref string `yaml:"$ref"`
+}
+
+type openAPIResponse struct {
+	Ref     string                      `yaml:"$ref"`
+	Content map[string]openAPIMediaType `yaml:"content"`
+}
+
+type openAPIMediaType struct {
+	Schema openAPISchema `yaml:"schema"`
+}
+
+type openAPISchema struct {
+	Ref                  string                   `yaml:"$ref"`
+	Type                 string                   `yaml:"type"`
+	Const                any                      `yaml:"const"`
+	AdditionalProperties *bool                    `yaml:"additionalProperties"`
+	Required             []string                 `yaml:"required"`
+	Properties           map[string]openAPISchema `yaml:"properties"`
+	Items                *openAPISchema           `yaml:"items"`
+}
+
 func TestPublicConfigReturnsRuntimeFaroSettings(t *testing.T) {
 	t.Setenv("KOSMOS_FARO_URL", "https://faro.example.com/collect/test")
 	record := httptest.NewRecorder()
@@ -44,6 +85,18 @@ func TestProcessRole(t *testing.T) {
 	}
 	if _, err := processRole("scheduler"); err == nil {
 		t.Fatal("unsupported role should fail")
+	}
+}
+
+func TestIntegrationSecretIsSeparateFromSessionSigning(t *testing.T) {
+	t.Setenv("KOSMOS_SESSION_SECRET", "session-only")
+	t.Setenv("KOSMOS_INTEGRATION_SECRET", "integration-only")
+	if got := string(integrationSecret()); got != "integration-only" {
+		t.Fatalf("integration secret = %q", got)
+	}
+	t.Setenv("KOSMOS_INTEGRATION_SECRET", "")
+	if got := string(integrationSecret()); got != "session-only" {
+		t.Fatalf("local fallback = %q", got)
 	}
 }
 
@@ -117,6 +170,186 @@ func TestOpenAPICoversEveryRegisteredRoute(t *testing.T) {
 	if missing := setDifference(documented, implemented); len(missing) > 0 {
 		t.Fatalf("OpenAPI routes missing from implementation: %s", strings.Join(missing, ", "))
 	}
+}
+
+func TestOpenAPIPaginatedListResponseSchemas(t *testing.T) {
+	contract := loadOpenAPIContract(t)
+	expected := map[string]struct {
+		collection string
+		itemSchema string
+	}{
+		"/accounts":                 {"accounts", "Account"},
+		"/activities":               {"activities", "Activity"},
+		"/attachments":              {"attachments", "Attachment"},
+		"/audit":                    {"entries", "AuditEntry"},
+		"/contacts":                 {"contacts", "Contact"},
+		"/costs":                    {"costs", "Cost"},
+		"/documents":                {"documents", "Document"},
+		"/documents/{id}/revisions": {"revisions", "DocumentRevision"},
+		"/email/messages":           {"messages", "MailMetadata"},
+		"/email/templates":          {"templates", "EmailTemplate"},
+		"/leads":                    {"leads", "Contact"},
+		"/members":                  {"members", "Member"},
+		"/notifications":            {"notifications", "Notification"},
+		"/opportunities":            {"opportunities", "Opportunity"},
+		"/pipeline-stages":          {"stages", "PipelineStage"},
+		"/reminders":                {"reminders", "Reminder"},
+		"/transactions":             {"transactions", "Transaction"},
+	}
+
+	found := map[string]struct{}{}
+	for path, pathItem := range contract.Paths {
+		operation := pathItem.Get
+		if !hasParameter(operation.Parameters, "#/components/parameters/Limit") || !hasParameter(operation.Parameters, "#/components/parameters/Cursor") {
+			continue
+		}
+		found[path] = struct{}{}
+		want, exists := expected[path]
+		if !exists {
+			t.Errorf("paginated GET %s is not covered by the response contract test", path)
+			continue
+		}
+
+		response, exists := operation.Responses["200"]
+		if !exists {
+			t.Errorf("paginated GET %s has no 200 response", path)
+			continue
+		}
+		response = resolveResponse(t, contract, response)
+		mediaType, exists := response.Content["application/json"]
+		if !exists {
+			t.Errorf("paginated GET %s has no application/json response", path)
+			continue
+		}
+		schema := resolveSchema(t, contract, mediaType.Schema)
+		if schema.Type != "object" || !sameStrings(schema.Required, []string{want.collection, "page"}) {
+			t.Errorf("paginated GET %s schema type/required = %q/%v", path, schema.Type, schema.Required)
+		}
+		collection, exists := schema.Properties[want.collection]
+		if !exists || collection.Type != "array" || collection.Items == nil || collection.Items.Ref != "#/components/schemas/"+want.itemSchema {
+			t.Errorf("paginated GET %s collection %q does not contain %s items", path, want.collection, want.itemSchema)
+		} else {
+			resolveSchema(t, contract, *collection.Items)
+		}
+		page, exists := schema.Properties["page"]
+		if !exists || page.Ref != "#/components/schemas/Page" {
+			t.Errorf("paginated GET %s does not use Page metadata", path)
+		}
+	}
+
+	if missing := setDifference(stringSetKeys(expected), found); len(missing) > 0 {
+		t.Fatalf("expected paginated GETs missing from OpenAPI: %s", strings.Join(missing, ", "))
+	}
+
+	page := contract.Components.Schemas["Page"]
+	if page.Type != "object" || !sameStrings(page.Required, []string{"limit", "nextCursor"}) {
+		t.Fatalf("Page schema type/required = %q/%v", page.Type, page.Required)
+	}
+	if page.Properties["limit"].Type != "integer" || page.Properties["nextCursor"].Type != "string" {
+		t.Fatalf("Page properties = %#v", page.Properties)
+	}
+}
+
+func TestOpenAPIAsyncSyncResponses(t *testing.T) {
+	contract := loadOpenAPIContract(t)
+	for _, path := range []string{"/email/sync", "/integrations/tiller/sync"} {
+		operation := contract.Paths[path].Post
+		response, exists := operation.Responses["202"]
+		if !exists {
+			t.Errorf("POST %s has no 202 response", path)
+			continue
+		}
+		if _, exists := operation.Responses["200"]; exists {
+			t.Errorf("POST %s incorrectly documents a synchronous 200 response", path)
+		}
+		response = resolveResponse(t, contract, response)
+		mediaType, exists := response.Content["application/json"]
+		if !exists {
+			t.Errorf("POST %s has no application/json response", path)
+			continue
+		}
+		schema := resolveSchema(t, contract, mediaType.Schema)
+		if schema.Type != "object" || !sameStrings(schema.Required, []string{"id", "status"}) {
+			t.Errorf("POST %s schema type/required = %q/%v", path, schema.Type, schema.Required)
+		}
+		if schema.AdditionalProperties == nil || *schema.AdditionalProperties {
+			t.Errorf("POST %s permits fields other than id and status", path)
+		}
+		if schema.Properties["id"].Type != "string" {
+			t.Errorf("POST %s id is not a string", path)
+		}
+		status := schema.Properties["status"]
+		if status.Type != "string" || status.Const != "accepted" {
+			t.Errorf("POST %s status = type %q const %#v", path, status.Type, status.Const)
+		}
+	}
+}
+
+func loadOpenAPIContract(t *testing.T) openAPIContract {
+	t.Helper()
+	contractBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "api", "openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract openAPIContract
+	if err := yaml.Unmarshal(contractBytes, &contract); err != nil {
+		t.Fatalf("parse OpenAPI: %v", err)
+	}
+	return contract
+}
+
+func resolveResponse(t *testing.T, contract openAPIContract, response openAPIResponse) openAPIResponse {
+	t.Helper()
+	if response.Ref == "" {
+		return response
+	}
+	name := strings.TrimPrefix(response.Ref, "#/components/responses/")
+	resolved, exists := contract.Components.Responses[name]
+	if name == response.Ref || !exists {
+		t.Fatalf("unresolved response reference %q", response.Ref)
+	}
+	return resolved
+}
+
+func resolveSchema(t *testing.T, contract openAPIContract, schema openAPISchema) openAPISchema {
+	t.Helper()
+	if schema.Ref == "" {
+		return schema
+	}
+	name := strings.TrimPrefix(schema.Ref, "#/components/schemas/")
+	resolved, exists := contract.Components.Schemas[name]
+	if name == schema.Ref || !exists {
+		t.Fatalf("unresolved schema reference %q", schema.Ref)
+	}
+	return resolved
+}
+
+func hasParameter(parameters []openAPIReference, reference string) bool {
+	for _, parameter := range parameters {
+		if parameter.Ref == reference {
+			return true
+		}
+	}
+	return false
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	left = append([]string(nil), left...)
+	right = append([]string(nil), right...)
+	sort.Strings(left)
+	sort.Strings(right)
+	return strings.Join(left, "\x00") == strings.Join(right, "\x00")
+}
+
+func stringSetKeys[V any](values map[string]V) map[string]struct{} {
+	keys := make(map[string]struct{}, len(values))
+	for key := range values {
+		keys[key] = struct{}{}
+	}
+	return keys
 }
 
 func setDifference(left, right map[string]struct{}) []string {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	platformmodules "github.com/NerdsWhoFish/kosmos/backend/internal/platform/modules"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 )
 
 type ScopeFunc func(*http.Request) (string, error)
@@ -173,6 +174,7 @@ type CostPatch struct {
 }
 
 type Store interface {
+	ListPage(context.Context, string, string, pagination.Request, pagination.Spec, any) (pagination.Metadata, error)
 	ListAccounts(context.Context, string) ([]Account, error)
 	CreateAccount(context.Context, string, Account) (Account, error)
 	ListContacts(context.Context, string) ([]Contact, error)

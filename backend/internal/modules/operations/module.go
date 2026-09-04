@@ -64,6 +64,41 @@ func NewModule(store Store, blobs BlobStore, workspaceStore Workspace, identity 
 	return module
 }
 
+func (m *Module) MigrateGoogleConnectionSecrets(ctx context.Context, legacyKey []byte) (int, error) {
+	if len(m.key) == 0 || len(legacyKey) == 0 || bytes.Equal(m.key, legacyKey) {
+		return 0, nil
+	}
+	var connections []GoogleConnection
+	if err := m.store.List(ctx, m.publicScope, "googleConnections", &connections); err != nil {
+		return 0, err
+	}
+	migrated := 0
+	skipped := 0
+	for _, connection := range connections {
+		if _, err := decrypt(m.key, connection.EncryptedToken); err == nil {
+			continue
+		}
+		plaintext, err := decrypt(legacyKey, connection.EncryptedToken)
+		if err != nil {
+			skipped++
+			continue
+		}
+		connection.EncryptedToken, err = encrypt(m.key, plaintext)
+		if err != nil {
+			return migrated, fmt.Errorf("encrypt Google connection %s with current key: %w", connection.ID, err)
+		}
+		connection.UpdatedAt = time.Now().UTC()
+		if err := m.store.Put(ctx, m.publicScope, "googleConnections", connection.ID, connection); err != nil {
+			return migrated, err
+		}
+		migrated++
+	}
+	if skipped > 0 {
+		return migrated, fmt.Errorf("%d Google connection secrets require reconnection", skipped)
+	}
+	return migrated, nil
+}
+
 func (*Module) Name() string { return "operations" }
 
 func (*Module) Manifest() platformmodules.Manifest {
@@ -167,18 +202,7 @@ func (m *Module) members(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var members []Member
-	if err := m.store.List(r.Context(), scope, "members", &members); err != nil {
-		writeError(w, http.StatusInternalServerError, "members_load_failed", "Could not load team members")
-		return
-	}
-	sort.Slice(members, func(i, j int) bool {
-		if members[i].Name == members[j].Name {
-			return members[i].ID < members[j].ID
-		}
-		return members[i].Name < members[j].Name
-	})
-	writePage(w, r, "members", nonNil(members))
+	writeStorePage[Member](w, r, m.store, scope, "members", "members", "members_load_failed", "Could not load team members", pagination.Spec{Key: "operations.members", OrderBy: "name", Direction: pagination.Ascending, ValueKind: pagination.StringValue})
 }
 
 func (m *Module) updateMember(w http.ResponseWriter, r *http.Request) {
@@ -236,12 +260,11 @@ func (m *Module) pipelineStages(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	stages, err := m.loadStages(r.Context(), scope)
-	if err != nil {
+	if err := m.ensureStages(r.Context(), scope); err != nil {
 		writeError(w, http.StatusInternalServerError, "stages_load_failed", "Could not load pipeline stages")
 		return
 	}
-	writePage(w, r, "stages", stages)
+	writeStorePage[PipelineStage](w, r, m.store, scope, "pipelineStages", "stages", "stages_load_failed", "Could not load pipeline stages", pagination.Spec{Key: "operations.pipeline-stages", OrderBy: "position", Direction: pagination.Ascending, ValueKind: pagination.IntegerValue})
 }
 
 func (m *Module) createPipelineStage(w http.ResponseWriter, r *http.Request) {
@@ -276,15 +299,7 @@ func (m *Module) notifications(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var items []Notification
-	if err := m.store.List(r.Context(), scope, "notifications", &items); err != nil {
-		writeError(w, http.StatusInternalServerError, "notifications_load_failed", "Could not load notifications")
-		return
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return newerRecord(items[i].CreatedAt, items[i].ID, items[j].CreatedAt, items[j].ID)
-	})
-	writePage(w, r, "notifications", nonNil(items))
+	writeStorePage[Notification](w, r, m.store, scope, "notifications", "notifications", "notifications_load_failed", "Could not load notifications", pagination.Spec{Key: "operations.notifications", OrderBy: "createdAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue})
 }
 
 func (m *Module) readNotification(w http.ResponseWriter, r *http.Request) {
@@ -311,18 +326,7 @@ func (m *Module) emailTemplates(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var items []EmailTemplate
-	if err := m.store.List(r.Context(), scope, "emailTemplates", &items); err != nil {
-		writeError(w, http.StatusInternalServerError, "templates_load_failed", "Could not load email templates")
-		return
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Name == items[j].Name {
-			return items[i].ID < items[j].ID
-		}
-		return items[i].Name < items[j].Name
-	})
-	writePage(w, r, "templates", nonNil(items))
+	writeStorePage[EmailTemplate](w, r, m.store, scope, "emailTemplates", "templates", "templates_load_failed", "Could not load email templates", pagination.Spec{Key: "operations.email-templates", OrderBy: "name", Direction: pagination.Ascending, ValueKind: pagination.StringValue})
 }
 
 func (m *Module) createEmailTemplate(w http.ResponseWriter, r *http.Request) {
@@ -451,15 +455,7 @@ func (m *Module) mailMessages(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var items []MailMetadata
-	if err := m.store.List(r.Context(), scope, "mailMetadata", &items); err != nil {
-		writeError(w, http.StatusInternalServerError, "mail_load_failed", "Could not load mail notifications")
-		return
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return newerRecord(items[i].ReceivedAt, items[i].ID, items[j].ReceivedAt, items[j].ID)
-	})
-	writePage(w, r, "messages", nonNil(items))
+	writeStorePage[MailMetadata](w, r, m.store, scope, "mailMetadata", "messages", "mail_load_failed", "Could not load mail notifications", pagination.Spec{Key: "operations.mail", OrderBy: "receivedAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue})
 }
 
 func (m *Module) configureTiller(w http.ResponseWriter, r *http.Request) {
@@ -517,18 +513,7 @@ func (m *Module) transactions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var items []Transaction
-	if err := m.store.List(r.Context(), scope, "transactions", &items); err != nil {
-		writeError(w, http.StatusInternalServerError, "transactions_load_failed", "Could not load transactions")
-		return
-	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Date == items[j].Date {
-			return items[i].ID < items[j].ID
-		}
-		return items[i].Date > items[j].Date
-	})
-	writePage(w, r, "transactions", nonNil(items))
+	writeStorePage[Transaction](w, r, m.store, scope, "transactions", "transactions", "transactions_load_failed", "Could not load transactions", pagination.Spec{Key: "operations.transactions", OrderBy: "date", Direction: pagination.Descending, ValueKind: pagination.StringValue})
 }
 
 func (m *Module) updateTransaction(w http.ResponseWriter, r *http.Request) {
@@ -614,23 +599,22 @@ func (m *Module) attachments(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var items []Attachment
-	if err := m.store.List(r.Context(), scope, "attachments", &items); err != nil {
-		writeError(w, http.StatusInternalServerError, "attachments_load_failed", "Could not load attachments")
+	recordType, recordID := r.URL.Query().Get("recordType"), r.URL.Query().Get("recordId")
+	spec := pagination.Spec{Key: "operations.attachments:" + recordType + ":" + recordID, OrderBy: "createdAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue}
+	if recordType != "" {
+		spec.Filters = append(spec.Filters, pagination.Filter{Field: "recordType", Value: recordType})
+	}
+	if recordID != "" {
+		spec.Filters = append(spec.Filters, pagination.Filter{Field: "recordId", Value: recordID})
+	}
+	items, metadata, ok := loadStorePage[Attachment](w, r, m.store, scope, "attachments", "attachments_load_failed", "Could not load attachments", spec)
+	if !ok {
 		return
 	}
-	recordType, recordID := r.URL.Query().Get("recordType"), r.URL.Query().Get("recordId")
-	filtered := make([]Attachment, 0)
-	for _, item := range items {
-		if (recordType == "" || item.RecordType == recordType) && (recordID == "" || item.RecordID == recordID) {
-			item.DownloadURL = m.downloadURL(scope, item.ID, time.Now().Add(15*time.Minute))
-			filtered = append(filtered, item)
-		}
+	for index := range items {
+		items[index].DownloadURL = m.downloadURL(scope, items[index].ID, time.Now().Add(15*time.Minute))
 	}
-	sort.Slice(filtered, func(i, j int) bool {
-		return newerRecord(filtered[i].CreatedAt, filtered[i].ID, filtered[j].CreatedAt, filtered[j].ID)
-	})
-	writePage(w, r, "attachments", filtered)
+	writeJSON(w, http.StatusOK, map[string]any{"attachments": items, "page": metadata})
 }
 
 func (m *Module) downloadAttachment(w http.ResponseWriter, r *http.Request) {
@@ -663,15 +647,7 @@ func (m *Module) auditEntries(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var items []AuditEntry
-	if err := m.store.List(r.Context(), scope, "audit", &items); err != nil {
-		writeError(w, http.StatusInternalServerError, "audit_load_failed", "Could not load audit history")
-		return
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return newerRecord(items[i].CreatedAt, items[i].ID, items[j].CreatedAt, items[j].ID)
-	})
-	writePage(w, r, "entries", nonNil(items))
+	writeStorePage[AuditEntry](w, r, m.store, scope, "audit", "entries", "audit_load_failed", "Could not load audit history", pagination.Spec{Key: "operations.audit", OrderBy: "createdAt", Direction: pagination.Descending, ValueKind: pagination.TimeValue})
 }
 
 func (m *Module) exportRecords(w http.ResponseWriter, r *http.Request) {
@@ -841,10 +817,11 @@ func (m *Module) requireRole(w http.ResponseWriter, ctx context.Context, scope s
 	return true
 }
 
-func (m *Module) loadStages(ctx context.Context, scope string) ([]PipelineStage, error) {
+func (m *Module) ensureStages(ctx context.Context, scope string) error {
 	var stages []PipelineStage
-	if err := m.store.List(ctx, scope, "pipelineStages", &stages); err != nil {
-		return nil, err
+	_, err := m.store.ListPage(ctx, scope, "pipelineStages", pagination.Request{Limit: 1}, pagination.Spec{Key: "operations.pipeline-stages", OrderBy: "position", Direction: pagination.Ascending, ValueKind: pagination.IntegerValue}, &stages)
+	if err != nil {
+		return err
 	}
 	if len(stages) == 0 {
 		now := time.Now().UTC()
@@ -855,18 +832,11 @@ func (m *Module) loadStages(ctx context.Context, scope string) ([]PipelineStage,
 		}{{"new", "New", 10, false, false}, {"qualified", "Qualified", 30, false, false}, {"proposal", "Proposal", 60, false, false}, {"won", "Won", 100, true, true}, {"lost", "Lost", 0, true, false}} {
 			stage := PipelineStage{ID: value.id, Name: value.name, Position: position, Probability: value.probability, Closed: value.closed, Won: value.won, CreatedAt: now, UpdatedAt: now}
 			if err := m.store.Put(ctx, scope, "pipelineStages", stage.ID, stage); err != nil {
-				return nil, err
+				return err
 			}
-			stages = append(stages, stage)
 		}
 	}
-	sort.Slice(stages, func(i, j int) bool {
-		if stages[i].Position == stages[j].Position {
-			return stages[i].ID < stages[j].ID
-		}
-		return stages[i].Position < stages[j].Position
-	})
-	return stages, nil
+	return nil
 }
 
 func (m *Module) connectionToken(ctx context.Context, scope, email string) (*oauth2.Token, GoogleConnection, error) {
@@ -911,33 +881,34 @@ func (m *Module) syncEmailConnection(ctx context.Context, scope, connectionID, a
 	if err != nil {
 		return 0, err
 	}
-	created := 0
+	createdIDs := make([]string, 0, len(messages))
 	for _, message := range messages {
 		message.ContactID = matchSender(message.From, contacts)
 		if message.ContactID == "" {
 			continue
 		}
-		var existing MailMetadata
-		if m.store.Get(ctx, scope, "mailMetadata", message.ID, &existing) == nil {
+		if err := m.store.Create(ctx, scope, "mailMetadata", message.ID, message); errors.Is(err, errAlreadyExists) {
 			continue
-		}
-		if err := m.store.Put(ctx, scope, "mailMetadata", message.ID, message); err != nil {
-			return created, err
+		} else if err != nil {
+			return len(createdIDs), err
 		}
 		if err := m.notify(ctx, scope, "New prospect email", message.Subject, "email", "/communications", "gmail:"+message.ID); err != nil {
-			return created, err
+			return len(createdIDs), err
 		}
-		created++
+		createdIDs = append(createdIDs, message.ID)
 	}
 	now := time.Now().UTC()
 	connection.LastMailSyncAt, connection.UpdatedAt = &now, now
 	if err := m.store.Put(ctx, scope, "googleConnections", connection.ID, connection); err != nil {
-		return created, err
+		return len(createdIDs), err
 	}
-	if err := m.auditJob(ctx, scope, actor, "email.synced", "integration", connection.ID, fmt.Sprintf("Synced %d relevant messages", created), jobID); err != nil {
-		return created, err
+	if len(createdIDs) > 0 {
+		sort.Strings(createdIDs)
+		if err := m.auditJob(ctx, scope, actor, "email.synced", "integration", connection.ID, fmt.Sprintf("Synced %d relevant messages", len(createdIDs)), "gmail:"+strings.Join(createdIDs, "|")); err != nil {
+			return len(createdIDs), err
+		}
 	}
-	return created, nil
+	return len(createdIDs), nil
 }
 
 func (m *Module) syncTillerConnection(ctx context.Context, scope, connectionID, actor, jobID string) (int, int, error) {
@@ -957,26 +928,26 @@ func (m *Module) syncTillerConnection(ctx context.Context, scope, connectionID, 
 		return 0, 0, err
 	}
 	transactions := parseTillerRows(rows, contacts)
-	created := 0
+	createdIDs := make([]string, 0, len(transactions))
 	for _, item := range transactions {
-		var existing Transaction
-		if m.store.Get(ctx, scope, "transactions", item.ID, &existing) == nil {
+		if err := m.store.Create(ctx, scope, "transactions", item.ID, item); errors.Is(err, errAlreadyExists) {
 			continue
+		} else if err != nil {
+			return len(createdIDs), len(transactions), err
 		}
-		if err := m.store.Put(ctx, scope, "transactions", item.ID, item); err != nil {
-			return created, len(transactions), err
+		createdIDs = append(createdIDs, item.ID)
+	}
+	if len(createdIDs) > 0 {
+		sort.Strings(createdIDs)
+		effectKey := "tiller:" + strings.Join(createdIDs, "|")
+		if err := m.notify(ctx, scope, "Tiller import ready", fmt.Sprintf("%d new transactions imported", len(createdIDs)), "transaction", "/costs", effectKey); err != nil {
+			return len(createdIDs), len(transactions), err
 		}
-		created++
-	}
-	if created > 0 {
-		if err := m.notify(ctx, scope, "Tiller import ready", fmt.Sprintf("%d new transactions imported", created), "transaction", "/costs", "tiller:"+jobID); err != nil {
-			return created, len(transactions), err
+		if err := m.auditJob(ctx, scope, actor, "tiller.synced", "integration", connection.ID, fmt.Sprintf("Imported %d transactions", len(createdIDs)), effectKey); err != nil {
+			return len(createdIDs), len(transactions), err
 		}
 	}
-	if err := m.auditJob(ctx, scope, actor, "tiller.synced", "integration", connection.ID, fmt.Sprintf("Imported %d transactions", created), jobID); err != nil {
-		return created, len(transactions), err
-	}
-	return created, len(transactions), nil
+	return len(createdIDs), len(transactions), nil
 }
 
 func (m *Module) auditJob(ctx context.Context, scope, actor, action, entityType, entityID, summary, jobID string) error {
@@ -984,16 +955,20 @@ func (m *Module) auditJob(ctx context.Context, scope, actor, action, entityType,
 		return m.audit(ctx, scope, actor, action, entityType, entityID, summary)
 	}
 	entry := AuditEntry{ID: deterministicID("job-audit|" + jobID), Actor: actor, Action: action, EntityType: entityType, EntityID: entityID, Summary: summary, CreatedAt: time.Now().UTC()}
-	return m.store.Put(ctx, scope, "audit", entry.ID, entry)
+	if err := m.store.Create(ctx, scope, "audit", entry.ID, entry); errors.Is(err, errAlreadyExists) {
+		return nil
+	} else {
+		return err
+	}
 }
 
 func (m *Module) notify(ctx context.Context, scope, title, summary, kind, href, key string) error {
 	id := deterministicID(key)
-	var existing Notification
-	if m.store.Get(ctx, scope, "notifications", id, &existing) == nil {
+	err := m.store.Create(ctx, scope, "notifications", id, Notification{ID: id, Title: title, Summary: summary, Kind: kind, Href: href, IdempotencyKey: key, CreatedAt: time.Now().UTC()})
+	if errors.Is(err, errAlreadyExists) {
 		return nil
 	}
-	return m.store.Put(ctx, scope, "notifications", id, Notification{ID: id, Title: title, Summary: summary, Kind: kind, Href: href, IdempotencyKey: key, CreatedAt: time.Now().UTC()})
+	return err
 }
 
 func (m *Module) audit(ctx context.Context, scope, actor, action, entityType, entityID, summary string) error {
@@ -1119,21 +1094,31 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
 
-func writePage[T any](w http.ResponseWriter, r *http.Request, key string, items []T) {
+func loadStorePage[T any](w http.ResponseWriter, r *http.Request, store Store, scope, collection, errorCode, errorMessage string, spec pagination.Spec) ([]T, pagination.Metadata, bool) {
 	page, err := pagination.Parse(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pagination", err.Error())
-		return
+		return nil, pagination.Metadata{}, false
 	}
-	items, metadata := pagination.Slice(items, page)
-	writeJSON(w, http.StatusOK, map[string]any{key: items, "page": metadata})
+	items := make([]T, 0)
+	metadata, err := store.ListPage(r.Context(), scope, collection, page, spec, &items)
+	if errors.Is(err, pagination.ErrInvalidCursor) {
+		writeError(w, http.StatusBadRequest, "invalid_pagination", err.Error())
+		return nil, pagination.Metadata{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errorCode, errorMessage)
+		return nil, pagination.Metadata{}, false
+	}
+	return items, metadata, true
 }
 
-func newerRecord(leftTime time.Time, leftID string, rightTime time.Time, rightID string) bool {
-	if leftTime.Equal(rightTime) {
-		return leftID < rightID
+func writeStorePage[T any](w http.ResponseWriter, r *http.Request, store Store, scope, collection, key, errorCode, errorMessage string, spec pagination.Spec) {
+	items, metadata, ok := loadStorePage[T](w, r, store, scope, collection, errorCode, errorMessage, spec)
+	if !ok {
+		return
 	}
-	return leftTime.After(rightTime)
+	writeJSON(w, http.StatusOK, map[string]any{key: items, "page": metadata})
 }
 
 func newID() (string, error) {

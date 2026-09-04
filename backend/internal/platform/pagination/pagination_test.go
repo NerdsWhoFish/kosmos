@@ -4,38 +4,88 @@ import (
 	"errors"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
-func TestParseDefaults(t *testing.T) {
-	request := httptest.NewRequest("GET", "/records", nil)
-	page, err := Parse(request)
-	if err != nil {
-		t.Fatalf("Parse() error = %v", err)
+type record struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+func TestCursorRoundTripPreservesStableOrdering(t *testing.T) {
+	now := time.Date(2026, time.September, 4, 12, 0, 0, 0, time.UTC)
+	spec := Spec{Key: "test.records", OrderBy: "updatedAt", Direction: Descending, ValueKind: TimeValue}
+	items := []record{
+		{ID: "d", UpdatedAt: now.Add(-time.Hour)},
+		{ID: "b", UpdatedAt: now},
+		{ID: "c", UpdatedAt: now.Add(-time.Hour)},
+		{ID: "a", UpdatedAt: now},
 	}
-	if page.Limit != DefaultLimit || page.offset != 0 {
-		t.Fatalf("Parse() = %#v", page)
+
+	firstRequest, err := Parse(httptest.NewRequest("GET", "/records?limit=2", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := append([]record(nil), items...)
+	firstMetadata, err := Apply(&first, firstRequest, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{first[0].ID, first[1].ID}; got[0] != "b" || got[1] != "a" || firstMetadata.NextCursor == "" {
+		t.Fatalf("first page IDs = %v, metadata = %#v", got, firstMetadata)
+	}
+
+	secondRequest, err := Parse(httptest.NewRequest("GET", "/records?limit=2&cursor="+firstMetadata.NextCursor, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := append([]record(nil), items...)
+	secondMetadata, err := Apply(&second, secondRequest, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{second[0].ID, second[1].ID}; got[0] != "d" || got[1] != "c" || secondMetadata.NextCursor != "" {
+		t.Fatalf("second page IDs = %v, metadata = %#v", got, secondMetadata)
+	}
+	value, id, ok, err := secondRequest.After(spec)
+	if err != nil || !ok || id != "a" || !value.(time.Time).Equal(now) {
+		t.Fatalf("decoded cursor = %v, %q, %t, %v", value, id, ok, err)
 	}
 }
 
-func TestSliceCursorRoundTrip(t *testing.T) {
-	request := httptest.NewRequest("GET", "/records?limit=2", nil)
-	firstRequest, err := Parse(request)
+func TestPageBoundaryDoesNotEmitCursorForExactPage(t *testing.T) {
+	spec := Spec{Key: "test.names", OrderBy: "name", Direction: Ascending, ValueKind: StringValue}
+	request, err := Parse(httptest.NewRequest("GET", "/records?limit=2", nil))
 	if err != nil {
-		t.Fatalf("Parse() error = %v", err)
+		t.Fatal(err)
 	}
-	first, metadata := Slice([]string{"a", "b", "c"}, firstRequest)
-	if len(first) != 2 || first[0] != "a" || first[1] != "b" || metadata.NextCursor == "" {
-		t.Fatalf("first page = %#v, metadata = %#v", first, metadata)
+	items := []record{{ID: "two", Name: "B"}, {ID: "one", Name: "A"}}
+	metadata, err := Apply(&items, request, spec)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if len(items) != 2 || items[0].ID != "one" || metadata.NextCursor != "" {
+		t.Fatalf("page = %#v, metadata = %#v", items, metadata)
+	}
+}
 
-	request = httptest.NewRequest("GET", "/records?limit=2&cursor="+metadata.NextCursor, nil)
-	secondRequest, err := Parse(request)
+func TestCursorIsBoundToQuery(t *testing.T) {
+	spec := Spec{Key: "test.filtered", OrderBy: "name", Direction: Ascending, ValueKind: StringValue, Filters: []Filter{{Field: "name", Value: "A"}}}
+	request, _ := Parse(httptest.NewRequest("GET", "/records?limit=1", nil))
+	items := []record{{ID: "one", Name: "A"}, {ID: "two", Name: "A"}}
+	metadata, err := Apply(&items, request, spec)
 	if err != nil {
-		t.Fatalf("Parse() second page error = %v", err)
+		t.Fatal(err)
 	}
-	second, metadata := Slice([]string{"a", "b", "c"}, secondRequest)
-	if len(second) != 1 || second[0] != "c" || metadata.NextCursor != "" {
-		t.Fatalf("second page = %#v, metadata = %#v", second, metadata)
+	cursorRequest, err := Parse(httptest.NewRequest("GET", "/records?cursor="+metadata.NextCursor, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongSpec := spec
+	wrongSpec.Key = "test.other-filter"
+	if _, _, _, err := cursorRequest.After(wrongSpec); !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("After() error = %v", err)
 	}
 }
 
