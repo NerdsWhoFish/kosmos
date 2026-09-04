@@ -16,7 +16,13 @@ Submit JSON to `POST /api/v1/intake/contact` with `name`, `email`, and optional 
 
 ## Gmail and Tiller
 
-Outbound email always requires an explicit user action and an `Idempotency-Key` header. Retries with the same key return the saved delivery instead of sending twice. Inbox sync stores sender, subject, snippet, time, and thread identifiers only for known contacts. It does not store message bodies or replace Gmail.
+Outbound email always requires an explicit user action and an `Idempotency-Key` header. Retries with the same key return the saved delivery instead of sending twice. Kosmos sends the plain-text body as MIME base64 so transport line limits cannot introduce visible line breaks that were absent from the authored template. Inbox sync stores sender, subject, snippet, time, and thread identifiers only for known contacts. It does not store message bodies or replace Gmail.
+
+## Account event history
+
+Kosmos writes immutable events beneath an account when it can identify the relationship. This includes account and contact edits, opportunity changes, notes, calls, texts, reminders, documents, sent and received email, Cloudflare domains, and Tiller transactions. Account pages show the five newest entries and link to a cursor-paginated history with event-type filters. Google Voice handoffs record that the shared account was opened, not that a call or text was completed.
+
+The timeline starts when this feature is deployed. It does not synthesize older history from mutable source records. External integrations use deterministic event identifiers so retries do not duplicate history. Interactive workspace mutations save the business record first and report timeline-write failures through structured telemetry rather than failing an already completed mutation.
 
 Tiller import expects a header row with `Date`, `Description`, and `Amount`. `Merchant` and `Transaction ID` are optional. The default range is `Transactions!A:Z`. Stable transaction IDs make imports replay-safe. One deterministic contact match is accepted; zero or multiple matches enter the review queue.
 
