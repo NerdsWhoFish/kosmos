@@ -116,6 +116,9 @@ describe('Kosmos application', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Costs' }))
     expect(await screen.findByRole('heading', { name: 'Business costs' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /record a cost/i }))
+    const now = new Date()
+    const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    expect(screen.getByLabelText(/^date$/i)).toHaveValue(localDate)
     fireEvent.change(screen.getByRole('textbox', { name: /description/i }), { target: { value: 'Domain renewal' } })
     fireEvent.change(screen.getByRole('spinbutton', { name: /amount/i }), { target: { value: '24' } })
     fireEvent.click(screen.getByRole('button', { name: /save cost/i }))
