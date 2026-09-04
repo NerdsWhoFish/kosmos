@@ -38,6 +38,11 @@ output "attachments_bucket" {
   description = "Private attachments and receipts bucket."
 }
 
+output "jobs_queue" {
+  value       = google_cloud_tasks_queue.jobs.name
+  description = "Near-free retry queue for asynchronous integration work."
+}
+
 output "artifact_registry_docker_prefix" {
   value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.kosmos.repository_id}"
   description = "Artifact Registry Docker repository prefix."

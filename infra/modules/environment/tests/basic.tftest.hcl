@@ -66,6 +66,11 @@ run "bootstrap_defaults" {
     condition     = var.min_instances == 0 && var.max_instances == 3
     error_message = "Cloud Run defaults must preserve scale-to-zero and the cost cap"
   }
+
+  assert {
+    condition     = google_cloud_tasks_queue.jobs.rate_limits[0].max_concurrent_dispatches == 2
+    error_message = "the async queue must keep a conservative near-free concurrency cap"
+  }
 }
 
 run "production_service" {
@@ -118,5 +123,15 @@ run "production_service" {
   assert {
     condition     = length(google_billing_budget.kosmos) == 1 && length(google_monitoring_notification_channel.billing_email) == 1
     error_message = "billing inputs must enable both the project budget and email channel"
+  }
+
+  assert {
+    condition     = length(google_monitoring_alert_policy.server_errors) == 1
+    error_message = "production must alert on Cloud Run server errors"
+  }
+
+  assert {
+    condition     = length(google_monitoring_uptime_check_config.health) == 1 && google_monitoring_uptime_check_config.health[0].monitored_resource[0].labels.host == "cast.nerdswhofish.com"
+    error_message = "production must monitor the public health endpoint"
   }
 }

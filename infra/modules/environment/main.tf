@@ -1,6 +1,7 @@
 locals {
   name_prefix             = "kosmos-${var.environment}"
   deploy_service          = var.image_digest != null
+  public_host             = var.public_url == null ? null : regex("^https://([^/]+)", var.public_url)[0]
   attachments_bucket      = coalesce(var.attachments_bucket_name, "${var.project_id}-attachments")
   runtime_service_account = "${local.name_prefix}-runtime"
   release_service_account = "${local.name_prefix}-releaser"
@@ -21,9 +22,10 @@ locals {
   )
   environment_variables = merge(
     {
-      KOSMOS_ENV             = var.environment
-      KOSMOS_GCP_PROJECT     = var.project_id
-      KOSMOS_ORGANIZATION_ID = var.organization_id
+      KOSMOS_ENV                = var.environment
+      KOSMOS_GCP_PROJECT        = var.project_id
+      KOSMOS_ORGANIZATION_ID    = var.organization_id
+      KOSMOS_ATTACHMENTS_BUCKET = local.attachments_bucket
     },
     var.public_url == null ? {} : { KOSMOS_PUBLIC_URL = var.public_url },
     var.google_client_id == null ? {} : { GOOGLE_CLIENT_ID = var.google_client_id },
@@ -34,6 +36,7 @@ locals {
   required_services = toset([
     "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com",
+    "cloudtasks.googleapis.com",
     "firestore.googleapis.com",
     "iam.googleapis.com",
     "iamcredentials.googleapis.com",
@@ -72,12 +75,34 @@ resource "google_artifact_registry_repository" "kosmos" {
 }
 
 resource "google_firestore_database" "kosmos" {
-  project                 = var.project_id
-  name                    = "(default)"
-  location_id             = var.firestore_location
-  type                    = "FIRESTORE_NATIVE"
-  concurrency_mode        = "OPTIMISTIC"
-  delete_protection_state = "DELETE_PROTECTION_ENABLED"
+  project                           = var.project_id
+  name                              = "(default)"
+  location_id                       = var.firestore_location
+  type                              = "FIRESTORE_NATIVE"
+  concurrency_mode                  = "OPTIMISTIC"
+  point_in_time_recovery_enablement = var.environment == "production" ? "POINT_IN_TIME_RECOVERY_ENABLED" : "POINT_IN_TIME_RECOVERY_DISABLED"
+  delete_protection_state           = "DELETE_PROTECTION_ENABLED"
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_cloud_tasks_queue" "jobs" {
+  project  = var.project_id
+  name     = "${local.name_prefix}-jobs"
+  location = var.region
+
+  rate_limits {
+    max_concurrent_dispatches = 2
+    max_dispatches_per_second = 1
+  }
+
+  retry_config {
+    max_attempts       = 5
+    max_retry_duration = "3600s"
+    min_backoff        = "5s"
+    max_backoff        = "300s"
+    max_doublings      = 5
+  }
 
   depends_on = [google_project_service.required]
 }
@@ -120,6 +145,12 @@ resource "google_service_account" "runtime" {
 resource "google_project_iam_member" "runtime_firestore" {
   project = var.project_id
   role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_project_iam_member" "runtime_tasks" {
+  project = var.project_id
+  role    = "roles/cloudtasks.enqueuer"
   member  = "serviceAccount:${google_service_account.runtime.email}"
 }
 
@@ -310,6 +341,65 @@ resource "google_billing_budget" "kosmos" {
   }
 
   deletion_policy = "PREVENT"
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_monitoring_alert_policy" "server_errors" {
+  count = local.deploy_service ? 1 : 0
+
+  project      = var.project_id
+  display_name = "Kosmos ${var.environment} HTTP 5xx"
+  combiner     = "OR"
+  enabled      = true
+
+  conditions {
+    display_name = "Cloud Run returned 5xx"
+
+    condition_threshold {
+      filter          = "resource.type = \"cloud_run_revision\" AND metric.type = \"run.googleapis.com/request_count\" AND resource.labels.service_name = \"${google_cloud_run_v2_service.kosmos[0].name}\" AND metric.labels.response_code_class = \"5xx\""
+      comparison      = "COMPARISON_GT"
+      threshold_value = 0
+      duration        = "0s"
+
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_RATE"
+      }
+    }
+  }
+
+  notification_channels = concat(tolist(var.monitoring_notification_channels), google_monitoring_notification_channel.billing_email[*].name)
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_monitoring_uptime_check_config" "health" {
+  count = local.deploy_service && var.public_url != null ? 1 : 0
+
+  project      = var.project_id
+  display_name = "Kosmos ${var.environment} health"
+  timeout      = "10s"
+  period       = "300s"
+
+  http_check {
+    path         = "/api/v1/health"
+    port         = 443
+    use_ssl      = true
+    validate_ssl = true
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.project_id
+      host       = local.public_host
+    }
+  }
 
   depends_on = [google_project_service.required]
 }

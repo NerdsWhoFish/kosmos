@@ -243,6 +243,12 @@ variable "budget_notification_email" {
   }
 }
 
+variable "monitoring_notification_channels" {
+  description = "Existing Monitoring notification-channel resource names for operational alerts."
+  type        = set(string)
+  default     = []
+}
+
 variable "labels" {
   description = "Additional labels applied to resources that support labels."
   type        = map(string)
