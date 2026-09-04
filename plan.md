@@ -19,6 +19,7 @@ This checklist is the release source of truth. Check an item only after its back
 - [ ] 15. Let users upload and display account and contact photos.
 - [ ] 16. Diagnose and repair the Sender addresses `502`, with useful user-facing errors and production verification.
 - [ ] 17. Let users attach a receipt while recording a business cost and show its download link with the cost.
+- [ ] 18. Let users edit existing accounts, including adding, editing, and removing the domains tied to an account.
 - [ ] Run backend unit, race, vet, API-contract, and integration tests.
 - [ ] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [ ] Release with Quill and deploy the complete checklist to production through the pinned Spacelift module.
