@@ -137,9 +137,14 @@ func main() {
 		)
 		registry := modules.NewRegistry(
 			landing.NewModule(landingStore, scope, manageLanding),
-			workspace.NewModule(workspaceStore, scope, workspace.WithContactMutation(func(ctx context.Context, scope string, contact workspace.Contact, action string) error {
-				return operationsModule.EnqueueGoogleContactMutation(ctx, scope, contact, action, "workspace")
-			})),
+			workspace.NewModule(
+				workspaceStore,
+				scope,
+				workspace.WithContactMutation(func(ctx context.Context, scope string, contact workspace.Contact, action string) error {
+					return operationsModule.EnqueueGoogleContactMutation(ctx, scope, contact, action, "workspace")
+				}),
+				workspace.WithCostDeletion(operationsModule.DeleteCostAttachments),
+			),
 			operationsModule,
 		)
 		registry.RegisterRoutes(mux)

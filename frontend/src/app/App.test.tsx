@@ -511,6 +511,16 @@ function mockAPI(authenticated = true) {
             201,
           ),
         );
+      if (url.pathname === "/api/v1/costs/cost-1" && method === "PATCH")
+        return Promise.resolve(
+          json({
+            ...(responses["/api/v1/costs"] as { costs: object[] }).costs[0],
+            ...body,
+            updatedAt: "2026-09-04T13:00:00Z",
+          }),
+        );
+      if (url.pathname === "/api/v1/costs/cost-1" && method === "DELETE")
+        return Promise.resolve(new Response(null, { status: 204 }));
       if (url.pathname === "/api/v1/landing/buttons" && method === "POST")
         return Promise.resolve(
           json(
@@ -552,6 +562,26 @@ function mockAPI(authenticated = true) {
         );
       if (url.pathname === "/api/v1/email/templates" && method === "POST")
         return Promise.resolve(json({ id: "template-1", ...body }, 201));
+      if (
+        url.pathname === "/api/v1/email/templates/template-1" &&
+        method === "PATCH"
+      )
+        return Promise.resolve(
+          json({
+            ...(
+              responses["/api/v1/email/templates"] as {
+                templates: object[];
+              }
+            ).templates[0],
+            ...body,
+            updatedAt: "2026-09-04T13:00:00Z",
+          }),
+        );
+      if (
+        url.pathname === "/api/v1/email/templates/template-1" &&
+        method === "DELETE"
+      )
+        return Promise.resolve(new Response(null, { status: 204 }));
       if (
         url.pathname === "/api/v1/integrations/tiller/sync" &&
         method === "POST"
@@ -977,7 +1007,22 @@ describe("Kosmos application", () => {
       name: /good (morning|afternoon|evening)/i,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: /quick lead/i }));
+    const welcome = screen
+      .getByRole("heading", { name: /good (morning|afternoon|evening)/i })
+      .closest(".welcome-row") as HTMLElement;
+    expect(
+      within(welcome).getByRole("button", { name: /quick lead/i }),
+    ).toBeInTheDocument();
+    const landing = screen
+      .getByRole("heading", { name: /landing zone/i })
+      .closest(".panel") as HTMLElement;
+    expect(
+      within(landing).queryByRole("button", { name: /quick lead/i }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      within(welcome).getByRole("button", { name: /quick lead/i }),
+    );
     expect(
       await screen.findByRole("heading", { name: /capture the conversation/i }),
     ).toBeInTheDocument();
@@ -1527,7 +1572,7 @@ describe("Kosmos application", () => {
     });
     fireEvent.click(screen.getByRole("link", { name: "Inbox" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: /welcome note/i }),
+      (await screen.findByText("Welcome note")).closest("button")!,
     );
 
     const preview = screen.getByRole("region", { name: /email preview/i });
@@ -1624,13 +1669,125 @@ describe("Kosmos application", () => {
       "href",
       `sms:${contact.phone}`,
     );
-    fireEvent.click(screen.getByRole("button", { name: /template/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^template$/i }));
     expect(
       screen.getByLabelText(/available template variables/i),
     ).toHaveTextContent("{{name}}");
     expect(
       screen.getByLabelText(/available template variables/i),
     ).toHaveTextContent("{{company}}");
+  });
+
+  it.each([
+    ["desktop", 1440],
+    ["mobile", 390],
+  ])("edits and deletes email templates on %s", async (_name, width) => {
+    window.innerWidth = width;
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Inbox" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /edit welcome note template/i,
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: /edit email template/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/^name$/i)).toHaveValue("Welcome note");
+    fireEvent.change(screen.getByLabelText(/^name$/i), {
+      target: { value: "Warm welcome" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/email/templates/template-1" &&
+              init?.method === "PATCH" &&
+              JSON.parse(String(init.body)).name === "Warm welcome",
+          ),
+      ).toBe(true),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /delete welcome note template/i,
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: /delete this email template/i }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /delete template/i }));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/email/templates/template-1" &&
+              init?.method === "DELETE",
+          ),
+      ).toBe(true),
+    );
+  });
+
+  it.each([
+    ["desktop", 1440],
+    ["mobile", 390],
+  ])("edits and deletes business costs on %s", async (_name, width) => {
+    window.innerWidth = width;
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Operations" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /edit workspace cost/i }),
+    );
+    expect(
+      screen.getByRole("heading", { name: /edit business cost/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/description/i)).toHaveValue("Workspace");
+    fireEvent.change(screen.getByLabelText(/amount/i), {
+      target: { value: "25" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/costs/cost-1" &&
+              init?.method === "PATCH" &&
+              JSON.parse(String(init.body)).amountCents === 2500,
+          ),
+      ).toBe(true),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /delete workspace cost/i }),
+    );
+    expect(
+      screen.getByRole("heading", { name: /delete this business cost/i }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /delete cost/i }));
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(fetch)
+          .mock.calls.some(
+            ([input, init]) =>
+              String(input) === "/api/v1/costs/cost-1" &&
+              init?.method === "DELETE",
+          ),
+      ).toBe(true),
+    );
   });
 
   it("maps verified Gmail aliases and Tiller products from Settings", async () => {

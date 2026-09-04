@@ -130,6 +130,8 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/events", m.publishEvent)
 	mux.HandleFunc("GET /api/v1/email/templates", m.emailTemplates)
 	mux.HandleFunc("POST /api/v1/email/templates", m.createEmailTemplate)
+	mux.HandleFunc("PATCH /api/v1/email/templates/{id}", m.updateEmailTemplate)
+	mux.HandleFunc("DELETE /api/v1/email/templates/{id}", m.deleteEmailTemplate)
 	mux.HandleFunc("GET /api/v1/integrations/google", m.googleStatus)
 	mux.HandleFunc("GET /api/v1/integrations/google-contacts", m.voiceContactsStatus)
 	mux.HandleFunc("DELETE /api/v1/integrations/google-contacts", m.disconnectVoiceContacts)
@@ -472,13 +474,8 @@ func (m *Module) createEmailTemplate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var item EmailTemplate
-	if !decodeJSON(w, r, &item, 128<<10) {
-		return
-	}
-	item.Name, item.Subject = strings.TrimSpace(item.Name), strings.TrimSpace(item.Subject)
-	if item.Name == "" || item.Subject == "" || strings.TrimSpace(item.Body) == "" || len(item.Body) > 100000 {
-		writeError(w, http.StatusBadRequest, "invalid_template", "Template name, subject, and a body under 100,000 characters are required")
+	item, ok := decodeEmailTemplate(w, r)
+	if !ok {
 		return
 	}
 	now := time.Now().UTC()
@@ -494,6 +491,66 @@ func (m *Module) createEmailTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = m.audit(r.Context(), scope, actor.Email, "email_template.created", "email_template", item.ID, item.Name)
 	writeJSON(w, http.StatusCreated, item)
+}
+
+func (m *Module) updateEmailTemplate(w http.ResponseWriter, r *http.Request) {
+	scope, actor, ok := m.authorize(w, r)
+	if !ok {
+		return
+	}
+	request, ok := decodeEmailTemplate(w, r)
+	if !ok {
+		return
+	}
+	var item EmailTemplate
+	if err := m.store.Get(r.Context(), scope, "emailTemplates", r.PathValue("id"), &item); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "template_not_found", "Email template was not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "template_update_failed", "Could not update email template")
+		return
+	}
+	item.Name, item.Subject, item.Body, item.UpdatedAt = request.Name, request.Subject, request.Body, time.Now().UTC()
+	if err := m.store.Put(r.Context(), scope, "emailTemplates", item.ID, item); err != nil {
+		writeError(w, http.StatusInternalServerError, "template_update_failed", "Could not update email template")
+		return
+	}
+	_ = m.audit(r.Context(), scope, actor.Email, "email_template.updated", "email_template", item.ID, item.Name)
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (m *Module) deleteEmailTemplate(w http.ResponseWriter, r *http.Request) {
+	scope, actor, ok := m.authorize(w, r)
+	if !ok {
+		return
+	}
+	var item EmailTemplate
+	if err := m.store.Get(r.Context(), scope, "emailTemplates", r.PathValue("id"), &item); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "template_not_found", "Email template was not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "template_delete_failed", "Could not delete email template")
+		return
+	}
+	if err := m.store.Delete(r.Context(), scope, "emailTemplates", item.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "template_delete_failed", "Could not delete email template")
+		return
+	}
+	_ = m.audit(r.Context(), scope, actor.Email, "email_template.deleted", "email_template", item.ID, item.Name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func decodeEmailTemplate(w http.ResponseWriter, r *http.Request) (EmailTemplate, bool) {
+	var item EmailTemplate
+	if !decodeJSON(w, r, &item, 128<<10) {
+		return EmailTemplate{}, false
+	}
+	item.Name, item.Subject = strings.TrimSpace(item.Name), strings.TrimSpace(item.Subject)
+	if item.Name == "" || item.Subject == "" || strings.TrimSpace(item.Body) == "" || len(item.Body) > 100000 {
+		writeError(w, http.StatusBadRequest, "invalid_template", "Template name, subject, and a body under 100,000 characters are required")
+		return EmailTemplate{}, false
+	}
+	return item, true
 }
 
 func (m *Module) googleStatus(w http.ResponseWriter, r *http.Request) {
@@ -827,6 +884,25 @@ func (m *Module) deleteAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = m.audit(r.Context(), scope, actor.Email, "attachment.deleted", "attachment", item.ID, item.FileName)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (m *Module) DeleteCostAttachments(ctx context.Context, scope, costID string) error {
+	var items []Attachment
+	if err := m.store.List(ctx, scope, "attachments", &items); err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.RecordType != "cost" || item.RecordID != costID {
+			continue
+		}
+		if err := m.blobs.Delete(ctx, item.ObjectName); err != nil && !errors.Is(err, errNotFound) {
+			return err
+		}
+		if err := m.store.Delete(ctx, scope, "attachments", item.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *Module) auditEntries(w http.ResponseWriter, r *http.Request) {

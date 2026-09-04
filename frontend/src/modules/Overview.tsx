@@ -171,12 +171,17 @@ export function Overview({
           </h1>
           <p className="subhead">Here is what needs your attention.</p>
         </div>
-        <button
-          className="primary-button"
-          onClick={() => navigate("/contacts?new=1")}
-        >
-          <Plus size={17} /> Add a contact
-        </button>
+        <div className="welcome-actions">
+          <button className="primary-button" onClick={() => navigate("/lead")}>
+            <ScanLine size={17} /> Quick lead
+          </button>
+          <button
+            className="secondary-button"
+            onClick={() => navigate("/contacts?new=1")}
+          >
+            <Plus size={17} /> Add a contact
+          </button>
+        </div>
       </section>
       <section className="stats-row">
         <Stat
@@ -229,22 +234,6 @@ export function Overview({
             )}
           </div>
           <div className="shortcut-grid">
-            <article className="shortcut-card fixed-shortcut">
-              <button
-                className="shortcut-main"
-                type="button"
-                onClick={() => navigate("/lead")}
-              >
-                <span className="shortcut-icon">
-                  <ScanLine size={20} />
-                </span>
-                <span>
-                  <strong>Quick lead</strong>
-                  <small>Capture a prospect and qualified opportunity.</small>
-                </span>
-                <ArrowUpRight className="shortcut-arrow" size={17} />
-              </button>
-            </article>
             {landing.buttons.map((button) => {
               const Icon = iconMap[button.icon] ?? Globe2;
               const link = (

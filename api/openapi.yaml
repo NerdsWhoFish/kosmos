@@ -709,6 +709,18 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteCost
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Cost and linked receipt attachments deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /members:
     get:
       operationId: listMembers
@@ -841,9 +853,42 @@ paths:
       operationId: createEmailTemplate
       parameters:
         - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailTemplateInput'
       responses:
         '201':
           description: Email template created
+  /email/templates/{id}:
+    patch:
+      operationId: updateEmailTemplate
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailTemplateInput'
+      responses:
+        '200':
+          description: Email template updated
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteEmailTemplate
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Email template deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
   /email/send:
     post:
       operationId: sendGoogleEmail
@@ -2416,6 +2461,17 @@ components:
         updatedAt:
           type: string
           format: date-time
+    EmailTemplateInput:
+      type: object
+      required: [name, subject, body]
+      properties:
+        name:
+          type: string
+        subject:
+          type: string
+        body:
+          type: string
+          maxLength: 100000
     MailMetadata:
       type: object
       required: [id, from, subject, snippet, receivedAt, threadId, createdAt]

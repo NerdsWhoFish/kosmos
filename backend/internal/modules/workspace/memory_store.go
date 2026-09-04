@@ -602,6 +602,17 @@ func (s *MemoryStore) ListCosts(_ context.Context, scope string) ([]Cost, error)
 	return append([]Cost(nil), s.workspace(scope).costs...), nil
 }
 
+func (s *MemoryStore) GetCost(_ context.Context, scope, id string) (Cost, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, item := range s.workspace(scope).costs {
+		if item.ID == id {
+			return item, nil
+		}
+	}
+	return Cost{}, errNotFound
+}
+
 func (s *MemoryStore) CreateCost(_ context.Context, scope string, item Cost) (Cost, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -631,6 +642,19 @@ func (s *MemoryStore) UpdateCost(_ context.Context, scope, id string, patch Cost
 		return workspace.costs[index], nil
 	}
 	return Cost{}, errNotFound
+}
+
+func (s *MemoryStore) DeleteCost(_ context.Context, scope, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspace(scope)
+	for index := range workspace.costs {
+		if workspace.costs[index].ID == id {
+			workspace.costs = append(workspace.costs[:index], workspace.costs[index+1:]...)
+			return nil
+		}
+	}
+	return errNotFound
 }
 
 func applyContactPatch(item *Contact, patch ContactPatch) {

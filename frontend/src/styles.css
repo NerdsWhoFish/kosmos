@@ -246,6 +246,12 @@ button {
   align-items: flex-end;
   margin-bottom: 30px;
 }
+.welcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
 .welcome-row h1 {
   font-family: "Playfair Display", serif;
   font-size: clamp(30px, 4vw, 42px);
@@ -539,6 +545,14 @@ button {
     align-items: flex-start;
     gap: 20px;
     flex-direction: column;
+  }
+  .welcome-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+  .welcome-actions button {
+    flex: 1;
+    justify-content: center;
   }
   .weather-card {
     align-self: stretch;
@@ -2070,6 +2084,48 @@ select {
   border-radius: 12px;
   overflow: hidden;
 }
+.template-row {
+  padding: 4px 6px 4px 12px;
+}
+.template-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  padding: 8px 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+.template-main span {
+  display: grid;
+  min-width: 0;
+}
+.record-row.compact .template-actions {
+  display: flex;
+  flex: 0 0 auto;
+}
+.record-action {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  padding: 7px;
+  color: var(--theme-muted);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+}
+.record-action:hover {
+  color: var(--theme-accent);
+  background: color-mix(in srgb, var(--theme-accent) 10%, transparent);
+}
+.record-action.danger-text:hover {
+  color: var(--theme-danger);
+  background: color-mix(in srgb, var(--theme-danger) 12%, transparent);
+}
 .cost-row {
   display: flex;
   align-items: center;
@@ -2105,6 +2161,10 @@ select {
 .cost-amount {
   min-width: 90px;
   text-align: right;
+}
+.cost-actions {
+  display: flex;
+  flex: 0 0 auto;
 }
 .field-grid {
   display: grid;
@@ -2414,6 +2474,9 @@ select {
   .cost-amount {
     margin-left: auto;
   }
+  .cost-actions {
+    margin-left: 4px;
+  }
   .field-grid {
     grid-template-columns: 1fr;
   }
@@ -2473,11 +2536,6 @@ select {
 }
 
 .managed-shortcut {
-  padding: 0;
-  overflow: hidden;
-}
-
-.fixed-shortcut {
   padding: 0;
   overflow: hidden;
 }

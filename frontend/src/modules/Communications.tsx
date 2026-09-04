@@ -3,9 +3,11 @@ import {
   ExternalLink,
   Mail,
   MessageSquareText,
+  Pencil,
   Plus,
   RefreshCw,
   Send,
+  Trash2,
 } from "lucide-react";
 import {
   AcceptedJob,
@@ -53,6 +55,12 @@ export function Communications() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(
+    null,
+  );
+  const [deletingTemplate, setDeletingTemplate] =
+    useState<EmailTemplate | null>(null);
+  const [templateSaving, setTemplateSaving] = useState(false);
   const [sending, setSending] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [phone, setPhone] = useState("");
@@ -150,19 +158,75 @@ export function Communications() {
     }
   }
 
-  async function createTemplate(event: FormEvent<HTMLFormElement>) {
+  function openNewTemplate() {
+    setEditingTemplate(null);
+    setTemplateOpen(true);
+  }
+
+  function openEditTemplate(template: EmailTemplate) {
+    setEditingTemplate(template);
+    setTemplateOpen(true);
+  }
+
+  function closeTemplate() {
+    setTemplateOpen(false);
+    setEditingTemplate(null);
+  }
+
+  async function saveTemplate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await api("/api/v1/email/templates", {
-      method: "POST",
-      body: JSON.stringify({
-        name: form.get("name"),
-        subject: form.get("subject"),
-        body: form.get("body"),
-      }),
-    });
-    setTemplateOpen(false);
-    load();
+    setTemplateSaving(true);
+    setNotice("");
+    try {
+      await api(
+        editingTemplate
+          ? `/api/v1/email/templates/${editingTemplate.id}`
+          : "/api/v1/email/templates",
+        {
+          method: editingTemplate ? "PATCH" : "POST",
+          body: JSON.stringify({
+            name: form.get("name"),
+            subject: form.get("subject"),
+            body: form.get("body"),
+          }),
+        },
+      );
+      setNotice(
+        editingTemplate ? "Email template updated." : "Email template saved.",
+      );
+      closeTemplate();
+      load();
+    } catch (reason) {
+      setNotice(
+        reason instanceof Error ? reason.message : "Could not save template",
+      );
+    } finally {
+      setTemplateSaving(false);
+    }
+  }
+
+  async function deleteTemplate() {
+    if (!deletingTemplate) return;
+    setTemplateSaving(true);
+    setNotice("");
+    try {
+      await api(`/api/v1/email/templates/${deletingTemplate.id}`, {
+        method: "DELETE",
+      });
+      setTemplates((current) =>
+        current.filter((item) => item.id !== deletingTemplate.id),
+      );
+      if (activeTemplate?.id === deletingTemplate.id) setActiveTemplate(null);
+      setNotice("Email template deleted.");
+      setDeletingTemplate(null);
+    } catch (reason) {
+      setNotice(
+        reason instanceof Error ? reason.message : "Could not delete template",
+      );
+    } finally {
+      setTemplateSaving(false);
+    }
   }
 
   async function markRead(item: Notification) {
@@ -270,10 +334,7 @@ export function Communications() {
               <p className="eyebrow">Outbound</p>
               <h2>Send one good email</h2>
             </div>
-            <button
-              className="text-button"
-              onClick={() => setTemplateOpen(true)}
-            >
+            <button className="text-button" onClick={openNewTemplate}>
               <Plus size={15} /> Template
             </button>
           </div>
@@ -351,15 +412,39 @@ export function Communications() {
             <div className="template-list">
               <p className="eyebrow">Saved templates</p>
               {templates.map((template) => (
-                <button
+                <article
+                  className="record-row compact template-row"
                   key={template.id}
-                  className="record-row compact"
-                  type="button"
-                  onClick={() => useTemplate(template)}
                 >
-                  <strong>{template.name}</strong>
-                  <small>{template.subject}</small>
-                </button>
+                  <button
+                    className="template-main"
+                    type="button"
+                    onClick={() => useTemplate(template)}
+                  >
+                    <span>
+                      <strong>{template.name}</strong>
+                      <small>{template.subject}</small>
+                    </span>
+                  </button>
+                  <span className="template-actions">
+                    <button
+                      className="record-action"
+                      type="button"
+                      aria-label={`Edit ${template.name} template`}
+                      onClick={() => openEditTemplate(template)}
+                    >
+                      <Pencil size={15} /> Edit
+                    </button>
+                    <button
+                      className="record-action danger-text"
+                      type="button"
+                      aria-label={`Delete ${template.name} template`}
+                      onClick={() => setDeletingTemplate(template)}
+                    >
+                      <Trash2 size={15} /> Delete
+                    </button>
+                  </span>
+                </article>
               ))}
             </div>
           )}
@@ -498,10 +583,10 @@ export function Communications() {
       {templateOpen && (
         <Modal
           eyebrow="Reusable message"
-          title="New email template"
-          onClose={() => setTemplateOpen(false)}
+          title={editingTemplate ? "Edit email template" : "New email template"}
+          onClose={closeTemplate}
         >
-          <form onSubmit={createTemplate}>
+          <form onSubmit={saveTemplate}>
             <div
               className="template-variables"
               role="note"
@@ -520,27 +605,75 @@ export function Communications() {
             </div>
             <label>
               Name
-              <input name="name" required autoFocus />
+              <input
+                name="name"
+                required
+                autoFocus
+                defaultValue={editingTemplate?.name}
+              />
             </label>
             <label>
               Subject
-              <input name="subject" required />
+              <input
+                name="subject"
+                required
+                defaultValue={editingTemplate?.subject}
+              />
             </label>
             <label>
               Message
-              <textarea name="body" rows={8} required />
+              <textarea
+                name="body"
+                rows={8}
+                required
+                defaultValue={editingTemplate?.body}
+              />
             </label>
             <div className="form-actions">
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => setTemplateOpen(false)}
+                onClick={closeTemplate}
               >
                 Cancel
               </button>
-              <button className="primary-button">Save template</button>
+              <button className="primary-button" disabled={templateSaving}>
+                {templateSaving
+                  ? "Saving..."
+                  : editingTemplate
+                    ? "Save changes"
+                    : "Save template"}
+              </button>
             </div>
           </form>
+        </Modal>
+      )}
+      {deletingTemplate && (
+        <Modal
+          eyebrow="Reusable message"
+          title="Delete this email template?"
+          onClose={() => setDeletingTemplate(null)}
+        >
+          <p className="muted-copy">
+            {deletingTemplate.name} will be removed for everyone in the
+            organization.
+          </p>
+          <div className="form-actions">
+            <button
+              className="secondary-button"
+              onClick={() => setDeletingTemplate(null)}
+            >
+              Keep template
+            </button>
+            <button
+              className="danger-button"
+              onClick={deleteTemplate}
+              disabled={templateSaving}
+            >
+              <Trash2 size={16} />
+              {templateSaving ? "Deleting..." : "Delete template"}
+            </button>
+          </div>
         </Modal>
       )}
     </Page>

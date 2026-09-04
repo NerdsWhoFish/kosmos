@@ -1,5 +1,12 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Download, Plus, ReceiptText, Repeat2 } from "lucide-react";
+import {
+  Download,
+  Pencil,
+  Plus,
+  ReceiptText,
+  Repeat2,
+  Trash2,
+} from "lucide-react";
 import { api, Attachment, Cost, money, shortDate } from "../api";
 import { Modal } from "../components/Modal";
 import { Page } from "../components/Page";
@@ -21,6 +28,8 @@ export function Costs({
   const [saving, setSaving] = useState(false);
   const [receipts, setReceipts] = useState<Attachment[]>([]);
   const [pendingCostID, setPendingCostID] = useState("");
+  const [editing, setEditing] = useState<Cost | null>(null);
+  const [deleting, setDeleting] = useState<Cost | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -71,7 +80,29 @@ export function Costs({
     setReceipts((current) => [receipt, ...current]);
   }
 
-  async function create(event: FormEvent<HTMLFormElement>) {
+  function openCreate() {
+    setEditing(null);
+    setRecurring(false);
+    setPendingCostID("");
+    setFormError("");
+    setCreating(true);
+  }
+
+  function openEdit(item: Cost) {
+    setEditing(item);
+    setRecurring(item.recurring);
+    setPendingCostID("");
+    setFormError("");
+    setCreating(true);
+  }
+
+  function closeForm() {
+    setCreating(false);
+    setEditing(null);
+    setPendingCostID("");
+  }
+
+  async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
     setFormError("");
@@ -82,36 +113,62 @@ export function Costs({
     )?.files?.[0];
     const form = new FormData(event.currentTarget);
     try {
-      const created = pendingCostID
+      const saved = pendingCostID
         ? items.find((item) => item.id === pendingCostID)!
-        : await api<Cost>("/api/v1/costs", {
-            method: "POST",
-            body: JSON.stringify({
-              vendor: form.get("vendor"),
-              description: form.get("description"),
-              amountCents: Math.round(Number(form.get("amount")) * 100),
-              category: form.get("category"),
-              incurredOn: form.get("incurredOn"),
-              recurring,
-              recurrence: recurring ? form.get("recurrence") : "",
-              taxDeductible: form.get("taxDeductible") === "on",
-              notes: form.get("notes"),
-              renewalDate: form.get("renewalDate"),
-              paymentMethod: form.get("paymentMethod"),
-              reviewState: form.get("reviewState"),
-            }),
-          });
+        : await api<Cost>(
+            editing ? `/api/v1/costs/${editing.id}` : "/api/v1/costs",
+            {
+              method: editing ? "PATCH" : "POST",
+              body: JSON.stringify({
+                vendor: form.get("vendor"),
+                description: form.get("description"),
+                amountCents: Math.round(Number(form.get("amount")) * 100),
+                category: form.get("category"),
+                incurredOn: form.get("incurredOn"),
+                recurring,
+                recurrence: recurring ? form.get("recurrence") : "",
+                taxDeductible: form.get("taxDeductible") === "on",
+                notes: form.get("notes"),
+                renewalDate: form.get("renewalDate"),
+                paymentMethod: form.get("paymentMethod"),
+                reviewState: form.get("reviewState"),
+              }),
+            },
+          );
       if (!pendingCostID) {
-        setItems((current) => [created, ...current]);
-        setPendingCostID(created.id);
+        setItems((current) =>
+          editing
+            ? current.map((item) => (item.id === saved.id ? saved : item))
+            : [saved, ...current],
+        );
+        setPendingCostID(saved.id);
       }
-      if (receiptFile) await uploadReceipt(receiptFile, created.id);
-      setCreating(false);
+      if (receiptFile) await uploadReceipt(receiptFile, saved.id);
+      closeForm();
       setRecurring(false);
-      setPendingCostID("");
     } catch (reason) {
       setFormError(
         reason instanceof Error ? reason.message : "Could not save cost",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteCost() {
+    if (!deleting) return;
+    setSaving(true);
+    setFormError("");
+    try {
+      await api(`/api/v1/costs/${deleting.id}`, { method: "DELETE" });
+      setItems((current) => current.filter((item) => item.id !== deleting.id));
+      setReceipts((current) =>
+        current.filter((receipt) => receipt.recordId !== deleting.id),
+      );
+      setDeleting(null);
+    } catch (reason) {
+      setFormError(
+        reason instanceof Error ? reason.message : "Could not delete cost",
       );
     } finally {
       setSaving(false);
@@ -123,7 +180,7 @@ export function Costs({
 
   const total = items.reduce((sum, item) => sum + item.amountCents, 0);
   const action = (
-    <button className="primary-button" onClick={() => setCreating(true)}>
+    <button className="primary-button" onClick={openCreate}>
       <Plus size={17} /> Record a cost
     </button>
   );
@@ -183,6 +240,22 @@ export function Costs({
                 {item.recurring && <small>{item.recurrence}</small>}
               </span>
               <strong className="cost-amount">{money(item.amountCents)}</strong>
+              <span className="cost-actions">
+                <button
+                  className="record-action"
+                  aria-label={`Edit ${item.description} cost`}
+                  onClick={() => openEdit(item)}
+                >
+                  <Pencil size={15} /> Edit
+                </button>
+                <button
+                  className="record-action danger-text"
+                  aria-label={`Delete ${item.description} cost`}
+                  onClick={() => setDeleting(item)}
+                >
+                  <Trash2 size={15} /> Delete
+                </button>
+              </span>
             </article>
           );
         })}
@@ -193,7 +266,7 @@ export function Costs({
       title="No costs recorded"
       detail="Start with a subscription or registration fee you pay every month."
       action={
-        <button className="primary-button" onClick={() => setCreating(true)}>
+        <button className="primary-button" onClick={openCreate}>
           <Plus size={17} /> Record your first cost
         </button>
       }
@@ -230,21 +303,28 @@ export function Costs({
       {creating && (
         <Modal
           eyebrow="Money"
-          title="Record a business cost"
-          onClose={() => {
-            setCreating(false);
-            setPendingCostID("");
-          }}
+          title={editing ? "Edit business cost" : "Record a business cost"}
+          onClose={closeForm}
         >
-          <form onSubmit={create}>
+          <form onSubmit={save}>
             <div className="field-grid">
               <label>
                 Description
-                <input name="description" maxLength={200} required autoFocus />
+                <input
+                  name="description"
+                  maxLength={200}
+                  required
+                  autoFocus
+                  defaultValue={editing?.description}
+                />
               </label>
               <label>
                 Vendor
-                <input name="vendor" maxLength={160} />
+                <input
+                  name="vendor"
+                  maxLength={160}
+                  defaultValue={editing?.vendor}
+                />
               </label>
               <label>
                 Amount
@@ -255,6 +335,9 @@ export function Costs({
                   step="0.01"
                   inputMode="decimal"
                   required
+                  defaultValue={
+                    editing ? (editing.amountCents / 100).toFixed(2) : undefined
+                  }
                 />
               </label>
               <label>
@@ -262,13 +345,18 @@ export function Costs({
                 <input
                   name="incurredOn"
                   type="date"
-                  defaultValue={localDateValue()}
+                  defaultValue={editing?.incurredOn || localDateValue()}
                   required
                 />
               </label>
               <label>
                 Category
-                <input name="category" maxLength={100} placeholder="Software" />
+                <input
+                  name="category"
+                  maxLength={100}
+                  placeholder="Software"
+                  defaultValue={editing?.category}
+                />
               </label>
               <label>
                 Payment method
@@ -276,15 +364,23 @@ export function Costs({
                   name="paymentMethod"
                   maxLength={100}
                   placeholder="Business card"
+                  defaultValue={editing?.paymentMethod}
                 />
               </label>
               <label>
                 Renewal date
-                <input name="renewalDate" type="date" />
+                <input
+                  name="renewalDate"
+                  type="date"
+                  defaultValue={editing?.renewalDate}
+                />
               </label>
               <label>
                 Review state
-                <select name="reviewState" defaultValue="ready">
+                <select
+                  name="reviewState"
+                  defaultValue={editing?.reviewState || "ready"}
+                >
                   <option value="ready">Ready</option>
                   <option value="review">Needs review</option>
                   <option value="complete">Complete</option>
@@ -299,7 +395,12 @@ export function Costs({
                 />
               </label>
               <label className="check-label">
-                <input name="taxDeductible" type="checkbox" /> Tax-deductible
+                <input
+                  name="taxDeductible"
+                  type="checkbox"
+                  defaultChecked={editing?.taxDeductible}
+                />{" "}
+                Tax-deductible
               </label>
               <label className="check-label">
                 <input
@@ -313,7 +414,10 @@ export function Costs({
               {recurring && (
                 <label>
                   Repeats
-                  <select name="recurrence" defaultValue="monthly">
+                  <select
+                    name="recurrence"
+                    defaultValue={editing?.recurrence || "monthly"}
+                  >
                     <option value="monthly">Monthly</option>
                     <option value="quarterly">Quarterly</option>
                     <option value="yearly">Yearly</option>
@@ -323,7 +427,12 @@ export function Costs({
             </div>
             <label>
               Notes
-              <textarea name="notes" rows={3} maxLength={1000} />
+              <textarea
+                name="notes"
+                rows={3}
+                maxLength={1000}
+                defaultValue={editing?.notes}
+              />
             </label>
             {formError && (
               <p className="form-error" role="alert">
@@ -334,10 +443,7 @@ export function Costs({
               <button
                 type="button"
                 className="secondary-button"
-                onClick={() => {
-                  setCreating(false);
-                  setPendingCostID("");
-                }}
+                onClick={closeForm}
               >
                 Cancel
               </button>
@@ -346,10 +452,44 @@ export function Costs({
                   ? "Saving..."
                   : pendingCostID
                     ? "Retry receipt"
-                    : "Save cost"}
+                    : editing
+                      ? "Save changes"
+                      : "Save cost"}
               </button>
             </div>
           </form>
+        </Modal>
+      )}
+      {deleting && (
+        <Modal
+          eyebrow="Money"
+          title="Delete this business cost?"
+          onClose={() => setDeleting(null)}
+        >
+          <p className="muted-copy">
+            {deleting.description} and its linked receipt files will be
+            permanently deleted.
+          </p>
+          {formError && (
+            <p className="form-error" role="alert">
+              {formError}
+            </p>
+          )}
+          <div className="form-actions">
+            <button
+              className="secondary-button"
+              onClick={() => setDeleting(null)}
+            >
+              Keep cost
+            </button>
+            <button
+              className="danger-button"
+              onClick={deleteCost}
+              disabled={saving}
+            >
+              <Trash2 size={16} /> {saving ? "Deleting..." : "Delete cost"}
+            </button>
+          </div>
         </Modal>
       )}
     </>

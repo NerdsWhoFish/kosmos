@@ -11,17 +11,23 @@ import (
 
 type ScopeFunc func(*http.Request) (string, error)
 type ContactMutationFunc func(context.Context, string, Contact, string) error
+type CostDeletionFunc func(context.Context, string, string) error
 
 type Module struct {
 	store           Store
 	scope           ScopeFunc
 	contactMutation ContactMutationFunc
+	costDeletion    CostDeletionFunc
 }
 
 type ModuleOption func(*Module)
 
 func WithContactMutation(handler ContactMutationFunc) ModuleOption {
 	return func(module *Module) { module.contactMutation = handler }
+}
+
+func WithCostDeletion(handler CostDeletionFunc) ModuleOption {
+	return func(module *Module) { module.costDeletion = handler }
 }
 
 func NewModule(store Store, scope ScopeFunc, options ...ModuleOption) Module {
@@ -253,6 +259,8 @@ type Store interface {
 	ListDocumentRevisions(context.Context, string, string) ([]DocumentRevision, error)
 	CreateDocumentRevision(context.Context, string, DocumentRevision) (DocumentRevision, error)
 	ListCosts(context.Context, string) ([]Cost, error)
+	GetCost(context.Context, string, string) (Cost, error)
 	CreateCost(context.Context, string, Cost) (Cost, error)
 	UpdateCost(context.Context, string, string, CostPatch) (Cost, error)
+	DeleteCost(context.Context, string, string) error
 }

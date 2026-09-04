@@ -394,6 +394,31 @@ func TestCostCanBeReviewedAndUpdated(t *testing.T) {
 		t.Fatalf("unexpected updated cost: %#v", updated)
 	}
 	performJSON[map[string]any](t, mux, http.MethodPatch, "/api/v1/costs/"+created.ID, `{"recurrence":"sometimes"}`, http.StatusBadRequest)
+	performNoContent(t, mux, http.MethodDelete, "/api/v1/costs/"+created.ID)
+	performJSON[map[string]any](t, mux, http.MethodDelete, "/api/v1/costs/"+created.ID, "", http.StatusNotFound)
+}
+
+func TestCostDeletionRunsCleanupBeforeRemovingRecord(t *testing.T) {
+	store := NewMemoryStore()
+	cleanupCalled := false
+	mux := http.NewServeMux()
+	NewModule(
+		store,
+		func(*http.Request) (string, error) { return "nerds-who-fish", nil },
+		WithCostDeletion(func(_ context.Context, scope, id string) error {
+			cleanupCalled = scope == "nerds-who-fish" && id != ""
+			return nil
+		}),
+	).RegisterRoutes(mux)
+	created := performJSON[Cost](t, mux, http.MethodPost, "/api/v1/costs", `{"description":"Domain","amountCents":2400,"incurredOn":"2026-09-04"}`, http.StatusCreated)
+	performNoContent(t, mux, http.MethodDelete, "/api/v1/costs/"+created.ID)
+	if !cleanupCalled {
+		t.Fatal("cost cleanup was not called")
+	}
+	items, err := store.ListCosts(context.Background(), "nerds-who-fish")
+	if err != nil || len(items) != 0 {
+		t.Fatalf("costs after delete = %#v, %v", items, err)
+	}
 }
 
 func TestAccountUpdatePreservesManagedWebsiteMetadata(t *testing.T) {

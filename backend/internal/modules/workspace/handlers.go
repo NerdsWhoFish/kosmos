@@ -51,6 +51,7 @@ func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/costs", m.listCosts)
 	mux.HandleFunc("POST /api/v1/costs", m.createCost)
 	mux.HandleFunc("PATCH /api/v1/costs/{id}", m.updateCost)
+	mux.HandleFunc("DELETE /api/v1/costs/{id}", m.deleteCost)
 }
 
 func (m Module) listAccounts(w http.ResponseWriter, r *http.Request) {
@@ -758,6 +759,35 @@ func (m Module) updateCost(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := m.store.UpdateCost(r.Context(), scope, r.PathValue("id"), patch)
 	respondUpdated(w, updated, err, "cost_not_found", "Cost not found", "cost_save_failed", "Could not save cost")
+}
+
+func (m Module) deleteCost(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := m.store.GetCost(r.Context(), scope, id); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "cost_not_found", "Cost not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "cost_delete_failed", "Could not delete cost")
+		return
+	}
+	if m.costDeletion != nil {
+		if err := m.costDeletion(r.Context(), scope, id); err != nil {
+			writeError(w, http.StatusInternalServerError, "cost_delete_failed", "Could not delete cost attachments")
+			return
+		}
+	}
+	if err := m.store.DeleteCost(r.Context(), scope, id); errors.Is(err, errNotFound) {
+		writeError(w, http.StatusNotFound, "cost_not_found", "Cost not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "cost_delete_failed", "Could not delete cost")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type summaryResponse struct {

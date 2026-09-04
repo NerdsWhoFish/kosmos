@@ -29,8 +29,13 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 25. Show reminders in Up next only when they are overdue or due within one week, with a separate review flow for future reminders.
 - [x] 26. Let every authenticated role add, edit, remove, and open named external links directly from an account.
 - [x] 27. Keep landing-zone shortcut actions compact and contained instead of stretching across the shortcut row.
+- [ ] 28. Put Quick Lead beside Add a contact in the overview header instead of inside the Landing Zone.
+- [ ] 29. Let users edit and delete existing email templates, with explicit confirmation before deletion.
+- [ ] 30. Let users edit and delete recorded business costs, deleting linked receipt attachments with the cost after explicit confirmation.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
 - [x] Re-run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests for items 20 through 27.
 - [x] Release v0.3.1 with Quill and deploy items 20 through 27 to production through pinned Spacelift module 0.6.0.
+- [ ] Run backend and frontend tests for items 28 through 30, including responsive phone and desktop coverage.
+- [ ] Release and deploy items 28 through 30 to production with Quill's GoReleaser-then-Docker artifact flow.

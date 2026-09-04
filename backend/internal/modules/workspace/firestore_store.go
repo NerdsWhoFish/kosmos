@@ -601,6 +601,10 @@ func (s *FirestoreStore) ListCosts(ctx context.Context, scope string) ([]Cost, e
 	return listRecords(ctx, s, scope, "costs", "incurredOn", firestore.Desc, func(item *Cost, id string) { item.ID = id })
 }
 
+func (s *FirestoreStore) GetCost(ctx context.Context, scope, id string) (Cost, error) {
+	return getRecord(ctx, s, scope, "costs", id, func(item *Cost, id string) { item.ID = id })
+}
+
 func (s *FirestoreStore) CreateCost(ctx context.Context, scope string, item Cost) (Cost, error) {
 	return createRecord(ctx, s, scope, "costs", item, func(item *Cost, id string, now time.Time) {
 		item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
@@ -634,4 +638,8 @@ func (s *FirestoreStore) UpdateCost(ctx context.Context, scope, id string, patch
 	addString("paymentMethod", patch.PaymentMethod)
 	addString("reviewState", patch.ReviewState)
 	return updateRecord(ctx, s, scope, "costs", id, updates, func(item *Cost, id string) { item.ID = id })
+}
+
+func (s *FirestoreStore) DeleteCost(ctx context.Context, scope, id string) error {
+	return deleteRecord(ctx, s, scope, "costs", id)
 }

@@ -139,6 +139,17 @@ func TestEmailTemplateRequiresBody(t *testing.T) {
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/email/templates", `{"name":"Introduction","subject":"Hello","body":"  "}`, http.StatusBadRequest)
 }
 
+func TestEmailTemplateCanBeEditedAndDeleted(t *testing.T) {
+	_, mux, _ := newTestModule(t)
+	created := performJSON[EmailTemplate](t, mux, http.MethodPost, "/api/v1/email/templates", `{"name":"Introduction","subject":"Hello {{name}}","body":"Welcome to {{company}}."}`, http.StatusCreated)
+	updated := performJSON[EmailTemplate](t, mux, http.MethodPatch, "/api/v1/email/templates/"+created.ID, `{"name":"Warm introduction","subject":"Hi {{name}}","body":"Welcome to {{company}}. Domains: {{domains}}."}`, http.StatusOK)
+	if updated.Name != "Warm introduction" || updated.Subject != "Hi {{name}}" || updated.CreatedAt != created.CreatedAt || !updated.UpdatedAt.After(created.UpdatedAt) {
+		t.Fatalf("unexpected updated template: %#v", updated)
+	}
+	performJSON[map[string]any](t, mux, http.MethodDelete, "/api/v1/email/templates/"+created.ID, "", http.StatusNoContent)
+	performJSON[map[string]any](t, mux, http.MethodPatch, "/api/v1/email/templates/"+created.ID, `{"name":"Missing","subject":"Missing","body":"Missing"}`, http.StatusNotFound)
+}
+
 func TestVoiceLinkSelectsSharedGoogleAccount(t *testing.T) {
 	module, mux, _ := newTestModule(t)
 	const googleEmail = "shared.voice@gmail.com"
@@ -548,6 +559,27 @@ func TestPrivateAttachmentUsesExpiringDownload(t *testing.T) {
 	mux.ServeHTTP(missing, httptest.NewRequest(http.MethodGet, attachment.DownloadURL, nil))
 	if missing.Code != http.StatusNotFound {
 		t.Fatalf("deleted attachment download = %d", missing.Code)
+	}
+}
+
+func TestCostDeletionRemovesLinkedAttachments(t *testing.T) {
+	module, _, _ := newTestModule(t)
+	attachment := Attachment{ID: "receipt-1", ObjectName: "organizations/nerds-who-fish/receipt-1", RecordType: "cost", RecordID: "cost-1"}
+	if err := module.store.Put(context.Background(), "nerds-who-fish", "attachments", attachment.ID, attachment); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.blobs.Put(context.Background(), attachment.ObjectName, "text/plain", strings.NewReader("receipt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.DeleteCostAttachments(context.Background(), "nerds-who-fish", "cost-1"); err != nil {
+		t.Fatal(err)
+	}
+	var stored Attachment
+	if err := module.store.Get(context.Background(), "nerds-who-fish", "attachments", attachment.ID, &stored); !errors.Is(err, errNotFound) {
+		t.Fatalf("attachment still stored: %v", err)
+	}
+	if _, err := module.blobs.Open(context.Background(), attachment.ObjectName); !errors.Is(err, errNotFound) {
+		t.Fatalf("attachment blob still stored: %v", err)
 	}
 }
 
