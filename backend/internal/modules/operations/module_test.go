@@ -639,6 +639,135 @@ func TestViewerCannotMutateCoreModules(t *testing.T) {
 	}
 }
 
+func TestAPICredentialsAreOneTimeScopedAndImmediatelyRevocable(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	type creationResponse struct {
+		Credential APICredential `json:"credential"`
+		Token      string        `json:"token"`
+	}
+	read := performJSON[creationResponse](t, mux, http.MethodPost, "/api/v1/api-credentials", `{"name":"Reporting","access":"read"}`, http.StatusCreated)
+	if !strings.HasPrefix(read.Token, apiCredentialTokenPrefix) || read.Credential.SecretHash != "" {
+		t.Fatalf("unsafe creation response: %#v", read)
+	}
+	var stored APICredential
+	if err := module.store.Get(context.Background(), "nerds-who-fish", "apiCredentials", read.Credential.ID, &stored); err != nil || stored.SecretHash == "" {
+		t.Fatalf("credential hash was not stored: %#v, %v", stored, err)
+	}
+	listed := performJSON[struct {
+		Credentials []APICredential `json:"credentials"`
+	}](t, mux, http.MethodGet, "/api/v1/api-credentials", "", http.StatusOK)
+	encoded, _ := json.Marshal(listed)
+	if strings.Contains(string(encoded), read.Token) || strings.Contains(string(encoded), stored.SecretHash) {
+		t.Fatalf("credential list leaked secret material: %s", encoded)
+	}
+	if _, err := module.AuthenticateAPICredential(context.Background(), read.Token); err != nil {
+		t.Fatalf("authenticate read credential: %v", err)
+	}
+	module.identity = func(r *http.Request) (string, Identity, error) {
+		authorization := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		actor, err := module.AuthenticateAPICredential(r.Context(), authorization)
+		return "nerds-who-fish", actor, err
+	}
+	apiRequest := func(method, target, body, token string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, target, strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, request)
+		return recorder
+	}
+	if response := apiRequest(http.MethodGet, "/api/v1/notifications", "", read.Token); response.Code != http.StatusOK {
+		t.Fatalf("read credential GET = %d: %s", response.Code, response.Body.String())
+	}
+	if response := apiRequest(http.MethodPost, "/api/v1/events", `{"title":"Build","kind":"release","href":"/documents"}`, read.Token); response.Code != http.StatusForbidden {
+		t.Fatalf("read credential mutation = %d: %s", response.Code, response.Body.String())
+	}
+	if response := apiRequest(http.MethodGet, "/api/v1/api-credentials", "", read.Token); response.Code != http.StatusForbidden {
+		t.Fatalf("credential management through API credential = %d: %s", response.Code, response.Body.String())
+	}
+	module.identity = func(*http.Request) (string, Identity, error) {
+		return "nerds-who-fish", Identity{Subject: "google-1", Email: "owner@nerdswhofish.com", Name: "Owner"}, nil
+	}
+	performJSON[map[string]any](t, mux, http.MethodDelete, "/api/v1/api-credentials/"+read.Credential.ID, "", http.StatusNoContent)
+	if _, err := module.AuthenticateAPICredential(context.Background(), read.Token); err == nil {
+		t.Fatal("revoked credential still authenticates")
+	}
+}
+
+func TestManagedDocumentSyncConvergesDocumentAndAttachments(t *testing.T) {
+	module, mux, _ := newTestModule(t)
+	type creationResponse struct {
+		Token string `json:"token"`
+	}
+	credential := performJSON[creationResponse](t, mux, http.MethodPost, "/api/v1/api-credentials", `{"name":"Brand publisher","access":"write"}`, http.StatusCreated)
+	module.identity = func(r *http.Request) (string, Identity, error) {
+		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		actor, err := module.AuthenticateAPICredential(r.Context(), token)
+		return "nerds-who-fish", actor, err
+	}
+	type syncResponse struct {
+		Document    workspace.Document `json:"document"`
+		Attachments []Attachment       `json:"attachments"`
+	}
+	sync := func(document string, files map[string]string, wantStatus int) syncResponse {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		_ = writer.WriteField("document", document)
+		for name, content := range files {
+			part, err := writer.CreateFormFile("files", name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = part.Write([]byte(content))
+		}
+		_ = writer.Close()
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/managed-documents/nwf-branding", &body)
+		request.Header.Set("Authorization", "Bearer "+credential.Token)
+		request.Header.Set("Content-Type", writer.FormDataContentType())
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, request)
+		if recorder.Code != wantStatus {
+			t.Fatalf("sync status = %d, want %d: %s", recorder.Code, wantStatus, recorder.Body.String())
+		}
+		var result syncResponse
+		if err := json.NewDecoder(recorder.Body).Decode(&result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	document := `{"title":"Brand guide","body":"![Logo](assets/kosmos/logo.svg)\n[Tokens](assets/kosmos/tokens.json)"}`
+	first := sync(document, map[string]string{"logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>`, "tokens.json": `{"purple":"#bd93f9"}`, "theme.css": `:root { color: #f8f8f2; }`}, http.StatusCreated)
+	if first.Document.SourceKey != "nwf-branding" || first.Document.Revision != 1 || len(first.Attachments) != 3 {
+		t.Fatalf("unexpected first sync: %#v", first)
+	}
+	for _, attachment := range first.Attachments {
+		if attachment.ContentHash == "" || attachment.ID == "" {
+			t.Fatalf("attachment lacks stable metadata: %#v", attachment)
+		}
+	}
+	second := sync(document, map[string]string{"logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"></svg>`, "tokens.json": `{"purple":"#bd93f9"}`, "theme.css": `:root { color: #f8f8f2; }`}, http.StatusOK)
+	if second.Document.ID != first.Document.ID || second.Document.Revision != first.Document.Revision {
+		t.Fatalf("identical retry changed document: first=%#v second=%#v", first.Document, second.Document)
+	}
+	updated := sync(`{"title":"Brand guide","body":"Updated\n![Logo](assets/kosmos/logo.svg)"}`, map[string]string{"logo.svg": `<svg xmlns="http://www.w3.org/2000/svg"><title>Kosmos</title></svg>`}, http.StatusOK)
+	if updated.Document.Revision != 2 || len(updated.Attachments) != 1 || updated.Attachments[0].ID != firstAttachmentID(first.Attachments, "logo.svg") {
+		t.Fatalf("updated sync did not converge: %#v", updated)
+	}
+	var stored []Attachment
+	if err := module.store.List(context.Background(), "nerds-who-fish", "attachments", &stored); err != nil || len(stored) != 1 {
+		t.Fatalf("stale attachments remain: %#v, %v", stored, err)
+	}
+}
+
+func firstAttachmentID(items []Attachment, name string) string {
+	for _, item := range items {
+		if item.FileName == name {
+			return item.ID
+		}
+	}
+	return ""
+}
+
 func TestViewerCannotMutateOperations(t *testing.T) {
 	module, mux, _ := newTestModule(t)
 	actor := Identity{Email: "viewer@nerdswhofish.com", Name: "Viewer"}

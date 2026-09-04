@@ -1340,6 +1340,7 @@ func validateOpportunityPatch(patch OpportunityPatch) string {
 }
 
 func normalizeDocument(item *Document) {
+	item.SourceKey = ""
 	item.Title = strings.TrimSpace(item.Title)
 }
 

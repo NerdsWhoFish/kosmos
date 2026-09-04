@@ -77,12 +77,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer closeJobQueue()
-	identity := func(r *http.Request) (string, operations.Identity, error) {
-		user, err := googleAuth.CurrentUser(r)
-		return organizationID, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, err
-	}
+	var operationsModule *operations.Module
+	identity := requestIdentity(organizationID, googleAuth.CurrentUser, func(ctx context.Context, token string) (operations.Identity, error) {
+		if operationsModule == nil {
+			return operations.Identity{}, errors.New("API credential authentication is unavailable")
+		}
+		return operationsModule.AuthenticateAPICredential(ctx, token)
+	})
 	integrationKey := integrationSecret()
-	operationsModule := operations.NewModule(operationsStore, blobStore, workspaceStore, identity, organizationID, integrationKey, operations.NewLiveGoogleProvider(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")), operations.WithJobQueue(jobQueue))
+	operationsModule = operations.NewModule(operationsStore, blobStore, workspaceStore, identity, organizationID, integrationKey, operations.NewLiveGoogleProvider(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")), operations.WithJobQueue(jobQueue))
 	if role == "web" {
 		migrated, err := operationsModule.MigrateGoogleConnectionSecrets(context.Background(), []byte(os.Getenv("KOSMOS_SESSION_SECRET")))
 		if err != nil {
@@ -174,6 +177,21 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
+	}
+}
+
+func requestIdentity(organizationID string, currentUser func(*http.Request) (auth.User, error), authenticateAPI func(context.Context, string) (operations.Identity, error)) operations.IdentityFunc {
+	return func(r *http.Request) (string, operations.Identity, error) {
+		if authorization := strings.TrimSpace(r.Header.Get("Authorization")); authorization != "" {
+			scheme, token, ok := strings.Cut(authorization, " ")
+			if !ok || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
+				return organizationID, operations.Identity{}, errors.New("invalid bearer authorization")
+			}
+			actor, err := authenticateAPI(r.Context(), strings.TrimSpace(token))
+			return organizationID, actor, err
+		}
+		user, err := currentUser(r)
+		return organizationID, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, err
 	}
 }
 

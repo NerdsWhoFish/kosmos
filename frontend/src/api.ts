@@ -111,6 +111,7 @@ export type RecordLink = {
 };
 export type Document = {
   id: string;
+  sourceKey?: string;
   title: string;
   body: string;
   links: RecordLink[];
@@ -171,6 +172,20 @@ export type Member = {
   status: "active" | "disabled";
   createdAt: string;
   updatedAt: string;
+};
+export type APICredential = {
+  id: string;
+  name: string;
+  access: "read" | "write";
+  tokenPrefix: string;
+  createdBy: string;
+  revokedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+export type APICredentialCreation = {
+  credential: APICredential;
+  token: string;
 };
 export type PipelineStage = {
   id: string;
@@ -283,6 +298,7 @@ export type Attachment = {
   kind: string;
   recordType: string;
   recordId: string;
+  contentHash?: string;
   createdBy: string;
   createdAt: string;
   downloadUrl: string;

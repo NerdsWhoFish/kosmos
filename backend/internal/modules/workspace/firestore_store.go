@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"time"
 
@@ -606,6 +607,51 @@ func (s *FirestoreStore) CreateDocument(ctx context.Context, scope string, item 
 		item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
 		item.Revision = 1
 	})
+}
+
+func (s *FirestoreStore) SyncManagedDocument(ctx context.Context, scope, sourceKey string, item Document) (Document, bool, error) {
+	reference := s.collection(scope, "documents").Doc(managedDocumentID(sourceKey))
+	created := false
+	var result Document
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, transaction *firestore.Transaction) error {
+		snapshot, err := transaction.Get(reference)
+		now := time.Now().UTC()
+		if status.Code(err) == codes.NotFound {
+			created = true
+			item.ID = reference.ID
+			item.SourceKey = sourceKey
+			item.Revision = 1
+			item.CreatedAt = now
+			item.UpdatedAt = now
+			result = item
+			return transaction.Create(reference, item)
+		}
+		if err != nil {
+			return err
+		}
+		var existing Document
+		if err := snapshot.DataTo(&existing); err != nil {
+			return err
+		}
+		existing.ID = reference.ID
+		if existing.Title == item.Title && existing.Body == item.Body && reflect.DeepEqual(existing.Links, item.Links) {
+			result = existing
+			return nil
+		}
+		revision := DocumentRevision{DocumentID: existing.ID, Title: existing.Title, Body: existing.Body, Links: existing.Links, Revision: existing.Revision, CreatedAt: now}
+		if err := transaction.Create(s.collection(scope, "documentRevisions").NewDoc(), revision); err != nil {
+			return err
+		}
+		existing.SourceKey = sourceKey
+		existing.Title = item.Title
+		existing.Body = item.Body
+		existing.Links = item.Links
+		existing.Revision++
+		existing.UpdatedAt = now
+		result = existing
+		return transaction.Set(reference, existing)
+	})
+	return result, created, err
 }
 
 func (s *FirestoreStore) UpdateDocument(ctx context.Context, scope, id string, patch DocumentPatch) (Document, error) {

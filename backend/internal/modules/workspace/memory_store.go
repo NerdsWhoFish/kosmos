@@ -576,6 +576,43 @@ func (s *MemoryStore) CreateDocument(_ context.Context, scope string, item Docum
 	return item, nil
 }
 
+func (s *MemoryStore) SyncManagedDocument(_ context.Context, scope, sourceKey string, item Document) (Document, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.workspace(scope)
+	id := managedDocumentID(sourceKey)
+	now := time.Now().UTC()
+	for index := range current.documents {
+		if current.documents[index].ID != id {
+			continue
+		}
+		existing := current.documents[index]
+		if existing.Title == item.Title && existing.Body == item.Body && reflect.DeepEqual(existing.Links, item.Links) {
+			return existing, false, nil
+		}
+		revisionID, err := newID()
+		if err != nil {
+			return Document{}, false, err
+		}
+		current.documentRevisions = append([]DocumentRevision{{ID: revisionID, DocumentID: existing.ID, Title: existing.Title, Body: existing.Body, Links: existing.Links, Revision: existing.Revision, CreatedAt: now}}, current.documentRevisions...)
+		existing.SourceKey = sourceKey
+		existing.Title = item.Title
+		existing.Body = item.Body
+		existing.Links = item.Links
+		existing.Revision++
+		existing.UpdatedAt = now
+		current.documents[index] = existing
+		return existing, false, nil
+	}
+	item.ID = id
+	item.SourceKey = sourceKey
+	item.Revision = 1
+	item.CreatedAt = now
+	item.UpdatedAt = now
+	current.documents = append([]Document{item}, current.documents...)
+	return item, true, nil
+}
+
 func (s *MemoryStore) ListDocumentRevisions(_ context.Context, scope, documentID string) ([]DocumentRevision, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

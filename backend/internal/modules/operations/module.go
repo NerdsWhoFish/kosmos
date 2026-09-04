@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"mime/multipart"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -55,6 +54,8 @@ type Workspace interface {
 	CreateContact(context.Context, string, workspace.Contact) (workspace.Contact, error)
 	ListCosts(context.Context, string) ([]workspace.Cost, error)
 	CreateAccountEvent(context.Context, string, workspace.AccountEvent) (workspace.AccountEvent, error)
+	ListDocuments(context.Context, string) ([]workspace.Document, error)
+	SyncManagedDocument(context.Context, string, string, workspace.Document) (workspace.Document, bool, error)
 }
 
 type Module struct {
@@ -116,13 +117,16 @@ func (m *Module) MigrateGoogleConnectionSecrets(ctx context.Context, legacyKey [
 func (*Module) Name() string { return "operations" }
 
 func (*Module) Manifest() platformmodules.Manifest {
-	return platformmodules.Manifest{Name: "operations", Navigation: []platformmodules.Navigation{{Path: "/communications", Label: "Inbox", Icon: "inbox"}, {Path: "/operations", Label: "Operations", Icon: "operations"}, {Path: "/settings", Label: "Settings", Icon: "settings"}}, Permissions: []string{"communications.send", "integrations.manage", "members.manage", "records.export"}, Resources: []string{"members", "pipelineStages", "notifications", "emailTemplates", "mailMetadata", "transactions", "attachments", "audit", "cloudflareConnections", "sendAsMappings", "tillerWebhookConnections", "tillerProductMappings", "voiceContactsConnections", "googleContactMappings"}, EventTypes: []string{"lead.created", "email.received", "email.sent", "transaction.imported", "cloudflare.domain_linked", "tiller.purchase_imported", "google_contact.synced"}, BackgroundJobs: []string{"gmail.sync", "tiller.sync", "google-contact.sync"}, SearchProviders: []string{"mail", "transactions"}, DocumentLinkTargets: []string{"attachment"}}
+	return platformmodules.Manifest{Name: "operations", Navigation: []platformmodules.Navigation{{Path: "/communications", Label: "Inbox", Icon: "inbox"}, {Path: "/operations", Label: "Operations", Icon: "operations"}, {Path: "/settings", Label: "Settings", Icon: "settings"}}, Permissions: []string{"communications.send", "integrations.manage", "members.manage", "records.export"}, Resources: []string{"members", "apiCredentials", "pipelineStages", "notifications", "emailTemplates", "mailMetadata", "transactions", "attachments", "audit", "cloudflareConnections", "sendAsMappings", "tillerWebhookConnections", "tillerProductMappings", "voiceContactsConnections", "googleContactMappings"}, EventTypes: []string{"lead.created", "email.received", "email.sent", "transaction.imported", "cloudflare.domain_linked", "tiller.purchase_imported", "google_contact.synced"}, BackgroundJobs: []string{"gmail.sync", "tiller.sync", "google-contact.sync"}, SearchProviders: []string{"mail", "transactions"}, DocumentLinkTargets: []string{"attachment"}}
 }
 
 func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/intake/contact", m.intakeContact)
 	mux.HandleFunc("GET /api/v1/members", m.members)
 	mux.HandleFunc("PATCH /api/v1/members/{id}", m.updateMember)
+	mux.HandleFunc("GET /api/v1/api-credentials", m.apiCredentials)
+	mux.HandleFunc("POST /api/v1/api-credentials", m.createAPICredential)
+	mux.HandleFunc("DELETE /api/v1/api-credentials/{id}", m.revokeAPICredential)
 	mux.HandleFunc("GET /api/v1/email/send-as", m.sendAsMappings)
 	mux.HandleFunc("PUT /api/v1/members/{id}/send-as", m.configureSendAs)
 	mux.HandleFunc("GET /api/v1/pipeline-stages", m.pipelineStages)
@@ -161,6 +165,7 @@ func (m *Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/attachments", m.attachments)
 	mux.HandleFunc("GET /api/v1/attachments/{id}/download", m.downloadAttachment)
 	mux.HandleFunc("DELETE /api/v1/attachments/{id}", m.deleteAttachment)
+	mux.HandleFunc("PUT /api/v1/managed-documents/{sourceKey}", m.syncManagedDocument)
 	mux.HandleFunc("GET /api/v1/audit", m.auditEntries)
 	mux.HandleFunc("GET /api/v1/exports/{kind}", m.exportRecords)
 	mux.HandleFunc("GET /api/v1/voice/link", m.voiceLink)
@@ -218,6 +223,15 @@ func (m *Module) SaveGoogleGrant(ctx context.Context, user Identity, token *oaut
 }
 
 func (m *Module) CheckAccess(ctx context.Context, scope string, actor Identity, mutation bool) error {
+	if actor.Kind == "api" {
+		if !oneOf(actor.Access, "read", "write") {
+			return errors.New("API credential access is invalid")
+		}
+		if mutation && actor.Access != "write" {
+			return errors.New("API credential is read only")
+		}
+		return nil
+	}
 	member, err := m.ensureMember(ctx, scope, actor)
 	if err != nil {
 		return err
@@ -232,6 +246,9 @@ func (m *Module) CheckAccess(ctx context.Context, scope string, actor Identity, 
 }
 
 func (m *Module) CheckRole(ctx context.Context, scope string, actor Identity, roles ...string) error {
+	if actor.Kind == "api" {
+		return errors.New("API credentials cannot manage organization settings")
+	}
 	member, err := m.ensureMember(ctx, scope, actor)
 	if err != nil {
 		return err
@@ -801,9 +818,14 @@ func (m *Module) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	contentType := detectedContentType(file, header)
-	if !oneOf(contentType, "image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain") {
-		writeError(w, http.StatusBadRequest, "unsupported_attachment", "Upload a PDF, text file, JPEG, PNG, or WebP image")
+	content, err := io.ReadAll(io.LimitReader(file, maxUploadSize+1))
+	if err != nil || len(content) > maxUploadSize {
+		writeError(w, http.StatusBadRequest, "invalid_attachment", "Choose a file smaller than 10 MB")
+		return
+	}
+	contentType := attachmentContentType(content, header.Filename)
+	if !supportedAttachmentContentType(contentType) {
+		writeError(w, http.StatusBadRequest, "unsupported_attachment", "Upload a PDF, Markdown, text, JSON, CSS, SVG, JPEG, PNG, or WebP file")
 		return
 	}
 	kind := normalizedOr(r.FormValue("kind"), "attachment")
@@ -820,7 +842,7 @@ func (m *Module) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_photo", "Photos must be linked to an account or contact")
 		return
 	}
-	if kind == "photo" && !strings.HasPrefix(contentType, "image/") {
+	if kind == "photo" && !oneOf(contentType, "image/jpeg", "image/png", "image/webp") {
 		writeError(w, http.StatusBadRequest, "invalid_photo", "Account and contact photos must be JPEG, PNG, or WebP images")
 		return
 	}
@@ -830,11 +852,12 @@ func (m *Module) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	objectName := scope + "/" + id + filepath.Ext(filepath.Base(header.Filename))
-	if err := m.blobs.Put(r.Context(), objectName, contentType, file); err != nil {
+	if err := m.blobs.Put(r.Context(), objectName, contentType, bytes.NewReader(content)); err != nil {
 		writeError(w, http.StatusInternalServerError, "attachment_upload_failed", "Could not store attachment")
 		return
 	}
-	item := Attachment{ID: id, FileName: filepath.Base(header.Filename), ContentType: contentType, Size: header.Size, Kind: kind, RecordType: recordType, RecordID: strings.TrimSpace(r.FormValue("recordId")), ObjectName: objectName, CreatedBy: actor.Email, CreatedAt: time.Now().UTC()}
+	digest := sha256.Sum256(content)
+	item := Attachment{ID: id, FileName: filepath.Base(header.Filename), ContentType: contentType, Size: int64(len(content)), Kind: kind, RecordType: recordType, RecordID: strings.TrimSpace(r.FormValue("recordId")), ObjectName: objectName, ContentHash: hex.EncodeToString(digest[:]), CreatedBy: actor.Email, CreatedAt: time.Now().UTC()}
 	if err := m.store.Put(r.Context(), scope, "attachments", item.ID, item); err != nil {
 		writeError(w, http.StatusInternalServerError, "attachment_upload_failed", "Could not save attachment metadata")
 		return
@@ -1110,6 +1133,18 @@ func (m *Module) authorize(w http.ResponseWriter, r *http.Request) (string, Iden
 		writeError(w, http.StatusUnauthorized, "authentication_required", "Authentication required")
 		return "", Identity{}, false
 	}
+	if actor.Kind == "api" {
+		if !apiCredentialRouteAllowed(r) {
+			writeError(w, http.StatusForbidden, "permission_denied", "API credentials cannot access this endpoint")
+			return "", Identity{}, false
+		}
+		mutation := r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions
+		if err := m.CheckAccess(r.Context(), scope, actor, mutation); err != nil {
+			writeError(w, http.StatusForbidden, "permission_denied", err.Error())
+			return "", Identity{}, false
+		}
+		return scope, actor, true
+	}
 	member, err := m.ensureMember(r.Context(), scope, actor)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "membership_failed", "Could not load organization membership")
@@ -1166,6 +1201,10 @@ func (m *Module) ensureMember(ctx context.Context, scope string, actor Identity)
 }
 
 func (m *Module) requireRole(w http.ResponseWriter, ctx context.Context, scope string, actor Identity, roles ...string) bool {
+	if actor.Kind == "api" {
+		writeError(w, http.StatusForbidden, "permission_denied", "API credentials cannot manage organization settings")
+		return false
+	}
 	var member Member
 	if err := m.store.Get(ctx, scope, "members", memberID(actor.Email), &member); err != nil || !oneOf(member.Role, roles...) {
 		writeError(w, http.StatusForbidden, "permission_denied", "You do not have permission to manage team access")
@@ -1477,20 +1516,6 @@ func matchSender(from string, contacts []workspace.Contact) string {
 		}
 	}
 	return ""
-}
-
-func detectedContentType(file multipart.File, header *multipart.FileHeader) string {
-	buffer := make([]byte, 512)
-	count, _ := file.Read(buffer)
-	_, _ = file.Seek(0, io.SeekStart)
-	detected := http.DetectContentType(buffer[:count])
-	if strings.HasPrefix(detected, "text/plain") {
-		return "text/plain"
-	}
-	if detected == "application/octet-stream" && strings.EqualFold(filepath.Ext(header.Filename), ".pdf") {
-		return "application/pdf"
-	}
-	return detected
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any, limit int64) bool {

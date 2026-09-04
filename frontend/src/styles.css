@@ -1128,6 +1128,62 @@ select:focus-visible {
 .mapping-row small {
   color: var(--theme-muted);
 }
+.api-credential-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(170px, 0.45fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 18px;
+}
+.api-credential-form label {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  color: var(--theme-muted);
+  font-size: 11px;
+}
+.api-token-reveal {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 16px;
+  border: 1px solid color-mix(in srgb, var(--theme-warning) 58%, var(--theme-border));
+  border-radius: 10px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--theme-warning) 8%, var(--theme-surface-dark));
+}
+.api-token-reveal > strong {
+  grid-column: 1 / -1;
+}
+.api-token-reveal code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.api-credential-list {
+  display: grid;
+  margin-top: 14px;
+}
+.api-credential-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border-top: 1px solid var(--theme-border);
+  padding: 13px 0;
+}
+.api-credential-row > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.api-credential-row small {
+  overflow-wrap: anywhere;
+  color: var(--theme-muted);
+}
 .audit-row {
   grid-template-columns: minmax(0, 1fr) auto;
 }
@@ -1262,10 +1318,17 @@ select:focus-visible {
   .stage-strip {
     grid-template-columns: repeat(3, 1fr);
   }
+  .api-credential-form,
+  .send-as-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
 }
 
 @media (max-width: 600px) {
   .nav-list {
+    min-width: 0;
+    max-width: 100%;
     justify-content: flex-start;
     overflow-x: auto;
     scrollbar-width: none;
@@ -1323,6 +1386,17 @@ select:focus-visible {
   .send-as-row {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+  .api-credential-form,
+  .api-token-reveal {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .api-token-reveal > strong {
+    grid-column: auto;
+  }
+  .api-credential-row {
+    align-items: start;
   }
   .tiller-mapping-form {
     grid-template-columns: 1fr;
@@ -3230,6 +3304,11 @@ button.shortcut-main {
   flex-basis: 100%;
   padding-left: 17px;
   color: var(--theme-muted);
+}
+
+.integration-panel code {
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .success-notice {

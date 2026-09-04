@@ -253,6 +253,8 @@ export function Documents({
     if (!selected) return;
     const form = event.currentTarget;
     const data = new FormData(form);
+    const fileInput = form.elements.namedItem("file") as HTMLInputElement;
+    if (fileInput.files?.[0]) data.set("file", fileInput.files[0]);
     data.set("kind", "attachment");
     data.set("recordType", "document");
     data.set("recordId", selected.id);
@@ -420,8 +422,8 @@ export function Documents({
               <p className="eyebrow">Files</p>
               <h2>Attachments</h2>
               <p className="muted-copy">
-                Add supporting files, then embed images and PDFs with their
-                filename.
+                Add supporting files, then reference them with normal Markdown
+                links or images.
               </p>
             </div>
           </div>
@@ -440,7 +442,7 @@ export function Documents({
               <input
                 name="file"
                 type="file"
-                accept="image/jpeg,image/png,image/webp,application/pdf,text/plain"
+                accept="image/jpeg,image/png,image/webp,image/svg+xml,application/pdf,text/plain,text/markdown,application/json,text/css,.md,.markdown,.json,.css,.svg"
                 required
               />
             </label>
@@ -615,8 +617,9 @@ function DocumentEditor({
               </p>
             )}
             <small>
-              Markdown is highlighted with line numbers. Add an uploaded file
-              using <code>[[filename]]</code>.
+              Use standard Markdown for uploaded files:{" "}
+              <code>![Description](image.png)</code> or{" "}
+              <code>[Download file](guide.pdf)</code>.
             </small>
           </footer>
         </form>
@@ -649,7 +652,12 @@ function DocumentAttachments({
             <span>
               <strong>{item.fileName}</strong>
               <small>
-                Embed with <code>[[{item.fileName}]]</code>
+                Markdown:{" "}
+                <code>
+                  {isImageAttachment(item)
+                    ? `![Description](${item.fileName})`
+                    : `[Download ${item.fileName}](${item.fileName})`}
+                </code>
               </small>
             </span>
             <a
@@ -700,7 +708,29 @@ function EmbeddedMarkdown({
     <>
       {parts.map((part, index) => {
         const match = /^\[\[([^\]]+)\]\]$/.exec(part);
-        if (!match) return <ReactMarkdown key={index}>{part}</ReactMarkdown>;
+        if (!match)
+          return (
+            <ReactMarkdown
+              components={{
+                img: ({ src, alt }) => {
+                  const file = resolveAttachment(src, attachments);
+                  return (
+                    <img
+                      src={file?.viewUrl ?? src}
+                      alt={alt ?? file?.fileName ?? ""}
+                    />
+                  );
+                },
+                a: ({ href, children }) => {
+                  const file = resolveAttachment(href, attachments);
+                  return <a href={file?.downloadUrl ?? href}>{children}</a>;
+                },
+              }}
+              key={index}
+            >
+              {part}
+            </ReactMarkdown>
+          );
         const file = attachments.find((item) => item.fileName === match[1]);
         if (!file)
           return (
@@ -738,6 +768,36 @@ function EmbeddedMarkdown({
         );
       })}
     </>
+  );
+}
+
+function resolveAttachment(
+  destination: string | undefined,
+  attachments: Attachment[],
+) {
+  if (
+    !destination ||
+    destination.startsWith("#") ||
+    /^[a-z][a-z0-9+.-]*:/i.test(destination) ||
+    destination.startsWith("//")
+  )
+    return undefined;
+  const path = destination.split(/[?#]/, 1)[0];
+  let basename = path.split("/").filter(Boolean).at(-1) ?? "";
+  try {
+    basename = decodeURIComponent(basename);
+  } catch {
+    return undefined;
+  }
+  return attachments.find(
+    (item) => item.fileName.toLowerCase() === basename.toLowerCase(),
+  );
+}
+
+function isImageAttachment(item: Attachment) {
+  return (
+    item.contentType.toLowerCase().startsWith("image/") ||
+    /\.(jpe?g|png|webp|svg)$/i.test(item.fileName)
   );
 }
 

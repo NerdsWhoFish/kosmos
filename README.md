@@ -22,6 +22,10 @@ The production login policy currently permits verified Google accounts at `nerds
 
 Every mutating browser request requires the `X-Kosmos-CSRF: 1` header in addition to the signed, HTTP-only session cookie. The versioned API contract lives at [api/openapi.yaml](api/openapi.yaml).
 
+Owners and administrators can create named API credentials in Settings. The plaintext token is shown once and is sent as `Authorization: Bearer <token>`. Read-only credentials can inspect ordinary workspace APIs. Read-and-write credentials can mutate them, but credentials cannot manage members, other credentials, email, or provider integrations. Bearer-authenticated mutations do not use the browser CSRF header.
+
+Repository workflows can converge a published document and its complete file set with `PUT /api/v1/managed-documents/{sourceKey}`. Send a multipart `document` JSON part and repeated `files` parts. Relative standard Markdown paths such as `assets/kosmos/logo.svg` resolve to same-document attachments by basename in Kosmos, while remaining valid in the source repository. The complete request shape is in the OpenAPI contract.
+
 Provider setup, the public contact-form contract, Tiller headers, backup behavior, retention, and recovery are covered in [docs/operations.md](docs/operations.md).
 
 ## Observability

@@ -6,6 +6,20 @@ type Identity struct {
 	Subject string
 	Email   string
 	Name    string
+	Kind    string
+	Access  string
+}
+
+type APICredential struct {
+	ID          string     `json:"id" firestore:"id"`
+	Name        string     `json:"name" firestore:"name"`
+	Access      string     `json:"access" firestore:"access"`
+	TokenPrefix string     `json:"tokenPrefix" firestore:"tokenPrefix"`
+	SecretHash  string     `json:"-" firestore:"secretHash"`
+	CreatedBy   string     `json:"createdBy" firestore:"createdBy"`
+	RevokedAt   *time.Time `json:"revokedAt,omitempty" firestore:"revokedAt,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt" firestore:"updatedAt"`
 }
 
 type Member struct {
@@ -204,6 +218,7 @@ type Attachment struct {
 	RecordType  string    `json:"recordType" firestore:"recordType"`
 	RecordID    string    `json:"recordId" firestore:"recordId"`
 	ObjectName  string    `json:"-" firestore:"objectName"`
+	ContentHash string    `json:"contentHash,omitempty" firestore:"contentHash,omitempty"`
 	CreatedBy   string    `json:"createdBy" firestore:"createdBy"`
 	CreatedAt   time.Time `json:"createdAt" firestore:"createdAt"`
 	DownloadURL string    `json:"downloadUrl,omitempty" firestore:"-"`

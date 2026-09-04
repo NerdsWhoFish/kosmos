@@ -14,8 +14,46 @@ import (
 	"testing"
 
 	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/operations"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/auth"
 	"gopkg.in/yaml.v3"
 )
+
+func TestRequestIdentityPrefersBearerCredentialsWithoutBrowserCSRF(t *testing.T) {
+	currentUserCalls := 0
+	authenticateCalls := 0
+	identity := requestIdentity("nerds-who-fish", func(*http.Request) (auth.User, error) {
+		currentUserCalls++
+		return auth.User{Email: "owner@nerdswhofish.com"}, nil
+	}, func(_ context.Context, token string) (operations.Identity, error) {
+		authenticateCalls++
+		if token != "workflow-token" {
+			t.Fatalf("token = %q", token)
+		}
+		return operations.Identity{Kind: "api", Access: "write"}, nil
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/documents", nil)
+	request.Header.Set("Authorization", "Bearer workflow-token")
+	_, actor, err := identity(request)
+	if err != nil || actor.Kind != "api" || authenticateCalls != 1 || currentUserCalls != 0 {
+		t.Fatalf("identity = %#v, %v, API calls %d, Google calls %d", actor, err, authenticateCalls, currentUserCalls)
+	}
+}
+
+func TestRequestIdentityDoesNotFallBackFromMalformedAuthorization(t *testing.T) {
+	currentUserCalls := 0
+	identity := requestIdentity("nerds-who-fish", func(*http.Request) (auth.User, error) {
+		currentUserCalls++
+		return auth.User{Email: "owner@nerdswhofish.com"}, nil
+	}, func(context.Context, string) (operations.Identity, error) {
+		t.Fatal("malformed authorization reached API authenticator")
+		return operations.Identity{}, nil
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents", nil)
+	request.Header.Set("Authorization", "Basic nope")
+	if _, _, err := identity(request); err == nil || currentUserCalls != 0 {
+		t.Fatalf("malformed authorization fell back to Google, calls = %d", currentUserCalls)
+	}
+}
 
 type openAPIContract struct {
 	Paths      map[string]openAPIPathItem `yaml:"paths"`
@@ -213,6 +251,7 @@ func TestOpenAPIPaginatedListResponseSchemas(t *testing.T) {
 		itemSchema string
 	}{
 		"/accounts":                 {"accounts", "Account"},
+		"/api-credentials":          {"credentials", "APICredential"},
 		"/accounts/{id}/events":     {"events", "AccountEvent"},
 		"/activities":               {"activities", "Activity"},
 		"/attachments":              {"attachments", "Attachment"},

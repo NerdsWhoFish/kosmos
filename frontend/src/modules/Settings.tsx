@@ -2,11 +2,13 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   BookUser,
   Cloud,
+  Copy,
   KeyRound,
   Mail,
   RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
   Unplug,
   UserRound,
   Users,
@@ -14,6 +16,8 @@ import {
 } from "lucide-react";
 import {
   Account,
+  APICredential,
+  APICredentialCreation,
   api,
   AuditEntry,
   CloudflareStatus,
@@ -54,6 +58,11 @@ export function Settings({ user }: { user: User }) {
   const [savingGoogleContacts, setSavingGoogleContacts] = useState(false);
   const [savingSendAs, setSavingSendAs] = useState("");
   const [savingTiller, setSavingTiller] = useState(false);
+  const [apiCredentials, setAPICredentials] = useState<APICredential[]>([]);
+  const [createdAPIToken, setCreatedAPIToken] = useState("");
+  const [apiCredentialNotice, setAPICredentialNotice] = useState("");
+  const [savingAPICredential, setSavingAPICredential] = useState(false);
+  const [revokingCredentialID, setRevokingCredentialID] = useState("");
 
   const currentMember = members.find(
     (member) => member.email.toLowerCase() === user.email.toLowerCase(),
@@ -100,11 +109,15 @@ export function Settings({ user }: { user: User }) {
               api<{ mappings: TillerProductMapping[] }>(
                 "/api/v1/integrations/tiller/product-mappings",
               ),
+              api<{ credentials: APICredential[] }>(
+                "/api/v1/api-credentials",
+              ),
             ])
-              .then(([contactsStatus, status, mappings]) => {
+              .then(([contactsStatus, status, mappings, credentials]) => {
                 setGoogleContacts(contactsStatus);
                 setTillerWebhook(status);
                 setTillerMappings(mappings.mappings ?? []);
+                setAPICredentials(credentials.credentials ?? []);
               })
               .catch((reason: Error) => setError(reason.message));
           }
@@ -126,6 +139,68 @@ export function Settings({ user }: { user: User }) {
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Could not update role",
+      );
+    }
+  }
+
+  async function createAPICredential(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setSavingAPICredential(true);
+    setAPICredentialNotice("");
+    setCreatedAPIToken("");
+    try {
+      const result = await api<APICredentialCreation>(
+        "/api/v1/api-credentials",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: data.get("name"),
+            access: data.get("access"),
+          }),
+        },
+      );
+      setAPICredentials((current) => [result.credential, ...current]);
+      setCreatedAPIToken(result.token);
+      setAPICredentialNotice(
+        "Copy this token now. Kosmos cannot show it again.",
+      );
+      form.reset();
+    } catch (reason) {
+      setAPICredentialNotice(
+        reason instanceof Error
+          ? reason.message
+          : "Could not create API credential",
+      );
+    } finally {
+      setSavingAPICredential(false);
+    }
+  }
+
+  async function copyAPIToken() {
+    await navigator.clipboard.writeText(createdAPIToken);
+    setAPICredentialNotice("API token copied. Store it somewhere secure.");
+  }
+
+  async function revokeAPICredential(credential: APICredential) {
+    try {
+      await api(`/api/v1/api-credentials/${credential.id}`, {
+        method: "DELETE",
+      });
+      const revokedAt = new Date().toISOString();
+      setAPICredentials((current) =>
+        current.map((item) =>
+          item.id === credential.id ? { ...item, revokedAt } : item,
+        ),
+      );
+      setRevokingCredentialID("");
+      setAPICredentialNotice(`${credential.name} was revoked.`);
+    } catch (reason) {
+      setAPICredentialNotice(
+        reason instanceof Error
+          ? reason.message
+          : "Could not revoke API credential",
       );
     }
   }
@@ -490,6 +565,119 @@ export function Settings({ user }: { user: User }) {
           )}
         </div>
       </section>
+      {canManage && (
+        <section className="panel lower-panel api-credentials-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Workflow access</p>
+              <h2>API credentials</h2>
+            </div>
+            <KeyRound size={20} />
+          </div>
+          <p className="muted-copy">
+            Create a named token for an external workflow. Read-only tokens can
+            inspect ordinary workspace records. Read-and-write tokens can also
+            change them, but no token can manage people, credentials, email, or
+            integrations.
+          </p>
+          <form
+            className="api-credential-form"
+            onSubmit={createAPICredential}
+          >
+            <label>
+              Credential name
+              <input
+                name="name"
+                maxLength={80}
+                placeholder="Brand guide publisher"
+                required
+              />
+            </label>
+            <label>
+              Access
+              <select name="access" defaultValue="read">
+                <option value="read">Read only</option>
+                <option value="write">Read and write</option>
+              </select>
+            </label>
+            <button className="primary-button" disabled={savingAPICredential}>
+              <KeyRound size={16} />
+              {savingAPICredential ? "Creating..." : "Create credential"}
+            </button>
+          </form>
+          {createdAPIToken && (
+            <div className="api-token-reveal">
+              <strong>Copy this token now</strong>
+              <code>{createdAPIToken}</code>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={copyAPIToken}
+              >
+                <Copy size={16} /> Copy token
+              </button>
+            </div>
+          )}
+          {apiCredentialNotice && (
+            <p className="inline-notice" role="status">
+              {apiCredentialNotice}
+            </p>
+          )}
+          <div className="api-credential-list">
+            {apiCredentials.length ? (
+              apiCredentials.map((credential) => (
+                <article className="api-credential-row" key={credential.id}>
+                  <span>
+                    <strong>{credential.name}</strong>
+                    <small>
+                      {credential.access === "write"
+                        ? "Read and write"
+                        : "Read only"}{" · "}
+                      {credential.tokenPrefix}
+                    </small>
+                    <small>
+                      Created {shortDate(credential.createdAt)} by{" "}
+                      {credential.createdBy}
+                    </small>
+                  </span>
+                  {credential.revokedAt ? (
+                    <span className="status-pill muted">Revoked</span>
+                  ) : revokingCredentialID === credential.id ? (
+                    <span className="inline-confirm">
+                      <strong>Revoke access?</strong>
+                      <button
+                        className="text-button"
+                        type="button"
+                        onClick={() => setRevokingCredentialID("")}
+                      >
+                        Keep
+                      </button>
+                      <button
+                        className="text-button danger-text"
+                        type="button"
+                        onClick={() => revokeAPICredential(credential)}
+                      >
+                        Revoke
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      className="icon-button danger-icon"
+                      type="button"
+                      aria-label={`Revoke ${credential.name}`}
+                      onClick={() => setRevokingCredentialID(credential.id)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+                </article>
+              ))
+            ) : (
+              <p className="muted-copy">No API credentials yet.</p>
+            )}
+          </div>
+        </section>
+      )}
       {canManage && (
         <section className="panel lower-panel">
           <div className="panel-heading">

@@ -4,6 +4,8 @@
 
 Kosmos owns no passwords. Google authenticates users, and production admits only verified identities from the configured domains. The first approved user atomically becomes the organization owner. Later approved users start as members. Owners and administrators can assign owner, admin, member, or read-only viewer roles and can disable access.
 
+Owners and administrators can also create named API credentials for workflows. Kosmos returns each plaintext token once and stores only its SHA-256 hash. Every request rechecks the stored credential, so revocation takes effect immediately. Read-only credentials cannot mutate data. Read-and-write credentials can use ordinary workspace APIs, but neither access level can manage members, credentials, Gmail, Google Voice, Cloudflare, Tiller, or other integrations. Store workflow tokens as secret values such as `KOSMOS_API_TOKEN`, never in repository variables, logs, or Trailwire messages.
+
 Google Workspace access is a separate incremental grant for Gmail compose, Gmail metadata, Gmail send-as settings, and read-only Google Sheets. Refresh tokens are encrypted at rest with `KOSMOS_INTEGRATION_SECRET`, which is distinct from the web-only `KOSMOS_SESSION_SECRET`. The first split-key deployment migrates existing provider tokens from the session key before the web service accepts traffic. Later integration-key rotation intentionally invalidates saved provider tokens and attachment links, so users reconnect Google afterward. Register one OAuth redirect URI at `https://<host>/auth/callback`.
 
 Owners and administrators can map each member to the primary address or an accepted Gmail send-as alias reported by Google. Kosmos rejects arbitrary or unverified addresses and enforces the saved mapping when sending. Existing Google connections must reconnect once to grant the send-as settings scope before aliases can be verified.
@@ -36,9 +38,17 @@ Manual Gmail, Google Contacts, and Tiller synchronization requests return HTTP 2
 
 List endpoints default to 50 records and accept `limit` values through 100 plus the opaque `cursor` returned by the previous response. The browser follows cursors automatically so every record remains reachable without a desktop-only or mobile-only paging workflow.
 
+## Managed documents
+
+Use `PUT /api/v1/managed-documents/{sourceKey}` with a read-and-write API credential to publish one document from an external source. The source key accepts up to 128 letters, numbers, dots, underscores, or hyphens and deterministically identifies the Kosmos document. Send multipart form data with one `document` part containing `{"title":"...","body":"...","links":[]}` and zero or more repeated `files` parts.
+
+The files in each request are the complete desired attachment set. Duplicate basenames are rejected. Changed files are replaced, omitted files are removed, and an identical retry returns the same document without creating another revision. File identifiers are deterministic by source key and basename. Storage and metadata cannot be committed atomically across GCS and Firestore, but every step is replay-safe and a retry converges after a partial provider failure. Publishers should serialize writes for a source key.
+
+Document source uses ordinary Markdown. Images use `![Description](assets/kosmos/logo.svg)` and downloads use `[Download tokens](assets/kosmos/tokens.json)`. Kosmos resolves relative URL-path basenames against attachments on that document and leaves absolute URLs untouched. Existing `[[filename]]` embeds remain readable for compatibility.
+
 ## Files, retention, and recovery
 
-Attachments are private objects. Uploads are limited to 10 MB and PDF, text, JPEG, PNG, or WebP. Receipt records must link to a cost. Downloads require both an authenticated session and an application-signed URL that expires after 15 minutes.
+Attachments are private objects. Each upload is limited to 10 MB. Documents accept PDF, Markdown, plain text, JSON, CSS, SVG, JPEG, PNG, or WebP. Contact and account photos remain limited to JPEG, PNG, or WebP. Receipt records must link to a cost. Downloads require both an authenticated identity and an application-signed URL that expires after 15 minutes.
 
 Production buckets prevent public access, use uniform access control, retain object versions, and apply lifecycle cleanup. Firestore production enables point-in-time recovery. CSV exports for contacts and costs provide a portable copy before deletion or migration. Restore by selecting the desired Firestore recovery point and object generation, then verify organization ownership before serving traffic.
 

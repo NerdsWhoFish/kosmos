@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kosmos API
-  version: 0.3.0
+  version: 0.3.5
   description: API for the Kosmos small business workspace.
   license:
     name: MIT
@@ -9,6 +9,7 @@ servers:
   - url: /api/v1
 security:
   - sessionCookie: []
+  - apiCredential: []
 paths:
   /health:
     get:
@@ -682,6 +683,57 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/DocumentRevisionList'
+  /managed-documents/{sourceKey}:
+    put:
+      operationId: syncManagedDocument
+      description: Idempotently create or update one managed document and reconcile its complete attachment set by filename.
+      security:
+        - apiCredential: []
+      parameters:
+        - name: sourceKey
+          in: path
+          required: true
+          description: Stable source key using letters, numbers, dots, underscores, or hyphens.
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [document]
+              properties:
+                document:
+                  type: string
+                  description: JSON object with title, body, and optional links. Relative Markdown links resolve to attachments by URL-path basename.
+                files:
+                  type: array
+                  description: Complete desired attachment set. Duplicate basenames are rejected and omitted prior attachments are removed.
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200':
+          description: Existing managed document converged to the supplied state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedDocumentResult'
+        '201':
+          description: Managed document created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedDocumentResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /costs:
     get:
       operationId: listCosts
@@ -751,6 +803,73 @@ paths:
           description: Cost and linked receipt attachments deleted
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api-credentials:
+    get:
+      operationId: listAPICredentials
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          $ref: '#/components/responses/APICredentialList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createAPICredential
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, access]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+                access:
+                  type: string
+                  enum: [read, write]
+      responses:
+        '201':
+          description: Credential created and plaintext token returned once
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APICredentialCreation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api-credentials/{id}:
+    delete:
+      operationId: revokeAPICredential
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '204':
+          description: Credential revoked or already revoked
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
   /members:
@@ -1407,6 +1526,11 @@ components:
       type: apiKey
       in: cookie
       name: kosmos_session
+    apiCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: Kosmos API credential
+      description: One-time Kosmos API token created by an owner or administrator in Settings.
     cloudRunOIDC:
       type: http
       scheme: bearer
@@ -1439,7 +1563,8 @@ components:
     CSRF:
       name: X-Kosmos-CSRF
       in: header
-      required: true
+      required: false
+      description: Required with value 1 for browser session mutations. Bearer-authenticated requests do not use browser CSRF protection.
       schema:
         type: string
         const: '1'
@@ -1458,7 +1583,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Unauthorized:
-      description: A valid, currently allowed Google session is required
+      description: A valid Google session or API credential is required
       content:
         application/json:
           schema:
@@ -1469,6 +1594,26 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The authenticated identity does not have access to this operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    APICredentialList:
+      description: Organization API credentials without secret hashes or plaintext tokens
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [credentials, page]
+            properties:
+              credentials:
+                type: array
+                items:
+                  $ref: '#/components/schemas/APICredential'
+              page:
+                $ref: '#/components/schemas/Page'
     NotificationList:
       description: Notification feed
       content:
@@ -2333,9 +2478,23 @@ components:
         - $ref: '#/components/schemas/AuditedRecord'
         - type: object
           properties:
+            sourceKey:
+              type: string
+              description: Stable publisher key present only for managed documents.
             revision:
               type: integer
               minimum: 1
+    ManagedDocumentResult:
+      type: object
+      additionalProperties: false
+      required: [document, attachments]
+      properties:
+        document:
+          $ref: '#/components/schemas/Document'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Attachment'
     DocumentRevision:
       type: object
       required: [id, documentId, title, body, links, revision, createdAt]
@@ -2442,6 +2601,42 @@ components:
         reviewState:
           type: string
           enum: [ready, review, complete]
+    APICredential:
+      type: object
+      additionalProperties: false
+      required: [id, name, access, tokenPrefix, createdBy, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        access:
+          type: string
+          enum: [read, write]
+        tokenPrefix:
+          type: string
+        createdBy:
+          type: string
+          format: email
+        revokedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    APICredentialCreation:
+      type: object
+      additionalProperties: false
+      required: [credential, token]
+      properties:
+        credential:
+          $ref: '#/components/schemas/APICredential'
+        token:
+          type: string
+          description: Plaintext bearer token returned only in this response.
     Member:
       type: object
       required: [id, email, name, role, status, createdAt, updatedAt]
@@ -2722,9 +2917,11 @@ components:
           type: string
         recordId:
           type: string
+        contentHash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
         createdBy:
           type: string
-          format: email
         createdAt:
           type: string
           format: date-time

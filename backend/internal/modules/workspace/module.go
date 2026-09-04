@@ -2,12 +2,19 @@ package workspace
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"time"
 
 	platformmodules "github.com/NerdsWhoFish/kosmos/backend/internal/platform/modules"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 )
+
+func managedDocumentID(sourceKey string) string {
+	hash := sha256.Sum256([]byte("managed-document:" + sourceKey))
+	return "managed-" + hex.EncodeToString(hash[:12])
+}
 
 type ScopeFunc func(*http.Request) (string, error)
 type ActorFunc func(*http.Request) string
@@ -150,6 +157,7 @@ type Reminder struct {
 
 type Document struct {
 	ID        string       `json:"id" firestore:"-"`
+	SourceKey string       `json:"sourceKey,omitempty" firestore:"sourceKey,omitempty"`
 	Title     string       `json:"title" firestore:"title"`
 	Body      string       `json:"body" firestore:"body"`
 	Links     []RecordLink `json:"links" firestore:"links"`
@@ -276,6 +284,7 @@ type Store interface {
 	UpdateReminder(context.Context, string, string, ReminderPatch) (Reminder, error)
 	ListDocuments(context.Context, string) ([]Document, error)
 	CreateDocument(context.Context, string, Document) (Document, error)
+	SyncManagedDocument(context.Context, string, string, Document) (Document, bool, error)
 	UpdateDocument(context.Context, string, string, DocumentPatch) (Document, error)
 	DeleteDocument(context.Context, string, string) error
 	ListDocumentRevisions(context.Context, string, string) ([]DocumentRevision, error)

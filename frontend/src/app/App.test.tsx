@@ -301,6 +301,7 @@ const responses: Record<string, unknown> = {
     ],
   },
   "/api/v1/attachments": { attachments: [] },
+  "/api/v1/api-credentials": { credentials: [] },
 };
 
 function mockAPI(authenticated = true) {
@@ -318,6 +319,36 @@ function mockAPI(authenticated = true) {
           authenticated ? json(user) : new Response(null, { status: 401 }),
         );
       if (url.pathname === "/auth/logout")
+        return Promise.resolve(new Response(null, { status: 204 }));
+      if (url.pathname === "/api/v1/api-credentials" && method === "POST") {
+        const credential = {
+          id: `credential-${String(body.name).replace(/\W+/g, "-").toLowerCase()}`,
+          name: body.name,
+          access: body.access,
+          tokenPrefix: "kosmos_api_deadbeef…",
+          createdBy: user.email,
+          createdAt: "2026-09-04T12:00:00Z",
+          updatedAt: "2026-09-04T12:00:00Z",
+        };
+        (
+          responses["/api/v1/api-credentials"] as {
+            credentials: object[];
+          }
+        ).credentials.unshift(credential);
+        return Promise.resolve(
+          json(
+            {
+              credential,
+              token: "kosmos_api_deadbeef_super-secret-token",
+            },
+            201,
+          ),
+        );
+      }
+      if (
+        url.pathname.startsWith("/api/v1/api-credentials/") &&
+        method === "DELETE"
+      )
         return Promise.resolve(new Response(null, { status: 204 }));
       if (url.pathname === "/api/v1/accounts" && method === "POST")
         return Promise.resolve(
@@ -698,13 +729,16 @@ function mockAPI(authenticated = true) {
       if (url.pathname === "/api/v1/attachments" && method === "POST") {
         const form = init?.body as FormData;
         const file = form.get("file") as File;
+        const documentFileName =
+          file?.name ||
+          (file?.type === "image/svg+xml" ? "kosmos-logo.svg" : "guide.pdf");
         const created = {
-          id: "attachment-1",
+          id: `attachment-${documentFileName}`,
           fileName:
             form.get("kind") === "photo"
               ? "profile.png"
               : form.get("recordType") === "document"
-                ? "guide.pdf"
+                ? documentFileName
                 : "license.pdf",
           contentType: file?.type || "application/pdf",
           size: file?.size || 512,
@@ -1500,7 +1534,7 @@ describe("Kosmos application", () => {
     );
   });
 
-  it("uploads document files and embeds PDFs by filename", async () => {
+  it("keeps legacy document attachment embeds working", async () => {
     mockAPI();
     render(<App />);
     await screen.findByRole("heading", {
@@ -1538,6 +1572,36 @@ describe("Kosmos application", () => {
       ).toBe(true),
     );
     expect(await screen.findByTitle("guide.pdf")).toHaveAttribute(
+      "src",
+      "/download?disposition=inline",
+    );
+  });
+
+  it("resolves relative standard Markdown images by attachment basename", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Documents" }));
+    fireEvent.click(
+      await screen.findByRole("link", { name: /client kickoff/i }),
+    );
+    const file = new File(["svg"], "kosmos-logo.svg", {
+      type: "image/svg+xml",
+    });
+    const documentFile = await screen.findByLabelText(/choose a file/i);
+    fireEvent.change(documentFile, { target: { files: [file] } });
+    fireEvent.submit(documentFile.closest("form")!);
+    expect(await screen.findByText("kosmos-logo.svg")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText(/start writing in markdown/i), {
+      target: {
+        value: "![Kosmos logo](assets/kosmos/kosmos-logo.svg)",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save document/i }));
+    expect(await screen.findByAltText("Kosmos logo")).toHaveAttribute(
       "src",
       "/download?disposition=inline",
     );
@@ -1951,6 +2015,58 @@ describe("Kosmos application", () => {
         /prod_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa · river labs/i,
       ),
     ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["desktop", 1440],
+    ["mobile", 390],
+  ])("creates, copies, and revokes API credentials on %s", async (_name, width) => {
+    window.innerWidth = width;
+    const credentialName = `Brand publisher ${width}`;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Settings" }));
+    expect(
+      await screen.findByRole("heading", { name: "API credentials" }),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Credential name"), {
+      target: { value: credentialName },
+    });
+    fireEvent.change(screen.getByLabelText("Access"), {
+      target: { value: "write" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /create credential/i }),
+    );
+    expect(
+      await screen.findByText("kosmos_api_deadbeef_super-secret-token"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /copy token/i }));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        "kosmos_api_deadbeef_super-secret-token",
+      ),
+    );
+    const revokeButton = screen.getByRole("button", {
+      name: `Revoke ${credentialName}`,
+    });
+    const credentialRow = revokeButton.closest("article");
+    expect(credentialRow).not.toBeNull();
+    fireEvent.click(revokeButton);
+    fireEvent.click(
+      within(credentialRow as HTMLElement).getByRole("button", {
+        name: /^revoke$/i,
+      }),
+    );
+    expect(await screen.findByText("Revoked")).toBeInTheDocument();
   });
 
   it.each([
