@@ -1601,9 +1601,36 @@ describe("Kosmos application", () => {
       },
     });
     fireEvent.click(screen.getByRole("button", { name: /save document/i }));
-    expect(await screen.findByAltText("Kosmos logo")).toHaveAttribute(
-      "src",
-      "/download?disposition=inline",
+    const image = await screen.findByAltText("Kosmos logo");
+    expect(image).toHaveAttribute("src", "/download?disposition=inline");
+    expect(image).toHaveClass("document-image");
+  });
+
+  it("renders GitHub-flavored Markdown tables in a responsive region", async () => {
+    mockAPI();
+    render(<App />);
+    await screen.findByRole("heading", {
+      name: /good (morning|afternoon|evening)/i,
+    });
+    fireEvent.click(screen.getByRole("link", { name: "Documents" }));
+    fireEvent.click(
+      await screen.findByRole("link", { name: /client kickoff/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText(/start writing in markdown/i), {
+      target: {
+        value:
+          "| Name | Preview | Status |\n| --- | --- | --- |\n| Brand guide | ![Kosmos logo](/download?disposition=inline) | Published |",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save document/i }));
+
+    const table = await screen.findByRole("table");
+    expect(table).toHaveTextContent("Brand guide");
+    expect(screen.getByAltText("Kosmos logo").closest("td")).not.toBeNull();
+    expect(table.closest(".markdown-table-scroll")).toHaveAttribute(
+      "aria-label",
+      "Scrollable table",
     );
   });
 

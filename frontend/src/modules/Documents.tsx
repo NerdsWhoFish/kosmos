@@ -23,6 +23,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Account,
   api,
@@ -711,11 +712,13 @@ function EmbeddedMarkdown({
         if (!match)
           return (
             <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
               components={{
                 img: ({ src, alt }) => {
                   const file = resolveAttachment(src, attachments);
                   return (
                     <img
+                      className="document-image"
                       src={file?.viewUrl ?? src}
                       alt={alt ?? file?.fileName ?? ""}
                     />
@@ -725,6 +728,16 @@ function EmbeddedMarkdown({
                   const file = resolveAttachment(href, attachments);
                   return <a href={file?.downloadUrl ?? href}>{children}</a>;
                 },
+                table: ({ children }) => (
+                  <div
+                    className="markdown-table-scroll"
+                    role="region"
+                    aria-label="Scrollable table"
+                    tabIndex={0}
+                  >
+                    <table>{children}</table>
+                  </div>
+                ),
               }}
               key={index}
             >
@@ -746,7 +759,11 @@ function EmbeddedMarkdown({
         )
           return (
             <figure className="document-embed" key={file.id}>
-              <img src={file.viewUrl} alt={file.fileName} />
+              <img
+                className="document-image"
+                src={file.viewUrl}
+                alt={file.fileName}
+              />
               <figcaption>
                 <a href={file.downloadUrl}>{file.fileName}</a>
               </figcaption>

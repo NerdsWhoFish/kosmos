@@ -2116,6 +2116,7 @@ select {
   color: var(--theme-muted);
 }
 .markdown {
+  min-width: 0;
   max-width: 760px;
   padding-top: 22px;
   line-height: 1.72;
@@ -2140,6 +2141,51 @@ select {
   padding: 16px;
   border-radius: 9px;
   background: var(--theme-surface-dark);
+}
+.document-image {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: min(720px, 75vh);
+  margin: 22px auto;
+  object-fit: contain;
+  border-radius: 10px;
+}
+.markdown-table-scroll {
+  max-width: 100%;
+  margin: 22px 0;
+  overflow-x: auto;
+  border: 1px solid var(--theme-border);
+  border-radius: 10px;
+}
+.markdown-table-scroll:focus-visible {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: 3px;
+}
+.markdown-table-scroll table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+}
+.markdown-table-scroll th,
+.markdown-table-scroll td {
+  border-bottom: 1px solid var(--theme-border);
+  padding: 10px 13px;
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-table-scroll th {
+  color: var(--theme-text);
+  background: var(--theme-surface-raised);
+}
+.markdown-table-scroll tr:last-child td {
+  border-bottom: 0;
+}
+.markdown-table-scroll .document-image {
+  max-width: min(240px, 50vw);
+  max-height: 180px;
+  margin: 0 auto;
 }
 .document-editor {
   display: grid;
@@ -2880,10 +2926,10 @@ button.shortcut-main {
   margin-top: 24px;
 }
 
-.document-embed img {
-  max-width: 100%;
-  max-height: 720px;
-  border-radius: 10px;
+.document-embed {
+  min-width: 0;
+  margin-right: 0;
+  margin-left: 0;
 }
 
 .document-embed iframe {

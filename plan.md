@@ -42,6 +42,7 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 38. Keep unread notification text and its Mark read action in the same responsive layout as read notifications without collisions.
 - [x] 39. Let owners and administrators create, copy once, list, and revoke named read-only or read-and-write API credentials for external workflows.
 - [x] 40. Let write-enabled workflows idempotently synchronize managed documents and their complete attachment sets by stable source key, using standard Markdown links while preserving legacy embeds.
+- [x] 41. Keep large document images within the reading surface, cap images embedded in table cells, and render GitHub-flavored Markdown tables in a keyboard-scrollable responsive region.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
@@ -55,3 +56,5 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] Release v0.3.4 and deploy items 36 through 38 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.7.0.
 - [x] Run backend, API-contract, security, frontend, accessibility, and responsive browser verification for items 39 and 40.
 - [x] Release v0.3.5 and deploy items 39 and 40 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.7.0.
+- [x] Run frontend unit, build, accessibility, and responsive browser verification for item 41 across phone, tablet, laptop, and desktop viewports.
+- [ ] Release v0.3.6 and deploy item 41 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.7.0.
