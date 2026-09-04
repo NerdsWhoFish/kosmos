@@ -55,6 +55,7 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_RELEASER_SA }}
+          token_format: access_token
 
       - uses: TheOutdoorProgrammer/quill@v1
         with:
