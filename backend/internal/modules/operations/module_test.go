@@ -68,6 +68,24 @@ func TestTeamPipelineAndNotifications(t *testing.T) {
 	if created.ID != "negotiation" {
 		t.Fatalf("stage ID = %q", created.ID)
 	}
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/pipeline-stages", `{"name":"Negotiation","position":4,"probability":90}`, http.StatusConflict)
+}
+
+func TestOrganizationMustKeepAnActiveOwner(t *testing.T) {
+	_, mux, _ := newTestModule(t)
+	members := performJSON[struct {
+		Members []Member `json:"members"`
+	}](t, mux, http.MethodGet, "/api/v1/members", "", http.StatusOK)
+	if len(members.Members) != 1 {
+		t.Fatalf("members = %d, want 1", len(members.Members))
+	}
+	performJSON[map[string]any](t, mux, http.MethodPatch, "/api/v1/members/"+members.Members[0].ID, `{"role":"owner","status":"disabled"}`, http.StatusConflict)
+	performJSON[map[string]any](t, mux, http.MethodPatch, "/api/v1/members/"+members.Members[0].ID, `{"role":"admin","status":"active"}`, http.StatusConflict)
+}
+
+func TestEmailTemplateRequiresBody(t *testing.T) {
+	_, mux, _ := newTestModule(t)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/email/templates", `{"name":"Introduction","subject":"Hello","body":"  "}`, http.StatusBadRequest)
 }
 
 func TestGoogleMailAndTillerFlow(t *testing.T) {

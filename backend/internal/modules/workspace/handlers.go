@@ -752,6 +752,12 @@ func validateOpportunity(item Opportunity) string {
 			return "Close date must be a valid date"
 		}
 	}
+	if item.OwnerEmail != "" {
+		address, err := mail.ParseAddress(item.OwnerEmail)
+		if err != nil || !strings.EqualFold(address.Address, item.OwnerEmail) {
+			return "Opportunity owner must be a valid email address"
+		}
+	}
 	return ""
 }
 
@@ -855,6 +861,9 @@ func validateCostPatch(patch CostPatch) string {
 	}
 	if patch.ReviewState != nil {
 		item.ReviewState = *patch.ReviewState
+	}
+	if patch.Recurrence != nil && *patch.Recurrence != "" && !contains([]string{"monthly", "quarterly", "yearly"}, *patch.Recurrence) {
+		return "Choose monthly, quarterly, or yearly recurrence"
 	}
 	return validateCost(item)
 }

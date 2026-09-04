@@ -132,6 +132,7 @@ func TestWorkspaceRejectsInvalidRecords(t *testing.T) {
 	NewModule(NewMemoryStore(), func(*http.Request) (string, error) { return "nerds-who-fish", nil }).RegisterRoutes(mux)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/contacts", `{"name":"","status":"stranger"}`, http.StatusBadRequest)
 	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/costs", `{"description":"Hosting","amountCents":-1,"incurredOn":"not-a-date"}`, http.StatusBadRequest)
+	performJSON[map[string]any](t, mux, http.MethodPost, "/api/v1/opportunities", `{"name":"Website refresh","stage":"qualified","ownerEmail":"not-an-email"}`, http.StatusBadRequest)
 }
 
 func TestCostCanBeReviewedAndUpdated(t *testing.T) {
@@ -142,6 +143,7 @@ func TestCostCanBeReviewedAndUpdated(t *testing.T) {
 	if updated.ReviewState != "complete" || updated.PaymentMethod != "Business card" {
 		t.Fatalf("unexpected updated cost: %#v", updated)
 	}
+	performJSON[map[string]any](t, mux, http.MethodPatch, "/api/v1/costs/"+created.ID, `{"recurrence":"sometimes"}`, http.StatusBadRequest)
 }
 
 func performJSON[T any](t *testing.T, handler http.Handler, method, target, body string, wantStatus int) T {

@@ -190,9 +190,26 @@ func (m *Module) updateMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "member_not_found", "Team member was not found")
 		return
 	}
-	if member.Role == "owner" && member.ID == memberID(actor.Email) && request.Role != "owner" {
-		writeError(w, http.StatusConflict, "owner_required", "You cannot remove your own owner access")
+	if member.Role == "owner" && member.ID == memberID(actor.Email) && (request.Role != "owner" || request.Status != "active") {
+		writeError(w, http.StatusConflict, "owner_required", "You cannot remove or disable your own owner access")
 		return
+	}
+	if member.Role == "owner" && (request.Role != "owner" || request.Status != "active") {
+		var members []Member
+		if err := m.store.List(r.Context(), scope, "members", &members); err != nil {
+			writeError(w, http.StatusInternalServerError, "member_update_failed", "Could not verify organization ownership")
+			return
+		}
+		activeOwners := 0
+		for _, candidate := range members {
+			if candidate.Role == "owner" && candidate.Status == "active" && candidate.ID != member.ID {
+				activeOwners++
+			}
+		}
+		if activeOwners == 0 {
+			writeError(w, http.StatusConflict, "owner_required", "Assign another active owner before changing this owner")
+			return
+		}
 	}
 	member.Role, member.Status, member.UpdatedAt = request.Role, request.Status, time.Now().UTC()
 	if err := m.store.Put(r.Context(), scope, "members", member.ID, member); err != nil {
@@ -232,7 +249,10 @@ func (m *Module) createPipelineStage(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	stage.ID, stage.CreatedAt, stage.UpdatedAt = slug(stage.Name), now, now
-	if err := m.store.Put(r.Context(), scope, "pipelineStages", stage.ID, stage); err != nil {
+	if err := m.store.Create(r.Context(), scope, "pipelineStages", stage.ID, stage); errors.Is(err, errAlreadyExists) {
+		writeError(w, http.StatusConflict, "stage_exists", "A pipeline stage with this name already exists")
+		return
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "stage_create_failed", "Could not save pipeline stage")
 		return
 	}
@@ -296,7 +316,7 @@ func (m *Module) createEmailTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.Name, item.Subject = strings.TrimSpace(item.Name), strings.TrimSpace(item.Subject)
-	if item.Name == "" || item.Subject == "" || len(item.Body) > 100000 {
+	if item.Name == "" || item.Subject == "" || strings.TrimSpace(item.Body) == "" || len(item.Body) > 100000 {
 		writeError(w, http.StatusBadRequest, "invalid_template", "Template name, subject, and a body under 100,000 characters are required")
 		return
 	}
