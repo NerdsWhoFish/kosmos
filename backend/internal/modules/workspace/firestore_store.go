@@ -104,6 +104,16 @@ func updateRecord[T any](ctx context.Context, store *FirestoreStore, scope, coll
 	return getRecord(ctx, store, scope, collection, id, assignID)
 }
 
+func (s *FirestoreStore) ListAccounts(ctx context.Context, scope string) ([]Account, error) {
+	return listRecords(ctx, s, scope, "accounts", "updatedAt", firestore.Desc, func(item *Account, id string) { item.ID = id })
+}
+
+func (s *FirestoreStore) CreateAccount(ctx context.Context, scope string, item Account) (Account, error) {
+	return createRecord(ctx, s, scope, "accounts", item, func(item *Account, id string, now time.Time) {
+		item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
+	})
+}
+
 func (s *FirestoreStore) ListContacts(ctx context.Context, scope string) ([]Contact, error) {
 	return listRecords(ctx, s, scope, "contacts", "updatedAt", firestore.Desc, func(item *Contact, id string) { item.ID = id })
 }
@@ -119,17 +129,19 @@ func (s *FirestoreStore) CreateContact(ctx context.Context, scope string, item C
 }
 
 func (s *FirestoreStore) UpdateContact(ctx context.Context, scope, id string, patch ContactPatch) (Contact, error) {
-	updates := make([]firestore.Update, 0, 5)
+	updates := make([]firestore.Update, 0, 7)
 	appendStringUpdate := func(path string, value *string) {
 		if value != nil {
 			updates = append(updates, firestore.Update{Path: path, Value: *value})
 		}
 	}
+	appendStringUpdate("accountId", patch.AccountID)
 	appendStringUpdate("name", patch.Name)
 	appendStringUpdate("company", patch.Company)
 	appendStringUpdate("email", patch.Email)
 	appendStringUpdate("phone", patch.Phone)
 	appendStringUpdate("status", patch.Status)
+	appendStringUpdate("source", patch.Source)
 	return updateRecord(ctx, s, scope, "contacts", id, updates, func(item *Contact, id string) { item.ID = id })
 }
 
@@ -158,6 +170,7 @@ func (s *FirestoreStore) UpdateOpportunity(ctx context.Context, scope, id string
 	appendStringUpdate("stage", patch.Stage)
 	appendStringUpdate("nextStep", patch.NextStep)
 	appendStringUpdate("closeDate", patch.CloseDate)
+	appendStringUpdate("ownerEmail", patch.OwnerEmail)
 	return updateRecord(ctx, s, scope, "opportunities", id, updates, func(item *Opportunity, id string) { item.ID = id })
 }
 
@@ -182,7 +195,14 @@ func (s *FirestoreStore) CreateReminder(ctx context.Context, scope string, item 
 }
 
 func (s *FirestoreStore) UpdateReminder(ctx context.Context, scope, id string, patch ReminderPatch) (Reminder, error) {
-	return updateRecord(ctx, s, scope, "reminders", id, []firestore.Update{{Path: "completed", Value: *patch.Completed}}, func(item *Reminder, id string) { item.ID = id })
+	updates := make([]firestore.Update, 0, 2)
+	if patch.Completed != nil {
+		updates = append(updates, firestore.Update{Path: "completed", Value: *patch.Completed})
+	}
+	if patch.OwnerEmail != nil {
+		updates = append(updates, firestore.Update{Path: "ownerEmail", Value: *patch.OwnerEmail})
+	}
+	return updateRecord(ctx, s, scope, "reminders", id, updates, func(item *Reminder, id string) { item.ID = id })
 }
 
 func (s *FirestoreStore) ListDocuments(ctx context.Context, scope string) ([]Document, error) {
@@ -192,6 +212,7 @@ func (s *FirestoreStore) ListDocuments(ctx context.Context, scope string) ([]Doc
 func (s *FirestoreStore) CreateDocument(ctx context.Context, scope string, item Document) (Document, error) {
 	return createRecord(ctx, s, scope, "documents", item, func(item *Document, id string, now time.Time) {
 		item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
+		item.Revision = 1
 	})
 }
 
@@ -203,7 +224,31 @@ func (s *FirestoreStore) UpdateDocument(ctx context.Context, scope, id string, p
 	if patch.Body != nil {
 		updates = append(updates, firestore.Update{Path: "body", Value: *patch.Body})
 	}
+	if patch.Links != nil {
+		updates = append(updates, firestore.Update{Path: "links", Value: *patch.Links})
+	}
+	updates = append(updates, firestore.Update{Path: "revision", Value: firestore.Increment(1)})
 	return updateRecord(ctx, s, scope, "documents", id, updates, func(item *Document, id string) { item.ID = id })
+}
+
+func (s *FirestoreStore) ListDocumentRevisions(ctx context.Context, scope, documentID string) ([]DocumentRevision, error) {
+	items, err := listRecords(ctx, s, scope, "documentRevisions", "createdAt", firestore.Desc, func(item *DocumentRevision, id string) { item.ID = id })
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]DocumentRevision, 0)
+	for _, item := range items {
+		if item.DocumentID == documentID {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered, nil
+}
+
+func (s *FirestoreStore) CreateDocumentRevision(ctx context.Context, scope string, item DocumentRevision) (DocumentRevision, error) {
+	return createRecord(ctx, s, scope, "documentRevisions", item, func(item *DocumentRevision, id string, now time.Time) {
+		item.ID, item.CreatedAt = id, now
+	})
 }
 
 func (s *FirestoreStore) ListCosts(ctx context.Context, scope string) ([]Cost, error) {
@@ -214,4 +259,33 @@ func (s *FirestoreStore) CreateCost(ctx context.Context, scope string, item Cost
 	return createRecord(ctx, s, scope, "costs", item, func(item *Cost, id string, now time.Time) {
 		item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
 	})
+}
+
+func (s *FirestoreStore) UpdateCost(ctx context.Context, scope, id string, patch CostPatch) (Cost, error) {
+	updates := make([]firestore.Update, 0, 12)
+	addString := func(path string, value *string) {
+		if value != nil {
+			updates = append(updates, firestore.Update{Path: path, Value: *value})
+		}
+	}
+	addBool := func(path string, value *bool) {
+		if value != nil {
+			updates = append(updates, firestore.Update{Path: path, Value: *value})
+		}
+	}
+	addString("vendor", patch.Vendor)
+	addString("description", patch.Description)
+	if patch.AmountCents != nil {
+		updates = append(updates, firestore.Update{Path: "amountCents", Value: *patch.AmountCents})
+	}
+	addString("category", patch.Category)
+	addString("incurredOn", patch.IncurredOn)
+	addBool("recurring", patch.Recurring)
+	addString("recurrence", patch.Recurrence)
+	addBool("taxDeductible", patch.TaxDeductible)
+	addString("notes", patch.Notes)
+	addString("renewalDate", patch.RenewalDate)
+	addString("paymentMethod", patch.PaymentMethod)
+	addString("reviewState", patch.ReviewState)
+	return updateRecord(ctx, s, scope, "costs", id, updates, func(item *Cost, id string) { item.ID = id })
 }

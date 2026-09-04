@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Building2, CalendarPlus, Mail, MessageSquarePlus, Phone, Plus, UserRound } from 'lucide-react'
-import { Activity, api, Contact, Opportunity, Reminder, shortDate } from '../api'
+import { Account, Activity, api, Contact, Opportunity, Reminder, shortDate } from '../api'
 import { Modal } from '../components/Modal'
 import { Page } from '../components/Page'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
@@ -10,6 +10,7 @@ export function Contacts({ openNew, clearNew }: { openNew: boolean; clearNew: ()
   const [activities, setActivities] = useState<Activity[]>([])
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [opportunities, setOpportunities] = useState<Opportunity[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [selectedID, setSelectedID] = useState('')
   const [creating, setCreating] = useState(openNew)
   const [loading, setLoading] = useState(true)
@@ -26,11 +27,13 @@ export function Contacts({ openNew, clearNew }: { openNew: boolean; clearNew: ()
       api<{ activities: Activity[] }>('/api/v1/activities'),
       api<{ reminders: Reminder[] }>('/api/v1/reminders'),
       api<{ opportunities: Opportunity[] }>('/api/v1/opportunities'),
-    ]).then(([contactResponse, activityResponse, reminderResponse, opportunityResponse]) => {
+      api<{ accounts: Account[] }>('/api/v1/accounts'),
+    ]).then(([contactResponse, activityResponse, reminderResponse, opportunityResponse, accountResponse]) => {
       setContacts(contactResponse.contacts)
       setActivities(activityResponse.activities)
       setReminders(reminderResponse.reminders)
       setOpportunities(opportunityResponse.opportunities)
+      setAccounts(accountResponse.accounts)
     }).catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false))
   }, [])
 
@@ -45,7 +48,7 @@ export function Contacts({ openNew, clearNew }: { openNew: boolean; clearNew: ()
     setFormError('')
     const form = new FormData(event.currentTarget)
     try {
-      const contact = await api<Contact>('/api/v1/contacts', { method: 'POST', body: JSON.stringify({ name: form.get('name'), company: form.get('company'), email: form.get('email'), phone: form.get('phone'), status: form.get('status') }) })
+      const contact = await api<Contact>('/api/v1/contacts', { method: 'POST', body: JSON.stringify({ name: form.get('name'), company: form.get('company'), email: form.get('email'), phone: form.get('phone'), status: form.get('status'), accountId: form.get('accountId'), source: form.get('source') }) })
       setContacts((current) => [contact, ...current])
       setSelectedID(contact.id)
       setCreating(false)
@@ -105,7 +108,7 @@ export function Contacts({ openNew, clearNew }: { openNew: boolean; clearNew: ()
     <Page eyebrow="Relationships" title="Contacts" detail="Every lead, prospect, and customer in one human-friendly place." action={<button className="primary-button" onClick={() => setCreating(true)}><Plus size={17} /> Add contact</button>}>
       {contacts.length ? <div className="record-grid">{contacts.map((contact) => <button className="record-card" key={contact.id} onClick={() => setSelectedID(contact.id)}><span className="record-avatar">{initials(contact.name)}</span><span className="record-main"><strong>{contact.name}</strong><small>{contact.company || contact.email || 'No company yet'}</small></span><span className={`status-badge ${contact.status}`}>{contact.status}</span></button>)}</div> : <EmptyState title="No people yet" detail="Add the first person you want to follow up with." action={<button className="primary-button" onClick={() => setCreating(true)}><Plus size={17} /> Add your first contact</button>} />}
     </Page>
-    {creating && <Modal eyebrow="Relationships" title="Add a contact" onClose={() => { setCreating(false); clearNew() }}><form onSubmit={createContact}><div className="field-grid"><label>Full name<input name="name" maxLength={160} required autoFocus /></label><label>Company<input name="company" maxLength={160} /></label><label>Email<input name="email" type="email" /></label><label>Phone<input name="phone" type="tel" /></label></div><label>Status<select name="status" defaultValue="lead"><option value="lead">Lead</option><option value="prospect">Prospect</option><option value="customer">Customer</option></select></label>{formError && <p className="form-error" role="alert">{formError}</p>}<div className="form-actions"><button type="button" className="secondary-button" onClick={() => { setCreating(false); clearNew() }}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving...' : 'Save contact'}</button></div></form></Modal>}
+    {creating && <Modal eyebrow="Relationships" title="Add a contact" onClose={() => { setCreating(false); clearNew() }}><form onSubmit={createContact}><div className="field-grid"><label>Full name<input name="name" maxLength={160} required autoFocus /></label><label>Company<input name="company" maxLength={160} /></label><label>Email<input name="email" type="email" /></label><label>Phone<input name="phone" type="tel" /></label><label>Account<select name="accountId" defaultValue=""><option value="">No account yet</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label><label>Source<input name="source" maxLength={100} placeholder="Referral, website, event" /></label></div><label>Status<select name="status" defaultValue="lead"><option value="lead">Lead</option><option value="prospect">Prospect</option><option value="customer">Customer</option></select></label>{formError && <p className="form-error" role="alert">{formError}</p>}<div className="form-actions"><button type="button" className="secondary-button" onClick={() => { setCreating(false); clearNew() }}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving...' : 'Save contact'}</button></div></form></Modal>}
   </>
 }
 

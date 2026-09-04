@@ -221,21 +221,22 @@ Grafana Cloud dashboards, alert rules, data source configuration, and Faro appli
 
 ### Current release state
 
-The first usable release completes the foundation and the secure core of slices two through four:
+The current release completes the seven delivery slices as one usable small-business workspace:
 
-- Google OAuth login with verified-domain admission and session revalidation
-- a public sign-in screen that returns no customer, pipeline, activity, or cost data
-- shared, organization-scoped Firestore persistence
+- Google OAuth login restricted to approved domains, with atomic owner bootstrap, member roles, disabled access, signed sessions, and server-side authorization on every protected route
+- a public sign-in screen that exposes no customer, pipeline, activity, notification, or financial data
+- shared organization-scoped Firestore persistence and private Cloud Storage attachments
 - responsive navigation and equivalent desktop and mobile workflows
-- working landing-zone shortcuts and quick actions
-- contacts with prospect and customer status, account details, activities, notes, and reminders
-- opportunities with amounts, next steps, close dates, and pipeline stage movement
-- Markdown documents with browser editing and rendered reading mode
-- one-time and recurring business cost tracking
-- private workspace summary, follow-up queue, activity feed, and cross-module search
-- CSRF protection for mutations and OpenTelemetry coverage for HTTP and Firestore operations
+- configurable landing shortcuts, quick actions, workspace summary, search, and one cross-module notification feed
+- accounts, leads, contacts, opportunities, configurable pipeline stages, activities, notes, owners, and follow-up reminders
+- Markdown documents with stable IDs, typed record links, rendered reading mode, revisions, and attachments
+- one-time and recurring costs, renewal and tax metadata, receipt uploads, review state, and CSV exports
+- incremental per-user Google Workspace authorization, explicit Gmail sending, reusable templates, relevant inbound message metadata, and Google Voice handoff links
+- Tiller Google Sheets import with replay-safe transaction IDs, deterministic contact matching, and an explicit ambiguity queue
+- contact-form ingestion with validation, honeypot rejection, deduplication, source attribution, and abuse throttling
+- normalized replay-safe business events, audit history, OpenTelemetry and Faro instrumentation, queue infrastructure, production alerts, and Firestore point-in-time recovery
 
-The release intentionally does not claim the remaining roadmap items. Roles beyond the shared organization boundary, file and receipt uploads, contact-form ingestion, Gmail actions and notifications, Google Voice links, Tiller imports, audit history, and full notification event projection remain future delivery slices.
+Operational setup, recovery, data retention, and provider behavior are documented in [docs/operations.md](docs/operations.md).
 
 Every delivery slice requires backend tests and frontend tests. A release cannot be tagged or published until both suites and the production frontend build pass.
 

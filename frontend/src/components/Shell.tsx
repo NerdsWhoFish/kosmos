@@ -1,19 +1,17 @@
 import { FormEvent, ReactNode, useState } from 'react'
-import { Bell, CheckCircle2, CircleDollarSign, FileText, LayoutGrid, Search, Settings2, Users, Waves } from 'lucide-react'
-import type { User } from '../api'
+import { Bell, Building2, CheckCircle2, CircleDollarSign, FileText, Inbox, LayoutGrid, Search, Settings2, SlidersHorizontal, Users, Waves } from 'lucide-react'
+import type { ModuleManifest, User } from '../api'
 
 type Navigate = (path: string) => void
 
-const navigation = [
-  { path: '/', label: 'Overview', icon: LayoutGrid },
-  { path: '/contacts', label: 'Contacts', icon: Users },
-  { path: '/opportunities', label: 'Opportunities', icon: CircleDollarSign },
-  { path: '/documents', label: 'Documents', icon: FileText },
-  { path: '/costs', label: 'Costs', icon: CheckCircle2 },
+const icons = { overview: LayoutGrid, contacts: Users, accounts: Building2, pipeline: CircleDollarSign, documents: FileText, costs: CheckCircle2, inbox: Inbox, operations: SlidersHorizontal, settings: Settings2 }
+const fallbackNavigation = [
+  { path: '/', label: 'Overview', icon: 'overview' }, { path: '/contacts', label: 'Contacts', icon: 'contacts' }, { path: '/accounts', label: 'Accounts', icon: 'accounts' }, { path: '/opportunities', label: 'Opportunities', icon: 'pipeline' }, { path: '/documents', label: 'Documents', icon: 'documents' }, { path: '/costs', label: 'Costs', icon: 'costs' }, { path: '/communications', label: 'Inbox', icon: 'inbox' }, { path: '/operations', label: 'Operations', icon: 'operations' }, { path: '/settings', label: 'Settings', icon: 'settings' },
 ]
 
-export function Shell({ user, path, navigate, logout, children }: { user: User; path: string; navigate: Navigate; logout: () => void; children: ReactNode }) {
+export function Shell({ user, modules, path, navigate, logout, children }: { user: User; modules: ModuleManifest[]; path: string; navigate: Navigate; logout: () => void; children: ReactNode }) {
   const [query, setQuery] = useState('')
+  const navigation = modules.length ? modules.flatMap((module) => module.navigation) : fallbackNavigation
   function search(event: FormEvent) {
     event.preventDefault()
     const value = query.trim()
@@ -24,9 +22,8 @@ export function Shell({ user, path, navigate, logout, children }: { user: User; 
     <aside className="sidebar">
       <a className="brand" href="/" onClick={(event) => { event.preventDefault(); navigate('/') }}><span className="brand-mark"><Waves size={20} /></span><span className="brand-name">Kosmos</span></a>
       <p className="eyebrow sidebar-label">Your workspace</p>
-      <nav className="nav-list" aria-label="Workspace">{navigation.map(({ path: target, label, icon: Icon }) => <a key={target} aria-label={label} className={`nav-item ${path === target ? 'active' : ''}`} href={target} onClick={(event) => { event.preventDefault(); navigate(target) }}><Icon size={18} /><span className="nav-label">{label}</span></a>)}</nav>
+      <nav className="nav-list" aria-label="Workspace">{navigation.map(({ path: target, label, icon }) => { const Icon = icons[icon as keyof typeof icons] ?? LayoutGrid; return <a key={target} aria-label={label} className={`nav-item ${path === target ? 'active' : ''}`} href={target} onClick={(event) => { event.preventDefault(); navigate(target) }}><Icon size={18} /><span className="nav-label">{label}</span></a> })}</nav>
       <div className="sidebar-spacer" />
-      <a aria-label="Settings" className={`nav-item ${path === '/settings' ? 'active' : ''}`} href="/settings" onClick={(event) => { event.preventDefault(); navigate('/settings') }}><Settings2 size={18} /><span className="nav-label">Settings</span></a>
       <div className="user-chip"><span className="avatar">{initials(user.name)}</span><span><strong>{user.name}</strong><small>{user.email}</small></span></div>
     </aside>
     <main className="main-content">

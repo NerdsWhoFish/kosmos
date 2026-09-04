@@ -31,10 +31,16 @@ type Google struct {
 	sessionKey     []byte
 	production     bool
 	allowedDomains map[string]struct{}
+	grants         map[string]grant
 
 	mu       sync.Mutex
 	provider *oidc.Provider
 	verifier *oidc.IDTokenVerifier
+}
+
+type grant struct {
+	scopes  []string
+	handler func(context.Context, User, *oauth2.Token) error
 }
 
 type User struct {
@@ -57,18 +63,26 @@ func NewGoogle() *Google {
 		sessionKey:     []byte(os.Getenv("KOSMOS_SESSION_SECRET")),
 		production:     os.Getenv("KOSMOS_ENV") == "production",
 		allowedDomains: parseDomains(os.Getenv("KOSMOS_ALLOWED_GOOGLE_DOMAINS")),
+		grants:         make(map[string]grant),
 	}
 }
 
 func (g *Google) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/login", g.login)
+	mux.HandleFunc("GET /auth/connect/{provider}", g.connect)
 	mux.HandleFunc("GET /auth/callback", g.callback)
 	mux.HandleFunc("POST /auth/logout", g.logout)
 	mux.HandleFunc("GET /api/v1/me", g.me)
 }
 
+func (g *Google) RegisterGrant(name string, scopes []string, handler func(context.Context, User, *oauth2.Token) error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.grants[name] = grant{scopes: append([]string(nil), scopes...), handler: handler}
+}
+
 func (g *Google) login(w http.ResponseWriter, r *http.Request) {
-	config, err := g.oauthConfig(r.Context(), r)
+	config, err := g.oauthConfig(r.Context(), r, nil)
 	if err != nil {
 		http.Error(w, "Google login is not configured", http.StatusServiceUnavailable)
 		return
@@ -78,8 +92,38 @@ func (g *Google) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not create login state", http.StatusInternalServerError)
 		return
 	}
+	state = "login:" + state
 	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state, Path: "/", MaxAge: 600, HttpOnly: true, Secure: g.secureCookies(), SameSite: http.SameSiteLaxMode})
-	http.Redirect(w, r, config.AuthCodeURL(state, oauth2.AccessTypeOffline), http.StatusFound)
+	http.Redirect(w, r, config.AuthCodeURL(state), http.StatusFound)
+}
+
+func (g *Google) connect(w http.ResponseWriter, r *http.Request) {
+	current, err := g.CurrentUser(r)
+	if err != nil {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	name := r.PathValue("provider")
+	g.mu.Lock()
+	registered, ok := g.grants[name]
+	g.mu.Unlock()
+	if !ok {
+		http.Error(w, "unknown Google connection", http.StatusNotFound)
+		return
+	}
+	config, err := g.oauthConfig(r.Context(), r, registered.scopes)
+	if err != nil {
+		http.Error(w, "Google connection is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	nonce, err := randomString(32)
+	if err != nil {
+		http.Error(w, "could not create connection state", http.StatusInternalServerError)
+		return
+	}
+	state := name + ":" + current.Subject + ":" + nonce
+	http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: state, Path: "/", MaxAge: 600, HttpOnly: true, Secure: g.secureCookies(), SameSite: http.SameSiteLaxMode})
+	http.Redirect(w, r, config.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce), http.StatusFound)
 }
 
 func (g *Google) callback(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +132,22 @@ func (g *Google) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid login state", http.StatusBadRequest)
 		return
 	}
-	config, err := g.oauthConfig(r.Context(), r)
+	purpose, _, ok := strings.Cut(r.URL.Query().Get("state"), ":")
+	if !ok {
+		http.Error(w, "invalid login state", http.StatusBadRequest)
+		return
+	}
+	var registered grant
+	if purpose != "login" {
+		g.mu.Lock()
+		registered, ok = g.grants[purpose]
+		g.mu.Unlock()
+		if !ok {
+			http.Error(w, "unknown Google connection", http.StatusBadRequest)
+			return
+		}
+	}
+	config, err := g.oauthConfig(r.Context(), r, registered.scopes)
 	if err != nil {
 		http.Error(w, "Google login is not configured", http.StatusServiceUnavailable)
 		return
@@ -121,6 +180,20 @@ func (g *Google) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	if !g.allowsEmail(claims.Email) {
 		http.Error(w, "This Google account is not allowed to use Kosmos", http.StatusForbidden)
+		return
+	}
+	if purpose != "login" {
+		current, sessionErr := g.CurrentUser(r)
+		if sessionErr != nil || current.Subject != claims.Subject {
+			http.Error(w, "Google connection must use your signed-in account", http.StatusForbidden)
+			return
+		}
+		if err := registered.handler(r.Context(), current, token); err != nil {
+			http.Error(w, "could not save Google connection", http.StatusInternalServerError)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: stateCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: g.secureCookies(), SameSite: http.SameSiteLaxMode})
+		http.Redirect(w, r, "/settings?connected=1", http.StatusFound)
 		return
 	}
 	if len(g.sessionKey) < 32 {
@@ -172,7 +245,7 @@ func (g *Google) CurrentUser(r *http.Request) (User, error) {
 	return current.User, nil
 }
 
-func (g *Google) oauthConfig(ctx context.Context, r *http.Request) (*oauth2.Config, error) {
+func (g *Google) oauthConfig(ctx context.Context, r *http.Request, extraScopes ...[]string) (*oauth2.Config, error) {
 	if g.clientID == "" || g.clientSecret == "" || len(g.sessionKey) < 32 || (g.production && len(g.allowedDomains) == 0) {
 		return nil, errors.New("Google OAuth environment is incomplete")
 	}
@@ -194,7 +267,11 @@ func (g *Google) oauthConfig(ctx context.Context, r *http.Request) (*oauth2.Conf
 		}
 		redirectURL = scheme + "://" + r.Host + "/auth/callback"
 	}
-	return &oauth2.Config{ClientID: g.clientID, ClientSecret: g.clientSecret, Endpoint: google.Endpoint, RedirectURL: redirectURL, Scopes: []string{oidc.ScopeOpenID, "email", "profile"}}, nil
+	scopes := []string{oidc.ScopeOpenID, "email", "profile"}
+	if len(extraScopes) != 0 {
+		scopes = append(scopes, extraScopes[0]...)
+	}
+	return &oauth2.Config{ClientID: g.clientID, ClientSecret: g.clientSecret, Endpoint: google.Endpoint, RedirectURL: redirectURL, Scopes: scopes}, nil
 }
 
 func (g *Google) signSession(value session) (string, error) {

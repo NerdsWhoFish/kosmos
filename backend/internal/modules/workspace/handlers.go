@@ -16,6 +16,10 @@ var errNotFound = errors.New("record not found")
 func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/summary", m.summary)
 	mux.HandleFunc("GET /api/v1/search", m.search)
+	mux.HandleFunc("GET /api/v1/accounts", m.listAccounts)
+	mux.HandleFunc("POST /api/v1/accounts", m.createAccount)
+	mux.HandleFunc("GET /api/v1/accounts/{id}", m.getAccount)
+	mux.HandleFunc("GET /api/v1/leads", m.listLeads)
 	mux.HandleFunc("GET /api/v1/contacts", m.listContacts)
 	mux.HandleFunc("POST /api/v1/contacts", m.createContact)
 	mux.HandleFunc("GET /api/v1/contacts/{id}", m.getContact)
@@ -31,8 +35,107 @@ func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/documents", m.listDocuments)
 	mux.HandleFunc("POST /api/v1/documents", m.createDocument)
 	mux.HandleFunc("PATCH /api/v1/documents/{id}", m.updateDocument)
+	mux.HandleFunc("GET /api/v1/documents/{id}/revisions", m.documentRevisions)
 	mux.HandleFunc("GET /api/v1/costs", m.listCosts)
 	mux.HandleFunc("POST /api/v1/costs", m.createCost)
+	mux.HandleFunc("PATCH /api/v1/costs/{id}", m.updateCost)
+}
+
+func (m Module) listAccounts(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	items, err := m.store.ListAccounts(r.Context(), scope)
+	respondList(w, items, err, "accounts")
+}
+
+func (m Module) createAccount(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	var item Account
+	if !decodeJSON(w, r, &item) {
+		return
+	}
+	item.Name, item.Website, item.BillingEmail, item.Status, item.Notes = strings.TrimSpace(item.Name), strings.TrimSpace(item.Website), strings.ToLower(strings.TrimSpace(item.BillingEmail)), strings.ToLower(strings.TrimSpace(item.Status)), strings.TrimSpace(item.Notes)
+	if item.Status == "" {
+		item.Status = "prospect"
+	}
+	if item.Name == "" || len(item.Name) > 160 || !contains([]string{"prospect", "customer", "inactive"}, item.Status) {
+		writeError(w, http.StatusBadRequest, "invalid_account", "Account needs a name and a valid status")
+		return
+	}
+	created, err := m.store.CreateAccount(r.Context(), scope, item)
+	respondCreated(w, created, err, "account_save_failed", "Could not save account")
+}
+
+func (m Module) getAccount(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	accounts, err := m.store.ListAccounts(r.Context(), scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "account_load_failed", "Could not load account")
+		return
+	}
+	var selected Account
+	for _, account := range accounts {
+		if account.ID == r.PathValue("id") {
+			selected = account
+			break
+		}
+	}
+	if selected.ID == "" {
+		writeError(w, http.StatusNotFound, "account_not_found", "Account not found")
+		return
+	}
+	contacts, err := m.store.ListContacts(r.Context(), scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "account_load_failed", "Could not load account")
+		return
+	}
+	linkedContacts := make([]Contact, 0)
+	contactIDs := make(map[string]struct{})
+	for _, contact := range contacts {
+		if contact.AccountID == selected.ID {
+			linkedContacts = append(linkedContacts, contact)
+			contactIDs[contact.ID] = struct{}{}
+		}
+	}
+	opportunities, err := m.store.ListOpportunities(r.Context(), scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "account_load_failed", "Could not load account")
+		return
+	}
+	linkedOpportunities := make([]Opportunity, 0)
+	for _, opportunity := range opportunities {
+		if _, linked := contactIDs[opportunity.ContactID]; linked {
+			linkedOpportunities = append(linkedOpportunities, opportunity)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"account": selected, "contacts": linkedContacts, "opportunities": linkedOpportunities})
+}
+
+func (m Module) listLeads(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	contacts, err := m.store.ListContacts(r.Context(), scope)
+	if err != nil {
+		respondList(w, []Contact{}, err, "leads")
+		return
+	}
+	leads := make([]Contact, 0)
+	for _, contact := range contacts {
+		if contact.Status == "lead" {
+			leads = append(leads, contact)
+		}
+	}
+	respondList(w, leads, nil, "leads")
 }
 
 func (m Module) listContacts(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +301,7 @@ func (m Module) createReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item.Title = strings.TrimSpace(item.Title)
+	item.OwnerEmail = strings.ToLower(strings.TrimSpace(item.OwnerEmail))
 	if item.Title == "" || len(item.Title) > 160 || item.DueAt.IsZero() {
 		writeError(w, http.StatusBadRequest, "invalid_reminder", "A title and due date are required")
 		return
@@ -215,8 +319,9 @@ func (m Module) updateReminder(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &patch) {
 		return
 	}
-	if patch.Completed == nil {
-		writeError(w, http.StatusBadRequest, "invalid_reminder", "Reminder completion state is required")
+	trimPointer(patch.OwnerEmail, true)
+	if patch.Completed == nil && patch.OwnerEmail == nil {
+		writeError(w, http.StatusBadRequest, "invalid_reminder", "Reminder completion state or owner is required")
 		return
 	}
 	updated, err := m.store.UpdateReminder(r.Context(), scope, r.PathValue("id"), patch)
@@ -271,8 +376,32 @@ func (m Module) updateDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_document", "Document body must be 100,000 characters or fewer")
 		return
 	}
+	documents, err := m.store.ListDocuments(r.Context(), scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "document_save_failed", "Could not save document")
+		return
+	}
+	for _, current := range documents {
+		if current.ID == r.PathValue("id") {
+			_, err = m.store.CreateDocumentRevision(r.Context(), scope, DocumentRevision{DocumentID: current.ID, Title: current.Title, Body: current.Body, Links: current.Links, Revision: current.Revision})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "document_save_failed", "Could not save document history")
+				return
+			}
+			break
+		}
+	}
 	updated, err := m.store.UpdateDocument(r.Context(), scope, r.PathValue("id"), patch)
 	respondUpdated(w, updated, err, "document_not_found", "Document not found", "document_save_failed", "Could not save document")
+}
+
+func (m Module) documentRevisions(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	items, err := m.store.ListDocumentRevisions(r.Context(), scope, r.PathValue("id"))
+	respondList(w, items, err, "revisions")
 }
 
 func (m Module) listCosts(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +429,24 @@ func (m Module) createCost(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := m.store.CreateCost(r.Context(), scope, item)
 	respondCreated(w, created, err, "cost_save_failed", "Could not save cost")
+}
+
+func (m Module) updateCost(w http.ResponseWriter, r *http.Request) {
+	scope, ok := m.requireScope(w, r)
+	if !ok {
+		return
+	}
+	var patch CostPatch
+	if !decodeJSON(w, r, &patch) {
+		return
+	}
+	normalizeCostPatch(&patch)
+	if message := validateCostPatch(patch); message != "" {
+		writeError(w, http.StatusBadRequest, "invalid_cost", message)
+		return
+	}
+	updated, err := m.store.UpdateCost(r.Context(), scope, r.PathValue("id"), patch)
+	respondUpdated(w, updated, err, "cost_not_found", "Cost not found", "cost_save_failed", "Could not save cost")
 }
 
 type summaryResponse struct {
@@ -389,6 +536,16 @@ func (m Module) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results := make([]searchResult, 0)
+	accounts, err := m.store.ListAccounts(r.Context(), scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "search_failed", "Could not search workspace")
+		return
+	}
+	for _, item := range accounts {
+		if matches(query, item.Name, item.Website, item.BillingEmail, item.Notes) {
+			results = append(results, searchResult{ID: item.ID, Kind: "account", Title: item.Name, Subtitle: titleCase(item.Status), Href: "/accounts"})
+		}
+	}
 	contacts, err := m.store.ListContacts(r.Context(), scope)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "search_failed", "Could not search workspace")
@@ -507,22 +664,26 @@ func respondUpdated[T any](w http.ResponseWriter, item T, err error, notFoundCod
 }
 
 func normalizeContact(contact *Contact) {
+	contact.AccountID = strings.TrimSpace(contact.AccountID)
 	contact.Name = strings.TrimSpace(contact.Name)
 	contact.Company = strings.TrimSpace(contact.Company)
 	contact.Email = strings.ToLower(strings.TrimSpace(contact.Email))
 	contact.Phone = strings.TrimSpace(contact.Phone)
 	contact.Status = strings.ToLower(strings.TrimSpace(contact.Status))
+	contact.Source = strings.TrimSpace(contact.Source)
 	if contact.Status == "" {
 		contact.Status = "lead"
 	}
 }
 
 func normalizeContactPatch(patch *ContactPatch) {
+	trimPointer(patch.AccountID, false)
 	trimPointer(patch.Name, false)
 	trimPointer(patch.Company, false)
 	trimPointer(patch.Email, true)
 	trimPointer(patch.Phone, false)
 	trimPointer(patch.Status, true)
+	trimPointer(patch.Source, false)
 }
 
 func validateContact(contact Contact) string {
@@ -561,6 +722,7 @@ func normalizeOpportunity(item *Opportunity) {
 	item.Stage = strings.ToLower(strings.TrimSpace(item.Stage))
 	item.NextStep = strings.TrimSpace(item.NextStep)
 	item.CloseDate = strings.TrimSpace(item.CloseDate)
+	item.OwnerEmail = strings.ToLower(strings.TrimSpace(item.OwnerEmail))
 	if item.Stage == "" {
 		item.Stage = "new"
 	}
@@ -572,6 +734,7 @@ func normalizeOpportunityPatch(patch *OpportunityPatch) {
 	trimPointer(patch.Stage, true)
 	trimPointer(patch.NextStep, false)
 	trimPointer(patch.CloseDate, false)
+	trimPointer(patch.OwnerEmail, true)
 }
 
 func validateOpportunity(item Opportunity) string {
@@ -581,7 +744,7 @@ func validateOpportunity(item Opportunity) string {
 	if item.AmountCents < 0 {
 		return "Opportunity amount cannot be negative"
 	}
-	if !contains([]string{"new", "qualified", "proposal", "won", "lost"}, item.Stage) {
+	if item.Stage == "" || len(item.Stage) > 80 {
 		return "Choose a valid pipeline stage"
 	}
 	if item.CloseDate != "" {
@@ -620,6 +783,11 @@ func validateDocument(item Document) string {
 	if len(item.Body) > 100000 {
 		return "Document body must be 100,000 characters or fewer"
 	}
+	for _, link := range item.Links {
+		if !contains([]string{"account", "contact", "opportunity", "cost", "document"}, link.Type) || strings.TrimSpace(link.ID) == "" {
+			return "Document links must reference a supported record"
+		}
+	}
 	return ""
 }
 
@@ -630,6 +798,65 @@ func normalizeCost(item *Cost) {
 	item.IncurredOn = strings.TrimSpace(item.IncurredOn)
 	item.Recurrence = strings.ToLower(strings.TrimSpace(item.Recurrence))
 	item.Notes = strings.TrimSpace(item.Notes)
+	item.RenewalDate = strings.TrimSpace(item.RenewalDate)
+	item.PaymentMethod = strings.TrimSpace(item.PaymentMethod)
+	item.ReviewState = strings.ToLower(strings.TrimSpace(item.ReviewState))
+	if item.ReviewState == "" {
+		item.ReviewState = "ready"
+	}
+}
+
+func normalizeCostPatch(patch *CostPatch) {
+	trimPointer(patch.Vendor, false)
+	trimPointer(patch.Description, false)
+	trimPointer(patch.Category, false)
+	trimPointer(patch.IncurredOn, false)
+	trimPointer(patch.Recurrence, true)
+	trimPointer(patch.Notes, false)
+	trimPointer(patch.RenewalDate, false)
+	trimPointer(patch.PaymentMethod, false)
+	trimPointer(patch.ReviewState, true)
+}
+
+func validateCostPatch(patch CostPatch) string {
+	item := Cost{Description: "Valid", IncurredOn: time.Now().Format(time.DateOnly), ReviewState: "ready"}
+	if patch.Vendor != nil {
+		item.Vendor = *patch.Vendor
+	}
+	if patch.Description != nil {
+		item.Description = *patch.Description
+	}
+	if patch.AmountCents != nil {
+		item.AmountCents = *patch.AmountCents
+	}
+	if patch.Category != nil {
+		item.Category = *patch.Category
+	}
+	if patch.IncurredOn != nil {
+		item.IncurredOn = *patch.IncurredOn
+	}
+	if patch.Recurring != nil {
+		item.Recurring = *patch.Recurring
+	}
+	if patch.Recurrence != nil {
+		item.Recurrence = *patch.Recurrence
+	}
+	if patch.TaxDeductible != nil {
+		item.TaxDeductible = *patch.TaxDeductible
+	}
+	if patch.Notes != nil {
+		item.Notes = *patch.Notes
+	}
+	if patch.RenewalDate != nil {
+		item.RenewalDate = *patch.RenewalDate
+	}
+	if patch.PaymentMethod != nil {
+		item.PaymentMethod = *patch.PaymentMethod
+	}
+	if patch.ReviewState != nil {
+		item.ReviewState = *patch.ReviewState
+	}
+	return validateCost(item)
 }
 
 func validateCost(item Cost) string {
@@ -644,6 +871,14 @@ func validateCost(item Cost) string {
 	}
 	if item.Recurring && !contains([]string{"monthly", "quarterly", "yearly"}, item.Recurrence) {
 		return "Choose monthly, quarterly, or yearly recurrence"
+	}
+	if item.RenewalDate != "" {
+		if _, err := time.Parse(time.DateOnly, item.RenewalDate); err != nil {
+			return "Renewal date must be a valid date"
+		}
+	}
+	if !contains([]string{"ready", "review", "complete"}, item.ReviewState) {
+		return "Choose a valid review state"
 	}
 	return ""
 }

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	platformmodules "github.com/NerdsWhoFish/kosmos/backend/internal/platform/modules"
 )
 
 type OwnerFunc func(*http.Request) (string, error)
@@ -21,10 +23,13 @@ func NewModule(store Store, owner OwnerFunc) Module {
 
 func (Module) Name() string { return "landing" }
 
+func (Module) Manifest() platformmodules.Manifest {
+	return platformmodules.Manifest{Name: "landing", Navigation: []platformmodules.Navigation{{Path: "/", Label: "Overview", Icon: "overview"}}, Permissions: []string{"landing.read", "landing.manage"}, Resources: []string{"buttons", "notifications"}}
+}
+
 func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/landing", m.landing)
 	mux.HandleFunc("POST /api/v1/landing/buttons", m.createButton)
-	mux.HandleFunc("GET /api/v1/notifications", m.notifications)
 }
 
 type landingResponse struct {
@@ -51,7 +56,7 @@ func (m Module) landing(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not load landing zone"})
 		return
 	}
-	writeJSON(w, http.StatusOK, landingResponse{Buttons: buttons, Notifications: sampleNotifications()})
+	writeJSON(w, http.StatusOK, landingResponse{Buttons: buttons, Notifications: []notification{}})
 }
 
 func (m Module) createButton(w http.ResponseWriter, r *http.Request) {
@@ -83,13 +88,6 @@ func (m Module) createButton(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, created)
 }
 
-func (m Module) notifications(w http.ResponseWriter, r *http.Request) {
-	if _, ok := m.requireOwner(w, r); !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string][]notification{"notifications": sampleNotifications()})
-}
-
 func (m Module) requireOwner(w http.ResponseWriter, r *http.Request) (string, bool) {
 	owner, err := m.owner(r)
 	if err != nil || owner == "" {
@@ -116,12 +114,6 @@ func validateButton(button Button) error {
 type validationError struct{ message string }
 
 func (e *validationError) Error() string { return e.message }
-
-func sampleNotifications() []notification {
-	return []notification{
-		{ID: "welcome", Title: "Kosmos is ready", Summary: "Your business home base is ready to customize.", Kind: "system", CreatedAt: time.Now().UTC(), Href: "/docs/getting-started"},
-	}
-}
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")

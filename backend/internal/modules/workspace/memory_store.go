@@ -9,12 +9,34 @@ import (
 )
 
 type memoryWorkspace struct {
-	contacts      []Contact
-	opportunities []Opportunity
-	activities    []Activity
-	reminders     []Reminder
-	documents     []Document
-	costs         []Cost
+	accounts          []Account
+	contacts          []Contact
+	opportunities     []Opportunity
+	activities        []Activity
+	reminders         []Reminder
+	documents         []Document
+	documentRevisions []DocumentRevision
+	costs             []Cost
+}
+
+func (s *MemoryStore) ListAccounts(_ context.Context, scope string) ([]Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Account(nil), s.workspace(scope).accounts...), nil
+}
+
+func (s *MemoryStore) CreateAccount(_ context.Context, scope string, item Account) (Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	id, err := newID()
+	if err != nil {
+		return Account{}, err
+	}
+	item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
+	workspace := s.workspace(scope)
+	workspace.accounts = append([]Account{item}, workspace.accounts...)
+	return item, nil
 }
 
 type MemoryStore struct {
@@ -172,7 +194,12 @@ func (s *MemoryStore) UpdateReminder(_ context.Context, scope, id string, patch 
 		if workspace.reminders[index].ID != id {
 			continue
 		}
-		workspace.reminders[index].Completed = *patch.Completed
+		if patch.Completed != nil {
+			workspace.reminders[index].Completed = *patch.Completed
+		}
+		if patch.OwnerEmail != nil {
+			workspace.reminders[index].OwnerEmail = *patch.OwnerEmail
+		}
 		workspace.reminders[index].UpdatedAt = time.Now().UTC()
 		return workspace.reminders[index], nil
 	}
@@ -194,10 +221,36 @@ func (s *MemoryStore) CreateDocument(_ context.Context, scope string, item Docum
 		return Document{}, err
 	}
 	item.ID = id
+	item.Revision = 1
 	item.CreatedAt = now
 	item.UpdatedAt = now
 	workspace := s.workspace(scope)
 	workspace.documents = append([]Document{item}, workspace.documents...)
+	return item, nil
+}
+
+func (s *MemoryStore) ListDocumentRevisions(_ context.Context, scope, documentID string) ([]DocumentRevision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make([]DocumentRevision, 0)
+	for _, item := range s.workspace(scope).documentRevisions {
+		if item.DocumentID == documentID {
+			items = append(items, item)
+		}
+	}
+	return items, nil
+}
+
+func (s *MemoryStore) CreateDocumentRevision(_ context.Context, scope string, item DocumentRevision) (DocumentRevision, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, err := newID()
+	if err != nil {
+		return DocumentRevision{}, err
+	}
+	item.ID, item.CreatedAt = id, time.Now().UTC()
+	workspace := s.workspace(scope)
+	workspace.documentRevisions = append([]DocumentRevision{item}, workspace.documentRevisions...)
 	return item, nil
 }
 
@@ -238,7 +291,25 @@ func (s *MemoryStore) CreateCost(_ context.Context, scope string, item Cost) (Co
 	return item, nil
 }
 
+func (s *MemoryStore) UpdateCost(_ context.Context, scope, id string, patch CostPatch) (Cost, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace := s.workspace(scope)
+	for index := range workspace.costs {
+		if workspace.costs[index].ID != id {
+			continue
+		}
+		applyCostPatch(&workspace.costs[index], patch)
+		workspace.costs[index].UpdatedAt = time.Now().UTC()
+		return workspace.costs[index], nil
+	}
+	return Cost{}, errNotFound
+}
+
 func applyContactPatch(item *Contact, patch ContactPatch) {
+	if patch.AccountID != nil {
+		item.AccountID = *patch.AccountID
+	}
 	if patch.Name != nil {
 		item.Name = *patch.Name
 	}
@@ -253,6 +324,9 @@ func applyContactPatch(item *Contact, patch ContactPatch) {
 	}
 	if patch.Status != nil {
 		item.Status = *patch.Status
+	}
+	if patch.Source != nil {
+		item.Source = *patch.Source
 	}
 }
 
@@ -275,6 +349,48 @@ func applyOpportunityPatch(item *Opportunity, patch OpportunityPatch) {
 	if patch.CloseDate != nil {
 		item.CloseDate = *patch.CloseDate
 	}
+	if patch.OwnerEmail != nil {
+		item.OwnerEmail = *patch.OwnerEmail
+	}
+}
+
+func applyCostPatch(item *Cost, patch CostPatch) {
+	if patch.Vendor != nil {
+		item.Vendor = *patch.Vendor
+	}
+	if patch.Description != nil {
+		item.Description = *patch.Description
+	}
+	if patch.AmountCents != nil {
+		item.AmountCents = *patch.AmountCents
+	}
+	if patch.Category != nil {
+		item.Category = *patch.Category
+	}
+	if patch.IncurredOn != nil {
+		item.IncurredOn = *patch.IncurredOn
+	}
+	if patch.Recurring != nil {
+		item.Recurring = *patch.Recurring
+	}
+	if patch.Recurrence != nil {
+		item.Recurrence = *patch.Recurrence
+	}
+	if patch.TaxDeductible != nil {
+		item.TaxDeductible = *patch.TaxDeductible
+	}
+	if patch.Notes != nil {
+		item.Notes = *patch.Notes
+	}
+	if patch.RenewalDate != nil {
+		item.RenewalDate = *patch.RenewalDate
+	}
+	if patch.PaymentMethod != nil {
+		item.PaymentMethod = *patch.PaymentMethod
+	}
+	if patch.ReviewState != nil {
+		item.ReviewState = *patch.ReviewState
+	}
 }
 
 func applyDocumentPatch(item *Document, patch DocumentPatch) {
@@ -284,6 +400,10 @@ func applyDocumentPatch(item *Document, patch DocumentPatch) {
 	if patch.Body != nil {
 		item.Body = *patch.Body
 	}
+	if patch.Links != nil {
+		item.Links = *patch.Links
+	}
+	item.Revision++
 }
 
 func newID() (string, error) {

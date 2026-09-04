@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Kosmos API
-  version: 0.1.0
+  version: 0.2.0
   description: API for the Kosmos small business workspace.
   license:
     name: MIT
@@ -173,6 +173,80 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /leads:
+    get:
+      operationId: listLeads
+      responses:
+        '200':
+          description: Contacts currently classified as leads
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [leads]
+                properties:
+                  leads:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contact'
+  /accounts:
+    get:
+      operationId: listAccounts
+      responses:
+        '200':
+          description: Prospect and customer accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accounts]
+                properties:
+                  accounts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Account'
+    post:
+      operationId: createAccount
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountInput'
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+  /accounts/{id}:
+    get:
+      operationId: getAccount
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+      responses:
+        '200':
+          description: Account with linked contacts and opportunities
+  /intake/contact:
+    post:
+      operationId: ingestContactForm
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactIntake'
+      responses:
+        '201':
+          description: Lead received
+        '202':
+          description: Duplicate or spam submission safely accepted
+        '429':
+          description: Per-source rate limit exceeded
   /contacts/{id}:
     parameters:
       - $ref: '#/components/parameters/RecordID'
@@ -412,6 +486,14 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /documents/{id}/revisions:
+    get:
+      operationId: listDocumentRevisions
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+      responses:
+        '200':
+          description: Immutable prior document revisions
   /costs:
     get:
       operationId: listCosts
@@ -420,6 +502,31 @@ paths:
           $ref: '#/components/responses/CostList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /costs/{id}:
+    patch:
+      operationId: updateCost
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CostPatch'
+      responses:
+        '200':
+          description: Cost updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cost'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
     post:
       operationId: createCost
       parameters:
@@ -441,6 +548,230 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /members:
+    get:
+      operationId: listMembers
+      responses:
+        '200':
+          description: Organization members and roles
+  /members/{id}:
+    patch:
+      operationId: updateMember
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '200':
+          description: Membership role or status updated
+        '403':
+          description: Owner or administrator role required
+  /pipeline-stages:
+    get:
+      operationId: listPipelineStages
+      responses:
+        '200':
+          description: Ordered organization pipeline stages
+    post:
+      operationId: createPipelineStage
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '201':
+          description: Pipeline stage created
+  /notifications/{id}:
+    patch:
+      operationId: markNotificationRead
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '200':
+          description: Notification marked read
+  /events:
+    post:
+      operationId: publishBusinessEvent
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, kind, href]
+              properties:
+                title:
+                  type: string
+                summary:
+                  type: string
+                kind:
+                  type: string
+                href:
+                  type: string
+                  pattern: ^/
+      responses:
+        '202':
+          description: Idempotent event accepted into the notification projection
+  /email/templates:
+    get:
+      operationId: listEmailTemplates
+      responses:
+        '200':
+          description: Reusable outbound email templates
+    post:
+      operationId: createEmailTemplate
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '201':
+          description: Email template created
+  /email/send:
+    post:
+      operationId: sendGoogleEmail
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Email sent through the connected Google account
+        '409':
+          description: Google Workspace is not connected
+  /email/sync:
+    post:
+      operationId: syncGoogleMailMetadata
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '200':
+          description: Relevant inbound message metadata synchronized
+  /email/messages:
+    get:
+      operationId: listRelevantMail
+      responses:
+        '200':
+          description: Metadata for mail from known contacts
+  /integrations/google:
+    get:
+      operationId: getGoogleConnection
+      responses:
+        '200':
+          description: Current user's Google Workspace connection status
+  /integrations/tiller:
+    put:
+      operationId: configureTiller
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '200':
+          description: Tiller Google Sheet configured
+  /integrations/tiller/sync:
+    post:
+      operationId: syncTiller
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Idempotent Tiller import completed
+  /transactions:
+    get:
+      operationId: listTransactions
+      responses:
+        '200':
+          description: Imported transactions and match states
+  /transactions/{id}:
+    patch:
+      operationId: reviewTransactionMatch
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      responses:
+        '200':
+          description: Transaction match reviewed
+  /attachments:
+    get:
+      operationId: listAttachments
+      responses:
+        '200':
+          description: Private attachment metadata with expiring download links
+    post:
+      operationId: uploadAttachment
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+                  enum: [attachment, receipt]
+                recordType:
+                  type: string
+                recordId:
+                  type: string
+      responses:
+        '201':
+          description: Private attachment stored
+  /attachments/{id}/download:
+    get:
+      operationId: downloadAttachment
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - name: expires
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: signature
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Attachment bytes
+  /audit:
+    get:
+      operationId: listAuditHistory
+      responses:
+        '200':
+          description: Security-sensitive and externally visible changes
+  /exports/{kind}:
+    get:
+      operationId: exportRecords
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [contacts, costs]
+      responses:
+        '200':
+          description: Portable CSV export
+          content:
+            text/csv:
+              schema:
+                type: string
+  /voice/link:
+    get:
+      operationId: getGoogleVoiceLinks
+      parameters:
+        - name: phone
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Google Voice, native call, and native SMS links
 components:
   securitySchemes:
     sessionCookie:
@@ -461,6 +792,13 @@ components:
       schema:
         type: string
         const: '1'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        maxLength: 200
   responses:
     BadRequest:
       description: Request validation failed
@@ -636,6 +974,8 @@ components:
       type: object
       required: [name]
       properties:
+        accountId:
+          type: string
         name:
           type: string
           maxLength: 160
@@ -652,6 +992,53 @@ components:
           type: string
           enum: [lead, prospect, customer]
           default: lead
+        source:
+          type: string
+          maxLength: 100
+    ContactIntake:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        company:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        message:
+          type: string
+          maxLength: 5000
+        source:
+          type: string
+        website:
+          type: string
+          description: Honeypot field that real users must leave empty.
+    AccountInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 160
+        website:
+          type: string
+          format: uri
+        billingEmail:
+          type: string
+          format: email
+        status:
+          type: string
+          enum: [prospect, customer, inactive]
+        notes:
+          type: string
+    Account:
+      allOf:
+        - $ref: '#/components/schemas/AccountInput'
+        - $ref: '#/components/schemas/AuditedRecord'
     ContactPatch:
       type: object
       properties:
@@ -689,7 +1076,6 @@ components:
           minimum: 0
         stage:
           type: string
-          enum: [new, qualified, proposal, won, lost]
           default: new
         nextStep:
           type: string
@@ -697,6 +1083,9 @@ components:
         closeDate:
           type: string
           format: date
+        ownerEmail:
+          type: string
+          format: email
     OpportunityPatch:
       type: object
       properties:
@@ -711,13 +1100,15 @@ components:
           minimum: 0
         stage:
           type: string
-          enum: [new, qualified, proposal, won, lost]
         nextStep:
           type: string
           maxLength: 500
         closeDate:
           type: string
           format: date
+        ownerEmail:
+          type: string
+          format: email
     Opportunity:
       allOf:
         - $ref: '#/components/schemas/OpportunityInput'
@@ -763,6 +1154,9 @@ components:
         dueAt:
           type: string
           format: date-time
+        ownerEmail:
+          type: string
+          format: email
     Reminder:
       allOf:
         - $ref: '#/components/schemas/ReminderInput'
@@ -782,6 +1176,10 @@ components:
         body:
           type: string
           maxLength: 100000
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecordLink'
     DocumentPatch:
       type: object
       properties:
@@ -795,6 +1193,20 @@ components:
       allOf:
         - $ref: '#/components/schemas/DocumentInput'
         - $ref: '#/components/schemas/AuditedRecord'
+        - type: object
+          properties:
+            revision:
+              type: integer
+              minimum: 1
+    RecordLink:
+      type: object
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          enum: [account, contact, opportunity, cost, document]
+        id:
+          type: string
     CostInput:
       type: object
       required: [description, amountCents, incurredOn]
@@ -825,10 +1237,51 @@ components:
         notes:
           type: string
           maxLength: 2000
+        renewalDate:
+          type: string
+          format: date
+        paymentMethod:
+          type: string
+        reviewState:
+          type: string
+          enum: [ready, review, complete]
     Cost:
       allOf:
         - $ref: '#/components/schemas/CostInput'
         - $ref: '#/components/schemas/AuditedRecord'
+    CostPatch:
+      type: object
+      properties:
+        vendor:
+          type: string
+        description:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+          minimum: 0
+        category:
+          type: string
+        incurredOn:
+          type: string
+          format: date
+        recurring:
+          type: boolean
+        recurrence:
+          type: string
+          enum: ['', monthly, quarterly, yearly]
+        taxDeductible:
+          type: boolean
+        notes:
+          type: string
+        renewalDate:
+          type: string
+          format: date
+        paymentMethod:
+          type: string
+        reviewState:
+          type: string
+          enum: [ready, review, complete]
     Summary:
       type: object
       required: [contacts, openOpportunities, pipelineAmountCents, followUpsDue, currentMonthCostCents, recentActivities]

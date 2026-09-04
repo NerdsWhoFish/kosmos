@@ -8,19 +8,29 @@ const responses: Record<string, unknown> = {
   '/api/v1/summary': { contacts: 1, openOpportunities: 1, pipelineAmountCents: 125000, followUpsDue: 1, currentMonthCostCents: 1800, recentActivities: [] },
   '/api/v1/landing': { buttons: [{ id: 'docs', label: 'Field notes', description: 'Open the handbook.', href: '/documents', icon: 'globe' }], notifications: [] },
   '/api/v1/contacts': { contacts: [contact] },
+  '/api/v1/accounts': { accounts: [] },
   '/api/v1/opportunities': { opportunities: [{ id: 'opportunity-1', name: 'Website refresh', contactId: contact.id, amountCents: 125000, stage: 'qualified', nextStep: 'Send proposal', closeDate: '', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
   '/api/v1/activities': { activities: [] },
   '/api/v1/reminders': { reminders: [{ id: 'reminder-1', contactId: contact.id, title: 'Send proposal', dueAt: '2026-09-03T12:00:00Z', completed: false, createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
   '/api/v1/documents': { documents: [{ id: 'document-1', title: 'Client kickoff', body: '# Agenda', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
   '/api/v1/costs': { costs: [{ id: 'cost-1', vendor: 'Google', description: 'Workspace', amountCents: 1800, category: 'Software', incurredOn: '2026-09-03', recurring: true, recurrence: 'monthly', taxDeductible: true, notes: '', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
   '/api/v1/search?q=river': { results: [{ id: contact.id, kind: 'contact', title: contact.name, subtitle: contact.company, href: '/contacts' }] },
+  '/api/v1/members': { members: [{ id: 'member-1', email: user.email, name: user.name, role: 'owner', status: 'active', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
+  '/api/v1/pipeline-stages': { stages: [{ id: 'new', name: 'New', position: 0, probability: 10, closed: false, won: false, createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
+  '/api/v1/audit': { entries: [] },
+  '/api/v1/integrations/google': { connected: true, connection: { id: 'google-1', userEmail: user.email, googleEmail: user.email, tiller: { spreadsheetId: 'sheet-1', range: 'Transactions!A:Z' }, createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }, connectUrl: '/auth/connect/workspace' },
+  '/api/v1/email/templates': { templates: [] },
+  '/api/v1/email/messages': { messages: [] },
+  '/api/v1/notifications': { notifications: [] },
+  '/api/v1/transactions': { transactions: [{ id: 'transaction-1', externalId: 'row-1', date: '2026-09-03', description: 'Ada deposit', merchant: 'River Labs', amountCents: 25000, source: 'tiller', matchStatus: 'review', createdAt: '2026-09-03T12:00:00Z', updatedAt: '2026-09-03T12:00:00Z' }] },
+  '/api/v1/attachments': { attachments: [] },
 }
 
 function mockAPI(authenticated = true) {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'https://kosmos.test')
     const method = (init?.method ?? 'GET').toUpperCase()
-    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {}
+    const body = typeof init?.body === 'string' ? JSON.parse(init.body) as Record<string, unknown> : {}
     if (url.pathname === '/api/v1/me') return Promise.resolve(authenticated ? json(user) : new Response(null, { status: 401 }))
     if (url.pathname === '/auth/logout') return Promise.resolve(new Response(null, { status: 204 }))
     if (url.pathname === '/api/v1/contacts' && method === 'POST') return Promise.resolve(json({ ...contact, id: 'contact-2', name: 'Grace Hopper', company: 'Compiler Co' }, 201))
@@ -32,6 +42,13 @@ function mockAPI(authenticated = true) {
     if (url.pathname === '/api/v1/documents' && method === 'POST') return Promise.resolve(json({ id: 'document-2', title: body.title, body: body.body, createdAt: '2026-09-03T13:00:00Z', updatedAt: '2026-09-03T13:00:00Z' }, 201))
     if (url.pathname === '/api/v1/costs' && method === 'POST') return Promise.resolve(json({ id: 'cost-2', vendor: body.vendor, description: body.description, amountCents: body.amountCents, category: body.category, incurredOn: body.incurredOn, recurring: body.recurring, recurrence: body.recurrence, taxDeductible: body.taxDeductible, notes: body.notes, createdAt: '2026-09-03T13:00:00Z', updatedAt: '2026-09-03T13:00:00Z' }, 201))
     if (url.pathname === '/api/v1/landing/buttons' && method === 'POST') return Promise.resolve(json({ id: 'reports', label: 'Fishing reports', description: 'Open reports.', href: 'https://example.com/reports', icon: 'globe' }, 201))
+    if (url.pathname === '/api/v1/email/send' && method === 'POST') return Promise.resolve(json({ id: 'message-1', status: 'sent' }, 201))
+    if (url.pathname === '/api/v1/email/sync' && method === 'POST') return Promise.resolve(json({ newMessages: 0 }))
+    if (url.pathname === '/api/v1/email/templates' && method === 'POST') return Promise.resolve(json({ id: 'template-1', ...body }, 201))
+    if (url.pathname === '/api/v1/integrations/tiller/sync' && method === 'POST') return Promise.resolve(json({ newTransactions: 1, rows: 1 }))
+    if (url.pathname === '/api/v1/integrations/tiller' && method === 'PUT') return Promise.resolve(json((responses['/api/v1/integrations/google'] as { connection: unknown }).connection))
+    if (url.pathname === '/api/v1/transactions/transaction-1' && method === 'PATCH') return Promise.resolve(json({ ...(responses['/api/v1/transactions'] as { transactions: unknown[] }).transactions[0] as object, matchStatus: body.matchStatus }))
+    if (url.pathname === '/api/v1/attachments' && method === 'POST') return Promise.resolve(json({ id: 'attachment-1', fileName: 'receipt.pdf', contentType: 'application/pdf', size: 512, kind: 'receipt', recordType: 'cost', recordId: 'cost-1', createdBy: user.email, createdAt: '2026-09-03T12:00:00Z', downloadUrl: '/download' }, 201))
     const key = url.pathname + url.search
     return Promise.resolve(json(responses[key] ?? responses[url.pathname] ?? {}))
   }))
@@ -72,7 +89,7 @@ describe('Kosmos application', () => {
     render(<App />)
 
     expect(await screen.findByRole('heading', { name: /good (morning|afternoon|evening), joey/i })).toBeInTheDocument()
-    for (const destination of ['Overview', 'Contacts', 'Opportunities', 'Documents', 'Costs', 'Settings']) {
+    for (const destination of ['Overview', 'Contacts', 'Accounts', 'Opportunities', 'Documents', 'Costs', 'Inbox', 'Operations', 'Settings']) {
       expect(screen.getByRole('link', { name: destination })).toBeInTheDocument()
     }
 
@@ -130,6 +147,21 @@ describe('Kosmos application', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /complete send proposal/i })).not.toBeInTheDocument())
     fireEvent.click(screen.getByRole('link', { name: 'Settings' }))
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /members and roles/i })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('link', { name: 'Inbox' }))
+    expect(await screen.findByRole('heading', { name: 'Communications' })).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox', { name: /^to$/i }), { target: { value: 'ada@example.com' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^subject$/i }), { target: { value: 'River update' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /^message$/i }), { target: { value: 'The plan is ready.' } })
+    fireEvent.click(screen.getByRole('button', { name: /send with gmail/i }))
+    expect(await screen.findByText(/email sent through your google account/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('link', { name: 'Operations' }))
+    expect(await screen.findByRole('heading', { name: 'Business operations' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /export contacts/i })).toHaveAttribute('href', '/api/v1/exports/contacts')
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }))
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === '/api/v1/transactions/transaction-1')).toBe(true))
   })
 
   it('searches the private workspace and opens a result', async () => {

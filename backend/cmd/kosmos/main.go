@@ -10,12 +10,15 @@ import (
 	"path/filepath"
 
 	"cloud.google.com/go/firestore"
+	"cloud.google.com/go/storage"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/landing"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/operations"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/workspace"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/auth"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/modules"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/observability"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"golang.org/x/oauth2"
 )
 
 func main() {
@@ -38,6 +41,8 @@ func main() {
 
 	var landingStore landing.Store = landing.NewMemoryStore()
 	var workspaceStore workspace.Store = workspace.NewMemoryStore()
+	var operationsStore operations.Store = operations.NewMemoryStore()
+	var blobStore operations.BlobStore = operations.NewMemoryBlobStore()
 	if projectID := os.Getenv("KOSMOS_GCP_PROJECT"); projectID != "" {
 		firestoreClient, err := firestore.NewClient(context.Background(), projectID)
 		if err != nil {
@@ -47,34 +52,79 @@ func main() {
 		defer firestoreClient.Close()
 		landingStore = landing.NewFirestoreStore(firestoreClient)
 		workspaceStore = workspace.NewFirestoreStore(firestoreClient)
+		operationsStore = operations.NewFirestoreStore(firestoreClient)
+		if bucket := os.Getenv("KOSMOS_ATTACHMENTS_BUCKET"); bucket != "" {
+			storageClient, err := storage.NewClient(context.Background())
+			if err != nil {
+				logger.Error("attachment store setup failed", "error", err)
+				os.Exit(1)
+			}
+			defer storageClient.Close()
+			blobStore = operations.NewGCSBlobStore(storageClient, bucket)
+		}
 	}
 	organizationID := os.Getenv("KOSMOS_ORGANIZATION_ID")
 	if organizationID == "" {
 		organizationID = "local"
 	}
+	identity := func(r *http.Request) (string, operations.Identity, error) {
+		user, err := googleAuth.CurrentUser(r)
+		return organizationID, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, err
+	}
+	operationsModule := operations.NewModule(operationsStore, blobStore, workspaceStore, identity, organizationID, []byte(os.Getenv("KOSMOS_SESSION_SECRET")), operations.NewLiveGoogleProvider(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")))
 	scope := func(r *http.Request) (string, error) {
-		_, err := googleAuth.CurrentUser(r)
+		_, actor, err := identity(r)
 		if err != nil {
+			return "", err
+		}
+		mutation := r.Method != http.MethodGet && r.Method != http.MethodHead
+		if err := operationsModule.CheckAccess(r.Context(), organizationID, actor, mutation); err != nil {
 			return "", err
 		}
 		return organizationID, nil
 	}
-	modules.NewRegistry(
+	googleAuth.RegisterGrant("workspace", operations.GoogleScopes, func(ctx context.Context, user auth.User, token *oauth2.Token) error {
+		return operationsModule.SaveGoogleGrant(ctx, operations.Identity{Subject: user.Subject, Email: user.Email, Name: user.Name}, token)
+	})
+	registry := modules.NewRegistry(
 		landing.NewModule(landingStore, scope),
 		workspace.NewModule(workspaceStore, scope),
-	).RegisterRoutes(mux)
+		operationsModule,
+	)
+	registry.RegisterRoutes(mux)
+	mux.HandleFunc("GET /api/v1/modules", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := scope(r); err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"modules": registry.Manifests()})
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	server := &http.Server{Addr: ":" + port, Handler: otelhttp.NewHandler(observability.RequestLogger(logger, mux), "kosmos.http")}
+	server := &http.Server{Addr: ":" + port, Handler: otelhttp.NewHandler(observability.RequestLogger(logger, securityHeaders(mux)), "kosmos.http")}
 
 	logger.Info("kosmos listening", "port", port)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self' https:; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://accounts.google.com")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if os.Getenv("KOSMOS_ENV") == "production" {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {
