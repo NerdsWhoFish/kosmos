@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import { ExternalLink, Mail, MessageSquareText, Plus, RefreshCw, Send } from 'lucide-react'
-import { api, EmailTemplate, GoogleStatus, MailMessage, Notification, shortDate } from '../api'
+import { api, Contact, EmailTemplate, GoogleStatus, MailMessage, Notification, shortDate } from '../api'
 import { Modal } from '../components/Modal'
 import { Page } from '../components/Page'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
@@ -16,6 +16,8 @@ export function Communications() {
   const [templateOpen, setTemplateOpen] = useState(false)
   const [sending, setSending] = useState(false)
   const [phone, setPhone] = useState('')
+	const [contacts, setContacts] = useState<Contact[]>([])
+	const [draft, setDraft] = useState({ to: '', subject: '', body: '' })
 
   const load = useCallback(() => {
     setLoading(true)
@@ -24,11 +26,13 @@ export function Communications() {
       api<{ templates: EmailTemplate[] }>('/api/v1/email/templates'),
       api<{ messages: MailMessage[] }>('/api/v1/email/messages'),
       api<{ notifications: Notification[] }>('/api/v1/notifications'),
-    ]).then(([connection, templateResult, messageResult, notificationResult]) => {
+	  api<{ contacts: Contact[] }>('/api/v1/contacts'),
+    ]).then(([connection, templateResult, messageResult, notificationResult, contactResult]) => {
       setStatus(connection)
       setTemplates(templateResult.templates)
       setMessages(messageResult.messages)
       setNotifications(notificationResult.notifications)
+	  setContacts(contactResult.contacts)
       setError('')
     }).catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false))
   }, [])
@@ -43,7 +47,8 @@ export function Communications() {
     const form = new FormData(event.currentTarget)
     try {
       await api('/api/v1/email/send', { method: 'POST', body: JSON.stringify({ to: form.get('to'), subject: form.get('subject'), body: form.get('body') }) })
-      formElement.reset()
+	  formElement.reset()
+	  setDraft({ to: '', subject: '', body: '' })
       setNotice('Email sent through your Google account.')
       load()
     } catch (reason) {
@@ -77,6 +82,13 @@ export function Communications() {
     setNotifications((current) => current.map((candidate) => candidate.id === item.id ? { ...candidate, readAt: new Date().toISOString() } : candidate))
   }
 
+	function useTemplate(template: EmailTemplate) {
+	  const contact = contacts.find((item) => item.email.toLowerCase() === draft.to.toLowerCase())
+	  const merge = (value: string) => value.replaceAll('{{name}}', contact?.name ?? '').replaceAll('{{company}}', contact?.company ?? '')
+	  setDraft((current) => ({ ...current, subject: merge(template.subject), body: merge(template.body) }))
+	  setNotice(contact ? `Template “${template.name}” is ready to review.` : `Template “${template.name}” is ready. Choose a known contact to merge name and company.`)
+	}
+
   if (loading) return <LoadingState />
   if (error) return <ErrorState message={error} retry={load} />
 
@@ -86,8 +98,8 @@ export function Communications() {
     {notice && <p className="inline-notice" role="status">{notice}</p>}
     <section className="split-grid">
       <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Outbound</p><h2>Send one good email</h2></div><button className="text-button" onClick={() => setTemplateOpen(true)}><Plus size={15} /> Template</button></div>
-        <form onSubmit={sendEmail}><label>To<input name="to" type="email" required placeholder="customer@example.com" /></label><label>Subject<input name="subject" required maxLength={200} /></label><label>Message<textarea name="body" required rows={9} /></label><div className="form-actions"><button className="primary-button" disabled={!status?.connected || sending}><Send size={16} /> {sending ? 'Sending...' : 'Send with Gmail'}</button></div></form>
-        {!!templates.length && <div className="template-list"><p className="eyebrow">Saved templates</p>{templates.map((template) => <button key={template.id} className="record-row compact" type="button" onClick={() => setNotice(`Use “${template.name}” by copying its subject and message into the email above.`)}><strong>{template.name}</strong><small>{template.subject}</small></button>)}</div>}
+        <form onSubmit={sendEmail}><label>To<input name="to" type="email" list="known-contacts" required placeholder="customer@example.com" value={draft.to} onChange={(event) => setDraft((current) => ({ ...current, to: event.target.value }))} /></label><datalist id="known-contacts">{contacts.filter((contact) => contact.email).map((contact) => <option value={contact.email} key={contact.id}>{contact.name}</option>)}</datalist><label>Subject<input name="subject" required maxLength={200} value={draft.subject} onChange={(event) => setDraft((current) => ({ ...current, subject: event.target.value }))} /></label><label>Message<textarea name="body" required rows={9} value={draft.body} onChange={(event) => setDraft((current) => ({ ...current, body: event.target.value }))} /></label>{(draft.subject || draft.body) && <section className="email-preview" aria-label="Email preview"><p className="eyebrow">Preview</p><strong>{draft.subject || '(No subject)'}</strong><p>{draft.body}</p></section>}<div className="form-actions"><button className="primary-button" disabled={!status?.connected || sending}><Send size={16} /> {sending ? 'Sending...' : 'Send with Gmail'}</button></div></form>
+        {!!templates.length && <div className="template-list"><p className="eyebrow">Saved templates</p>{templates.map((template) => <button key={template.id} className="record-row compact" type="button" onClick={() => useTemplate(template)}><strong>{template.name}</strong><small>{template.subject}</small></button>)}</div>}
       </div>
       <div className="panel"><div className="panel-heading"><div><p className="eyebrow">Inbound</p><h2>Customer replies</h2></div></div>{messages.length ? <div className="activity-list">{messages.map((message) => <article className="activity-item" key={message.id}><span className="activity-icon"><Mail size={16} /></span><span><strong>{message.subject || '(No subject)'}</strong><small>{message.from}</small><time>{shortDate(message.receivedAt)}</time></span></article>)}</div> : <EmptyState title="No customer replies yet" detail="When a known contact emails your connected Gmail account, the metadata appears here." />}</div>
     </section>

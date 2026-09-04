@@ -151,7 +151,7 @@ describe('Kosmos application', () => {
 
     fireEvent.click(screen.getByRole('link', { name: 'Inbox' }))
     expect(await screen.findByRole('heading', { name: 'Communications' })).toBeInTheDocument()
-    fireEvent.change(screen.getByRole('textbox', { name: /^to$/i }), { target: { value: 'ada@example.com' } })
+    fireEvent.change(screen.getByRole('combobox', { name: /^to$/i }), { target: { value: 'ada@example.com' } })
     fireEvent.change(screen.getByRole('textbox', { name: /^subject$/i }), { target: { value: 'River update' } })
     fireEvent.change(screen.getByRole('textbox', { name: /^message$/i }), { target: { value: 'The plan is ready.' } })
     fireEvent.click(screen.getByRole('button', { name: /send with gmail/i }))

@@ -291,3 +291,15 @@ select { min-height: 42px; border: 1px solid var(--theme-border); border-radius:
     grid-template-columns: 1fr;
   }
 }
+.email-preview {
+  background: color-mix(in srgb, var(--theme-surface-raised) 65%, transparent);
+  border: 1px solid var(--theme-border);
+  border-radius: 0.8rem;
+  margin-top: 1rem;
+  padding: 1rem;
+}
+
+.email-preview p:last-child {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+}
