@@ -43,7 +43,7 @@ func Setup(ctx context.Context, fallback slog.Handler, versions ...string) (*slo
 		return nil, nil, err
 	}
 	traceProvider := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(traceExporter),
+		sdktrace.WithBatcher(privateTraceExporter{SpanExporter: traceExporter}),
 		sdktrace.WithResource(res),
 	)
 	logExporter, err := otlploghttp.New(ctx)
