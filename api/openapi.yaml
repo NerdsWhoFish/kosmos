@@ -1589,6 +1589,41 @@ paths:
   /signing-requests/{id}:
     parameters:
       - $ref: '#/components/parameters/RecordID'
+    delete:
+      operationId: deleteSigningRequest
+      description: Delete a draft, completed, or revoked document after explicit confirmation using its current revision. Pending requests must be revoked first. Atomically removes the document from the workspace and invalidates all its links while recording private file cleanup for retry after any storage retention restriction ends.
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, confirmed]
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+                confirmed:
+                  type: boolean
+                  enum: [true]
+      responses:
+        '204':
+          description: Document and link access removed; retained files queued for cleanup
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SigningConflict'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
     get:
       operationId: getSigningRequest
       responses:
@@ -1604,7 +1639,7 @@ paths:
           $ref: '#/components/responses/SigningFailure'
     put:
       operationId: editSigningRequest
-      description: Replace every field on a draft using its current revision. Fields become immutable when a signing link is created. Supports at most 100 fields and a 128 KiB JSON body.
+      description: Replace fields and optionally recipients on a draft using its current revision. Each field is assigned to one recipient. Recipients and fields become immutable when links are issued. Supports up to 10 recipients, 100 fields, and a 128 KiB JSON body. Omitting recipients preserves the existing list and supports legacy single-recipient drafts.
       parameters:
         - $ref: '#/components/parameters/CSRF'
       requestBody:
@@ -1624,6 +1659,12 @@ paths:
                   maxItems: 100
                   items:
                     $ref: '#/components/schemas/SigningField'
+                signers:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items:
+                    $ref: '#/components/schemas/SigningRecipientInput'
       responses:
         '200':
           $ref: '#/components/responses/SigningRequest'
@@ -1642,7 +1683,7 @@ paths:
   /signing-requests/{id}/link:
     post:
       operationId: createSigningLink
-      description: Lock a draft with at least one required signature field and return its signing link once. The recipient email is supplied by the sender and is not verified. Does not send email. Link possession grants access and links can be forwarded. A lost link requires a new request.
+      description: Lock a draft and return a separate link for each recipient, all usable immediately. Every recipient must have a valid name and email and own at least one required signature field. Emails are sender-supplied and unverified; links prove possession and can be forwarded. Does not send email. Unsigned recipients have 1 to 90 days to sign; each signed recipient's link expires 15 minutes after their own signedAt. A lost pending link requires a new request; fully completed documents support fresh download-only links. Legacy single-recipient clients may supply signerName and signerEmail instead of a recipient list.
       parameters:
         - $ref: '#/components/parameters/RecordID'
         - $ref: '#/components/parameters/CSRF'
@@ -1653,7 +1694,7 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [revision, signerName, signerEmail, expiresDays]
+              required: [revision, expiresDays]
               properties:
                 revision:
                   type: integer
@@ -1672,14 +1713,20 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 90
+                signers:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items:
+                    $ref: '#/components/schemas/SigningRecipientInput'
       responses:
         '200':
-          description: Locked request and one-time relative signing URL
+          description: Locked request and one-time per-recipient signing URLs, or signingUrl for a legacy request
           content:
             application/json:
               schema:
                 type: object
-                required: [request, signingUrl]
+                required: [request]
                 properties:
                   request:
                     $ref: '#/components/schemas/SigningRequest'
@@ -1687,6 +1734,20 @@ paths:
                     type: string
                     format: uri-reference
                     description: 'Relative /sign URL with a fragment containing request-id.token. Resolve against the Kosmos origin and share the entire fragment. Never put the token in a query or path, logs, or telemetry.'
+                  signingLinks:
+                    type: array
+                    minItems: 1
+                    maxItems: 10
+                    items:
+                      type: object
+                      required: [signerId, signingUrl]
+                      properties:
+                        signerId:
+                          type: string
+                        signingUrl:
+                          type: string
+                          format: uri-reference
+                          description: Private recipient-specific /sign URL with request-id.token in its fragment.
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1697,6 +1758,62 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/SigningConflict'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+  /signing-requests/{id}/download-link:
+    post:
+      operationId: createSigningDownloadLink
+      description: Create a fresh expiring download-only link for a completed document using its current revision. Replaces the previously generated download link without changing the signed PDF, session evidence, or original signing link deadline. The token is returned once and does not permit signing or access to either source PDF.
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision]
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+                expiresMinutes:
+                  type: integer
+                  minimum: 1
+                  maximum: 10080
+                  default: 60
+      responses:
+        '200':
+          description: Updated request and one-time relative download URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [request, downloadUrl, expiresAt]
+                properties:
+                  request:
+                    $ref: '#/components/schemas/SigningRequest'
+                  downloadUrl:
+                    type: string
+                    format: uri-reference
+                    description: Relative /sign URL with a request-id.token fragment. Keep the complete fragment private and never log it.
+                  expiresAt:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SigningConflict'
+        '429':
+          $ref: '#/components/responses/SigningRateLimited'
         '500':
           $ref: '#/components/responses/SigningFailure'
   /signing-requests/{id}/revoke:
@@ -1758,7 +1875,7 @@ paths:
   /signing/{id}:
     get:
       operationId: getPublicSigningRequest
-      description: Read a pending or completed request using its possession token. Completed requests remain accessible until link expiry. Authenticated workspace credentials do not replace this token.
+      description: Read a request using its recipient token, a legacy signing token, or the current final-document download token. Recipient responses contain only that recipient's fields and personal session, plus limited name and completion progress for the others. Each original signing link expires 15 minutes after its recipient signs; generated final-document download links have independent deadlines. Authenticated workspace credentials do not replace this token.
       security:
         - signingToken: []
       parameters:
@@ -1777,7 +1894,7 @@ paths:
   /signing/{id}/pdf:
     get:
       operationId: downloadPublicSigningPDF
-      description: Download the prepared signing copy or completed artifact. Raw uploaded bytes are private; uploaded=true is rejected with 400.
+      description: Download the prepared source with a valid recipient token, or the latest partial or final artifact with completed=true after that recipient has signed. Partial PDF record pages are clearly marked and include only signatures already accepted. Final-document download-only tokens require completed=true and cannot access source PDFs. Raw uploaded bytes are private; uploaded=true is rejected with 400.
       security:
         - signingToken: []
       parameters:
@@ -1801,7 +1918,7 @@ paths:
   /signing/{id}/complete:
     post:
       operationId: completeSigningRequest
-      description: Submit explicit consent and typed field values after disclosure of session-evidence collection. Dates use the server's current UTC date and name fields use signerName, overriding supplied field values. Required fields must be nonblank and all values must fit their fields at a readable size. Checks the original PDF hash, renders fields and a signing record, and atomically saves completion with its IP, browser, and available approximate location snapshot. Production session metadata comes from an authenticated ingress envelope, never the JSON body. Concurrent completions and later retries return the winning request and unchanged session evidence while the link remains valid. A revoked or expired link cannot complete. Supports a 64 KiB JSON body.
+      description: Submit explicit consent and typed values for the current recipient's assigned fields after disclosure of shared session evidence. Dates use that recipient's server signing date in UTC and name fields use signerName. Required fields must be nonblank and values must fit at a readable size. Checks the prepared PDF hash, captures the recipient's name, time, consent and verified ingress session once, then transactionally merges concurrent signatures and renders the current aggregate PDF. The request remains pending until everyone signs. Retries preserve each accepted recipient's original evidence. A revoked or expired link cannot complete; download-only tokens cannot sign. Supports a 64 KiB JSON body.
       security:
         - signingToken: []
       parameters:
@@ -1819,7 +1936,7 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
-          description: Required CSRF header is missing, or new completion session evidence is missing, invalid, or stale (signing_session_unverified). No new completed artifact is written.
+          description: A download-only token was supplied (signing_download_only), required CSRF is missing, or new signing session evidence is missing, invalid, or stale (signing_session_unverified). No new signature is recorded.
           content:
             application/json:
               schema:
@@ -1840,7 +1957,7 @@ components:
       type: apiKey
       in: header
       name: X-Kosmos-Signing-Token
-      description: Exactly one header containing the 43-character base64url HMAC-SHA256 token from the signing URL fragment. Public signing requires this token independently of session cookies and workflow API credentials. The server verifies its HMAC before database access, then verifies its stored SHA-256 hash and request state. Integration-key rotation invalidates every existing signing link.
+      description: Exactly one header containing the token from the URL fragment. Legacy signing tokens are 43 base64url characters. Recipient tokens use s1_, the signer ID, an underscore, and a 43-character HMAC bound to the request and recipient. Download-only tokens use d1_, a 22-character base64url nonce, an underscore, and a 43-character domain-separated HMAC. Public access requires this token independently of session cookies and workflow API credentials. The server verifies its HMAC before database access, then verifies its stored SHA-256 hash, expiry, and request state. Integration-key rotation invalidates all existing links.
     sessionCookie:
       type: apiKey
       in: cookie
@@ -1860,7 +1977,7 @@ components:
       name: completed
       in: query
       required: false
-      description: Set to true to download the completed PDF with its signing record pages. Otherwise returns the prepared signing copy. Returns 409 if completion is requested before signing. Cannot be combined with uploaded=true.
+      description: Set to true to download the latest signed PDF with its signing record pages, including a clearly marked partial copy before everyone signs. Returns 409 when no signed artifact is available. Public recipient access also requires that recipient to have signed. Otherwise returns the prepared signing copy. Cannot be combined with uploaded=true.
       schema:
         type: boolean
         default: false
@@ -2306,6 +2423,16 @@ components:
           type: string
           maxLength: 254
           description: Sender-supplied email address, unverified. Empty in drafts.
+        signers:
+          type: array
+          minItems: 1
+          maxItems: 10
+          description: Parallel recipients. Absent on legacy requests. Public responses omit other recipients' email addresses and personal session evidence.
+          items:
+            $ref: '#/components/schemas/SigningSigner'
+        currentSignerId:
+          type: string
+          description: Public recipient-token responses only. Identifies the signer authorized to fill the returned fields.
         createdAt:
           type: string
           format: date-time
@@ -2315,6 +2442,19 @@ components:
         expiresAt:
           type: string
           format: date-time
+          description: Original deadline for unsigned recipients to sign. Each signed recipient instead has 15 minutes from their own signedAt.
+        postSignExpiresAt:
+          type: string
+          format: date-time
+          description: Legacy single-signer download deadline derived as completedAt plus 15 minutes.
+        downloadExpiresAt:
+          type: string
+          format: date-time
+          description: Expiry of the latest separately generated download-only link, when one exists.
+        accessExpiresAt:
+          type: string
+          format: date-time
+          description: Public responses only. Effective access deadline for the token supplied with this request.
         completedAt:
           type: string
           format: date-time
@@ -2332,7 +2472,7 @@ components:
         signedSHA256:
           type: string
           pattern: '^[a-f0-9]{64}$'
-          description: SHA-256 of the complete signed PDF including all signing record pages.
+          description: SHA-256 of the latest partial or final signed PDF including all signing record pages.
         events:
           type: array
           items:
@@ -2341,7 +2481,7 @@ components:
             properties:
               action:
                 type: string
-                enum: [created, link_created, revoked, completed]
+                enum: [created, link_created, revoked, signer_completed, completed]
               at:
                 type: string
                 format: date-time
@@ -2350,6 +2490,52 @@ components:
           description: Exact electronic-signing consent recorded at completion.
         session:
           $ref: '#/components/schemas/SigningSession'
+    SigningRecipientInput:
+      type: object
+      additionalProperties: false
+      required: [id, name, email]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    SigningSigner:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        name:
+          type: string
+          description: Sender-supplied intended name.
+        email:
+          type: string
+          format: email
+          description: Sender-supplied unverified email. Omitted for other recipients in public responses.
+        completedSignerName:
+          type: string
+          description: Entered name captured with this recipient's signature.
+        signedAt:
+          type: string
+          format: date-time
+          description: Immutable time this recipient signed. Their original link expires 15 minutes later.
+        consent:
+          type: string
+        session:
+          $ref: '#/components/schemas/SigningSession'
+        signedSHA256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Hash of the aggregate snapshot committed with this recipient's signature. Later signatures may produce a newer request-level artifact.
     SigningSession:
       type: object
       additionalProperties: false
@@ -2401,6 +2587,10 @@ components:
           type: string
           minLength: 1
           maxLength: 80
+        signerId:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+          description: Required recipient assignment for requests with a signers list. Omitted on legacy single-recipient fields.
         page:
           type: integer
           minimum: 1

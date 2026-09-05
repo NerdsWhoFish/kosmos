@@ -84,7 +84,7 @@ export function Signing({
     <Page
       eyebrow="Documents / Signing"
       title="Get it signed."
-      detail="Upload a PDF, place your fields, and share a private signing link."
+      detail="Upload a PDF, assign fields, and share a private link with each signer."
       action={
         <button
           className="secondary-button"
@@ -158,7 +158,7 @@ export function Signing({
                   <span>
                     <strong>{item.title}</strong>
                     <small>
-                      {item.signerEmail || item.fileName} ·{" "}
+                      {item.signers?.length ? `${item.signers.filter((signer) => signer.signedAt).length} of ${item.signers.length} signed` : item.signerEmail || item.fileName} ·{" "}
                       {shortDate(item.createdAt)}
                     </small>
                   </span>

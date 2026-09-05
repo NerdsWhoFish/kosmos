@@ -10,6 +10,17 @@ export type SigningField = {
   width: number;
   height: number;
   required: boolean;
+  signerId?: string;
+};
+
+export type SigningSigner = {
+  id: string;
+  name: string;
+  email?: string;
+  completedSignerName?: string;
+  signedAt?: string;
+  consent?: string;
+  session?: SigningSession;
 };
 
 export type SigningSession = {
@@ -36,6 +47,11 @@ export type SigningRequest = {
   updatedAt: string;
   expiresAt?: string;
   completedAt?: string;
+  postSignExpiresAt?: string;
+  downloadExpiresAt?: string;
+  accessExpiresAt?: string;
+  signers?: SigningSigner[];
+  currentSignerId?: string;
   originalSHA256: string;
   flattened?: boolean;
   uploadedSHA256?: string;

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type signingUnreadBody struct{ read bool }
@@ -108,11 +109,22 @@ func TestFlattenedUploadCleanupPreservesCommittedSource(t *testing.T) {
 	for _, commit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before commit", true: "after commit"}[commit], func(t *testing.T) {
 			m, mux, _ := newTestModule(t)
+			store := m.store
 			m.store = signingUploadCommitStore{Store: m.store, commit: commit}
 			source := signingPDFTestDocument("", "/OpenAction << /S /JavaScript /JS (unsafe) >>", 1)
 			response := signingUploadCall(t, mux, source)
 			if response.Code != 500 {
 				t.Fatalf("status %d, want failed metadata response: %s", response.Code, response.Body)
+			}
+			var cleanup []SigningCleanup
+			if err := store.List(context.Background(), m.publicScope, "signingCleanup", &cleanup); err != nil || len(cleanup) != 2 {
+				t.Fatal("upload failure did not queue both potentially retained objects")
+			}
+			m.store = store
+			for _, item := range cleanup {
+				if err := m.runSigningCleanup(context.Background(), Job{Scope: m.publicScope, OutboxID: item.ID}, time.Now().Add(2*time.Hour)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			want := 0
 			if commit {

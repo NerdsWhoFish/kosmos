@@ -256,8 +256,11 @@ func TestSigningCompletionHandlesAmbiguousCommit(t *testing.T) {
 				if pdf.Code != 200 || signingHash(pdf.Body.Bytes()) != completed.SignedSHA256 {
 					t.Fatal("winning PDF deleted after ambiguous error")
 				}
-			} else if w.Code != 500 || len(m.blobs.(*MemoryBlobStore).blobs) != 1 {
-				t.Fatal("failed commit exposed completion or leaked object")
+			} else {
+				var cleanup []SigningCleanup
+				if err := m.store.List(context.Background(), m.publicScope, "signingCleanup", &cleanup); err != nil || w.Code != 500 || len(cleanup) != 1 || len(cleanup[0].Objects) != 1 || cleanup[0].RequestID != item.ID {
+					t.Fatal("failed commit exposed completion or omitted durable orphan cleanup")
+				}
 			}
 		})
 	}
@@ -369,7 +372,8 @@ func TestSigningUploadTimeoutCleansUnreferencedPDF(t *testing.T) {
 	blobs := m.blobs.(*MemoryBlobStore)
 	m.blobs = signingAmbiguousBlob{BlobStore: blobs}
 	w := signingCall(t, mux, "POST", "/api/v1/signing/"+item.ID+"/complete", token, completeSigningBody())
-	if w.Code != 500 || len(blobs.blobs) != 1 {
+	var cleanup []SigningCleanup
+	if err := m.store.List(context.Background(), m.publicScope, "signingCleanup", &cleanup); err != nil || w.Code != 500 || len(blobs.blobs) != 2 || len(cleanup) != 1 || len(cleanup[0].Objects) != 1 || cleanup[0].RequestID != item.ID {
 		t.Fatalf("status %d, objects %d", w.Code, len(blobs.blobs))
 	}
 }

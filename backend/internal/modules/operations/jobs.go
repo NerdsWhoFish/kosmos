@@ -29,6 +29,7 @@ const (
 	JobTypeGmailSync         = "gmail.sync"
 	JobTypeTillerSync        = "tiller.sync"
 	JobTypeGoogleContactSync = "google-contact.sync"
+	JobTypeSigningCleanup    = "signing.cleanup"
 	jobsBasePath             = "/api/v1/jobs"
 )
 
@@ -220,14 +221,6 @@ func (m *Module) enqueueJob(ctx context.Context, job Job, targetOverrides ...str
 func (m *Module) scheduleJobs(w http.ResponseWriter, r *http.Request) {
 	ctx, span := jobsTracer.Start(r.Context(), "jobs.schedule")
 	defer span.End()
-	var connections []GoogleConnection
-	if err := m.store.List(ctx, m.publicScope, "googleConnections", &connections); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "connections load failed")
-		slog.ErrorContext(ctx, "background job scheduling failed", "job.type", "batch", "job.status", "failed")
-		writeError(w, http.StatusInternalServerError, "job_schedule_failed", "Could not schedule integration syncs")
-		return
-	}
 	batchKey := strings.TrimSpace(r.Header.Get("X-CloudScheduler-ScheduleTime"))
 	if batchKey == "" {
 		batchKey = time.Now().UTC().Truncate(time.Minute).Format(time.RFC3339)
@@ -239,13 +232,29 @@ func (m *Module) scheduleJobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_job_origin", "Worker origin is invalid")
 		return
 	}
-	queued, err := m.enqueuePendingContactMutations(ctx, m.publicScope, batchKey, targetURL)
+	queued, err := m.enqueueSigningCleanup(ctx, m.publicScope, time.Now().UTC(), targetURL)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "signing cleanup dispatch failed")
+		writeError(w, http.StatusServiceUnavailable, "job_schedule_failed", "Could not schedule document cleanup")
+		return
+	}
+	var connections []GoogleConnection
+	if err := m.store.List(ctx, m.publicScope, "googleConnections", &connections); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "connections load failed")
+		slog.ErrorContext(ctx, "background job scheduling failed", "job.type", "batch", "job.status", "failed")
+		writeError(w, http.StatusInternalServerError, "job_schedule_failed", "Could not schedule integration syncs")
+		return
+	}
+	contactQueued, err := m.enqueuePendingContactMutations(ctx, m.publicScope, batchKey, targetURL)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "contact outbox dispatch failed")
 		writeError(w, http.StatusServiceUnavailable, "job_schedule_failed", "Could not schedule contact synchronization")
 		return
 	}
+	queued += contactQueued
 	for _, connection := range connections {
 		jobs := []Job{{Type: JobTypeGmailSync, Scope: m.publicScope, ConnectionID: connection.ID, Actor: "system"}}
 		if connection.Tiller != nil {
@@ -291,18 +300,20 @@ func (m *Module) executeJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_job", "Job payload is invalid")
 		return
 	}
-	var completed JobExecution
-	if err := m.store.Get(ctx, job.Scope, "jobExecutions", job.ID, &completed); err == nil && completed.Status == "completed" {
-		slog.InfoContext(ctx, "background job already completed", "job.type", job.Type, "job.status", "completed")
-		writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
-		return
-	}
-	if pending, err := m.contactJobPending(ctx, job); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "job_outbox_failed", "Could not load contact synchronization")
-		return
-	} else if !pending {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
-		return
+	if job.Type != JobTypeSigningCleanup {
+		var completed JobExecution
+		if err := m.store.Get(ctx, job.Scope, "jobExecutions", job.ID, &completed); err == nil && completed.Status == "completed" {
+			slog.InfoContext(ctx, "background job already completed", "job.type", job.Type, "job.status", "completed")
+			writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
+			return
+		}
+		if pending, err := m.contactJobPending(ctx, job); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "job_outbox_failed", "Could not load contact synchronization")
+			return
+		} else if !pending {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
+			return
+		}
 	}
 	var err error
 	switch job.Type {
@@ -312,6 +323,8 @@ func (m *Module) executeJob(w http.ResponseWriter, r *http.Request) {
 		_, _, err = m.syncTillerConnection(ctx, job.Scope, job.ConnectionID, job.Actor, job.ID)
 	case JobTypeGoogleContactSync:
 		err = m.syncGoogleContact(ctx, job)
+	case JobTypeSigningCleanup:
+		err = m.runSigningCleanup(ctx, job, time.Now().UTC())
 	}
 	if errors.Is(err, workspace.ErrNotFound) && job.Type == JobTypeGoogleContactSync && job.Action == "upsert" {
 		err = nil
@@ -328,24 +341,32 @@ func (m *Module) executeJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "job_execution_failed", "Integration sync failed")
 		return
 	}
-	if err := m.completeContactJob(ctx, job); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "job_outbox_failed", "Could not record contact synchronization")
-		return
-	}
-	execution := JobExecution{ID: job.ID, Type: job.Type, Status: "completed", CompletedAt: time.Now().UTC()}
-	if err := m.store.Put(ctx, job.Scope, "jobExecutions", job.ID, execution); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "completion save failed")
-		slog.ErrorContext(ctx, "background job completion save failed", "job.type", job.Type, "job.status", "failed")
-		writeError(w, http.StatusInternalServerError, "job_completion_failed", "Could not record job completion")
-		return
+	if job.Type != JobTypeSigningCleanup {
+		if err := m.completeContactJob(ctx, job); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "job_outbox_failed", "Could not record contact synchronization")
+			return
+		}
+		execution := JobExecution{ID: job.ID, Type: job.Type, Status: "completed", CompletedAt: time.Now().UTC()}
+		if err := m.store.Put(ctx, job.Scope, "jobExecutions", job.ID, execution); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "completion save failed")
+			slog.ErrorContext(ctx, "background job completion save failed", "job.type", job.Type, "job.status", "failed")
+			writeError(w, http.StatusInternalServerError, "job_completion_failed", "Could not record job completion")
+			return
+		}
 	}
 	slog.InfoContext(ctx, "background job completed", "job.type", job.Type, "job.status", "completed")
 	writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
 }
 
 func validJob(job Job) bool {
-	if job.ID == "" || job.Scope == "" || job.ConnectionID == "" {
+	if job.ID == "" || job.Scope == "" {
+		return false
+	}
+	if job.Type == JobTypeSigningCleanup {
+		return signingIDPattern.MatchString(job.OutboxID) && job.Actor == "system" && job.ConnectionID == "" && job.ContactID == "" && job.Action == ""
+	}
+	if job.ConnectionID == "" {
 		return false
 	}
 	switch job.Type {

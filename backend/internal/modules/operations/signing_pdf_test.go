@@ -470,3 +470,184 @@ func TestSigningCertificateMetadataEscapesReversibly(t *testing.T) {
 		}
 	}
 }
+
+func signingPDFTestRenderedText(t *testing.T, data []byte) []string {
+	t.Helper()
+	conf := signingPDFConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	ctx, err := api.ReadAndValidate(bytes.NewReader(data), conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := make([]string, 0, ctx.PageCount)
+	for number := 1; number <= ctx.PageCount; number++ {
+		page, _, _, err := ctx.PageDict(number, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, err := ctx.PageContent(page, number)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var text strings.Builder
+		for _, match := range regexp.MustCompile(`<([0-9a-f]+)> Tj`).FindAllSubmatch(content, -1) {
+			encoded, err := hex.DecodeString(string(match[1]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := charmap.Windows1252.NewDecoder().String(string(encoded))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text.WriteString(decoded)
+		}
+		pages = append(pages, text.String())
+	}
+	return pages
+}
+
+func TestSigningPDFParallelParticipantsPreserveEarlierEvidence(t *testing.T) {
+	firstTime := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	secondTime := firstTime.Add(time.Hour)
+	certificate := signingPDFTestCertificate()
+	certificate.Status = "pending"
+	certificate.Signers = []SigningCertificateSigner{
+		{ID: "first", Name: "Alice Example", Email: "alice@example.invalid", CompletedSignerName: "Alice E", SignedAt: &firstTime, Consent: "Alice signing consent", Session: &SigningSession{IPAddress: "192.0.2.1", UserAgent: "Alice Browser", CapturedAt: firstTime, Source: "cloudflare"}},
+		{ID: "second", Name: "Bob Example", Email: "bob@example.invalid", CompletedSignerName: "DO NOT DISPLAY UNSIGNED NAME", Consent: "DO NOT DISPLAY UNSIGNED CONSENT", Session: &SigningSession{IPAddress: "192.0.2.99", UserAgent: "DO NOT DISPLAY UNSIGNED BROWSER"}},
+	}
+	fields := []SigningField{
+		{ID: "alice", Type: "signature", Page: 1, X: .1, Y: .4, Width: .4, Height: .08, Required: true},
+		{ID: "bob", Type: "signature", Page: 1, X: .1, Y: .6, Width: .4, Height: .08, Required: true},
+	}
+	source := signingPDFTestDocument("", "", 2)
+	partial, err := renderSigningPDF(source, fields[:1], map[string]string{"alice": "Alice E"}, certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := signingPDFTestRenderedText(t, partial)
+	if !strings.Contains(pages[0], "Alice E") || strings.Contains(pages[0], "Bob E") || pages[1] != "" {
+		t.Fatal("partial PDF changed unsigned fields or the untouched contract page")
+	}
+	for _, page := range pages[2:] {
+		if !strings.Contains(page, "PARTIALLY SIGNED - awaiting 1 signer(s)") || !strings.Contains(page, "Signing request: "+certificate.ID) {
+			t.Fatal("partial evidence page could be mistaken for a final document")
+		}
+	}
+	text := strings.Join(pages[2:], "")
+	for _, want := range []string{"Intended signer name: Alice Example", "Signer name (as supplied): Alice E", "Alice signing consent", "Alice Browser", "192.0.2.1", "Intended signer name: Bob Example", "Status: Awaiting signature"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("partial evidence missing %q", want)
+		}
+	}
+	if strings.Contains(text, "DO NOT DISPLAY") || strings.Contains(text, "192.0.2.99") {
+		t.Fatal("unsigned participant emitted completion evidence")
+	}
+	certificate.Status = "completed"
+	certificate.Signers[1].CompletedSignerName = "Bob E"
+	certificate.Signers[1].SignedAt = &secondTime
+	certificate.Signers[1].Consent = "Bob signing consent"
+	certificate.Signers[1].Session = &SigningSession{IPAddress: "192.0.2.2", UserAgent: "Bob Browser", CapturedAt: secondTime, Source: "cloudflare"}
+	final, err := renderSigningPDF(source, fields, map[string]string{"alice": "Alice E", "bob": "Bob E"}, certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages = signingPDFTestRenderedText(t, final)
+	if !strings.Contains(pages[0], "Alice E") || !strings.Contains(pages[0], "Bob E") {
+		t.Fatal("final PDF lost a participant signature")
+	}
+	for _, page := range pages[2:] {
+		if !strings.Contains(page, "COMPLETED") || strings.Contains(page, "PARTIALLY SIGNED") {
+			t.Fatal("final evidence page retained partial status")
+		}
+	}
+	text = strings.Join(pages[2:], "")
+	for _, want := range []string{"Alice signing consent", "Alice Browser", "192.0.2.1", "2026-09-05T12:00:00Z", "Bob signing consent", "Bob Browser", "192.0.2.2", "2026-09-05T13:00:00Z"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("final evidence lost %q", want)
+		}
+	}
+	if strings.Contains(text, "Status: Awaiting signature") {
+		t.Fatal("final PDF still lists pending participants")
+	}
+}
+
+func TestSigningPDFTenParticipantsWithMaximumUnicodeEvidence(t *testing.T) {
+	certificate := signingPDFTestCertificate()
+	certificate.Status = "completed"
+	certificate.UploadedSHA256 = strings.Repeat("b", 64)
+	for index := 0; index < 10; index++ {
+		at := certificate.SignedAt.Add(time.Duration(index) * time.Minute)
+		certificate.Signers = append(certificate.Signers, SigningCertificateSigner{
+			ID: fmt.Sprintf("signer-%d", index), Name: fmt.Sprintf("Intended Signer %d", index), Email: fmt.Sprintf("signer%d@example.invalid", index),
+			CompletedSignerName: fmt.Sprintf("Signed Name %d", index), SignedAt: &at, Consent: fmt.Sprintf("Participant %d accepted electronic signing", index),
+			Session: &SigningSession{IPAddress: fmt.Sprintf("192.0.2.%d", index+1), UserAgent: strings.Repeat("界", 170) + "ab", City: strings.Repeat("界", 42) + "ab", Region: strings.Repeat("🌍", 32), Country: "JP", CapturedAt: at, Source: "cloudflare"},
+		})
+	}
+	fields := []SigningField{{ID: "sig", Type: "signature", Page: 1, X: .1, Y: .4, Width: .4, Height: .08, Required: true}}
+	output, err := renderSigningPDF(signingPDFTestDocument("", "", 1), fields, map[string]string{"sig": "Signed Name 0"}, certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := signingPDFTestRenderedText(t, output)
+	if len(pages) <= 12 {
+		t.Fatalf("maximum participant evidence did not exercise expanded pagination: %d pages", len(pages))
+	}
+	var body strings.Builder
+	for index, page := range pages[1:] {
+		for _, header := range []string{fmt.Sprintf("Signing record page %d", index+1), "Signing record (continued)", "Signing record", "Signing request: " + certificate.ID, "COMPLETED"} {
+			page = strings.ReplaceAll(page, header, "")
+		}
+		body.WriteString(page)
+	}
+	text := body.String()
+	for index := 0; index < 10; index++ {
+		for _, want := range []string{fmt.Sprintf("Intended Signer %d", index), fmt.Sprintf("Signed Name %d", index), fmt.Sprintf("Participant %d accepted electronic signing", index)} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("maximum evidence lost %q", want)
+			}
+		}
+	}
+	if strings.Count(text, "Browser-reported User-Agent: "+strings.Repeat(`\u754C`, 170)+"ab") != 10 {
+		t.Fatal("maximum evidence omitted or truncated a participant browser")
+	}
+	for _, page := range pages[1:] {
+		if !strings.Contains(page, "COMPLETED") || !strings.Contains(page, "Signing request: "+certificate.ID) {
+			t.Fatal("continued evidence lost document status or identity")
+		}
+	}
+	if !strings.Contains(pages[len(pages)-1], "not a PKI digital signature.") {
+		t.Fatal("maximum evidence lost final caveat")
+	}
+	t.Run("independent extraction", func(t *testing.T) {
+		tool, err := exec.LookPath("pdftotext")
+		if err != nil {
+			t.Skip("optional independent extraction requires pdftotext")
+		}
+		command := exec.Command(tool, "-layout", "-", "-")
+		command.Stdin = bytes.NewReader(output)
+		extracted, err := command.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(extracted, []byte("Signed Name 9")) || !bytes.Contains(extracted, []byte("not a PKI digital signature.")) {
+			t.Fatal("last participant/caveat were not independently extractable")
+		}
+	})
+}
+
+func TestSigningCertificateRejectsContradictoryParticipantStatus(t *testing.T) {
+	at := time.Now().UTC()
+	complete := SigningCertificateSigner{ID: "one", Name: "One", Email: "one@example.invalid", CompletedSignerName: "One", SignedAt: &at, Consent: "Accepted"}
+	pending := SigningCertificateSigner{ID: "two", Name: "Two", Email: "two@example.invalid"}
+	for _, item := range []SigningCertificate{
+		{Status: "completed", Signers: []SigningCertificateSigner{complete, pending}},
+		{Status: "pending", Signers: []SigningCertificateSigner{complete}},
+		{Status: "completed", Signers: []SigningCertificateSigner{complete, complete}},
+		{Status: "other", Signers: []SigningCertificateSigner{complete}},
+		{Status: "completed", Signers: make([]SigningCertificateSigner, 11)},
+	} {
+		if _, err := signingCertificatePages(item); err == nil {
+			t.Fatal("contradictory or invalid participant certificate accepted")
+		}
+	}
+}

@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { CheckCircle2, Download, FileSignature } from "lucide-react";
 import { ErrorState, LoadingState } from "../components/States";
 import { SigningPDF } from "../components/SigningPDF";
-import { shortDate } from "../api";
+import { APIRequestError, shortDate } from "../api";
 import { consentText, downloadPDF, signingAPI, signingCredential, signingError as errorMessage, type SigningRequest } from "./signingApi";
 import { FieldOverlay, PageControls } from "./SigningFields";
+import { SigningDeadline, useSigningDeadline } from "./SigningDeadline";
 import "./signing.css";
 
 
@@ -23,6 +24,13 @@ export function PublicSigning() {
   const [documentReady, setDocumentReady] = useState(false);
   const [pageCount, setPageCount] = useState(1);
   const [attempt, setAttempt] = useState(0);
+  const [unavailable, setUnavailable] = useState(false);
+  const currentSigner = request?.signers?.find((signer) => signer.id === request.currentSignerId);
+  const signed = request?.status === "completed" || !!currentSigner?.signedAt;
+  const waiting = request?.signers?.filter((signer) => !signer.signedAt) ?? [];
+  const fields = request?.fields.filter((field) => !request.currentSignerId || field.signerId === request.currentSignerId) ?? [];
+  const expiresAt = request?.accessExpiresAt ?? (request?.status === "completed" ? request.postSignExpiresAt : request?.expiresAt);
+  const { expired, remaining } = useSigningDeadline(expiresAt);
   const onPDFReady = useCallback(
     (ready: boolean) => setDocumentReady(ready),
     [],
@@ -41,6 +49,7 @@ export function PublicSigning() {
     setLoading(true);
     setError("");
     setRequest(undefined);
+    setUnavailable(false);
     setValues({});
     setConsent(false);
     setPage(1);
@@ -53,11 +62,14 @@ export function PublicSigning() {
         if (current) {
           setRequest(result);
           setPageCount(result.pages.length);
-          setSignerName(result.signerName || "");
+          setSignerName(result.signers?.find((signer) => signer.id === result.currentSignerId)?.name || result.signerName || "");
         }
       })
       .catch((error) => {
-        if (current) setError(errorMessage(error));
+        if (current) {
+          if (error instanceof APIRequestError && [404, 410].includes(error.status)) setUnavailable(true);
+          else setError(errorMessage(error));
+        }
       })
       .finally(() => {
         if (current) setLoading(false);
@@ -67,8 +79,30 @@ export function PublicSigning() {
     };
   }, [credential, path, attempt]);
 
+  useEffect(() => {
+    if (!credential || !request || expired || unavailable) return;
+    let current = true;
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      signingAPI<SigningRequest>(path, credential.token).then((result) => {
+        if (current) setRequest(result);
+      }).catch((error) => {
+        if (current && error instanceof APIRequestError && [404, 410].includes(error.status)) setUnavailable(true);
+      });
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      current = false;
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [credential, path, request, expired, unavailable]);
+
+  const accessEnded = () => unavailable || (expiresAt !== undefined && new Date(expiresAt).getTime() <= Date.now());
+
   async function download(completed: boolean) {
-    if (!request || !credential || busy) return;
+    if (!request || !credential || busy || accessEnded()) return;
     setBusy(true);
     setError("");
     try {
@@ -86,7 +120,7 @@ export function PublicSigning() {
   }
   async function complete(event: FormEvent) {
     event.preventDefault();
-    if (!credential || !request || busy || !consent || !documentReady) return;
+    if (!credential || !request || busy || !consent || !documentReady || accessEnded()) return;
     setBusy(true);
     setError("");
     try {
@@ -108,14 +142,10 @@ export function PublicSigning() {
       setBusy(false);
     }
   }
-  const expired =
-    request?.status === "pending" &&
-    !!request.expiresAt &&
-    new Date(request.expiresAt).getTime() <= Date.now();
-  const available = request?.status === "pending" && !expired;
+  const available = request?.status === "pending" && !signed && !expired;
   const requiredComplete =
     !!request &&
-    request.fields
+    fields
       .filter(
         (field) =>
           field.required &&
@@ -140,6 +170,11 @@ export function PublicSigning() {
             symbol.
           </p>
         </div>
+      ) : unavailable ? (
+        <section className="signing-card">
+          <h1>This document link is no longer available.</h1>
+          <p>It may have expired or been replaced. Ask the sender for a new link.</p>
+        </section>
       ) : (
         <>
           {error && (
@@ -152,24 +187,30 @@ export function PublicSigning() {
           )}
           {request && (
             <>
-              {request.status === "completed" ? (
+              {signed ? (
                 <section className="signing-complete" aria-live="polite">
                   <CheckCircle2 size={48} />
-                  <p className="eyebrow">Signing complete</p>
+                  <p className="eyebrow">{request.status === "completed" ? "Signing complete" : "Your signature is saved"}</p>
                   <h1>You’re all signed.</h1>
                   <p>{request.title}</p>
-                  <p>
-                    Your signature is saved. Download your completed document
-                    and signing record for your files.
-                  </p>
+                  <p>{request.status === "completed" ? "Your signature is saved." : `Waiting for ${waiting.map((signer) => signer.name).join(", ")} to sign.`}</p>
+                  {expired ? (
+                    <div role="status">
+                      <h2>This download link has expired.</h2>
+                      <p>{request.status === "completed" ? "Ask the sender for a new download link to your signed document." : "Ask the sender for a copy, or a new download link after everyone signs."}</p>
+                    </div>
+                  ) : <>
+                  <p>{request.status === "completed" ? "Download your completed document and signing record for your files." : "This copy includes the signatures collected so far. The sender can share a new link to the final document after everyone signs."}</p>
+                  {expiresAt && <SigningDeadline expiresAt={expiresAt} remaining={remaining} />}
                   <button
                     className="primary-button"
                     disabled={busy}
                     onClick={() => download(true)}
                   >
                     <Download size={18} />
-                    {busy ? "Preparing download…" : "Download signed PDF"}
+                    {busy ? "Preparing download…" : request.status === "completed" ? "Download signed PDF" : "Download current signed copy"}
                   </button>
+                  </>}
                 </section>
               ) : (
                 <header className="signing-public-heading">
@@ -181,7 +222,7 @@ export function PublicSigning() {
                   </p>
                 </header>
               )}
-              {!available && request.status !== "completed" ? (
+              {signed && expired ? null : !available && !signed ? (
                 <section className="signing-card">
                   <h2>
                     {expired
@@ -204,15 +245,16 @@ export function PublicSigning() {
                       onChange={setPage}
                     />
                     <SigningPDF
-                      path={`${path}/pdf${request.status === "completed" ? "?completed=true" : ""}`}
+                      key={signed ? request.signedSHA256 ?? request.updatedAt : request.id}
+                      path={`${path}/pdf${signed ? "?completed=true" : ""}`}
                       token={credential.token}
                       page={page}
                       {...(request.pages[page - 1] ?? request.pages[0])}
                       onReady={onPDFReady}
                       onPageCount={setPageCount}
                     >
-                      {request.status !== "completed" &&
-                        request.fields
+                      {!signed &&
+                        fields
                           .filter((field) => field.page === page)
                           .map((field) => (
                             <FieldOverlay
@@ -237,7 +279,7 @@ export function PublicSigning() {
                       <p className="eyebrow">Your signature</p>
                       <h2>Make it official.</h2>
                       <p>
-                        For {request.signerName}
+                        For {currentSigner?.name || request.signerName}
                         {request.expiresAt
                           ? ` · Expires ${shortDate(request.expiresAt)}`
                           : ""}
@@ -251,6 +293,7 @@ export function PublicSigning() {
                         <Download size={16} />
                         Download document to review
                       </button>
+                      <p className="signing-hint">After you sign, your link stays available for downloading for 15 minutes.</p>
                       <fieldset disabled={busy}>
                         <label>
                           Your full name
@@ -264,7 +307,7 @@ export function PublicSigning() {
                             }
                           />
                         </label>
-                        {request.fields.map((field, index) => (
+                        {fields.map((field, index) => (
                           <div key={field.id} className="signing-answer">
                             <label htmlFor={`answer-${field.id}`}>
                               {index + 1}. {field.label}
@@ -323,7 +366,7 @@ export function PublicSigning() {
                           Date fields are filled when you finish.
                         </p>
                         <p id="signing-session-disclosure" className="signing-hint">
-                          Your IP address, browser details, and approximate location will be recorded with your signature and shared with the sender.
+                          Your IP address, browser details, and approximate location will be recorded with your signature and shared with the sender{(request.signers?.length ?? 0) > 1 ? " and other signers" : ""}.
                         </p>
                         <label className="signing-checkbox signing-consent">
                           <input
