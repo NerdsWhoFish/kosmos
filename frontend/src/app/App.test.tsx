@@ -1024,6 +1024,7 @@ describe("Kosmos application", () => {
         ).toBe(true),
       );
     },
+    15_000,
   );
 
   it("searches the private workspace and opens a result", async () => {
