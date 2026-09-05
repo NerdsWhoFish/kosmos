@@ -521,12 +521,15 @@ export function Documents({
       title="Documents"
       detail="Write in Markdown, read it like a polished document, and keep the why beside the work."
       action={
+        <div className="button-row page-actions">
+        <button className="secondary-button" onClick={() => navigate("/documents/signing")}>Request a signature</button>
         <button
           className="primary-button"
           onClick={() => navigate("/documents/new")}
         >
           <FilePlus2 size={17} /> New document
         </button>
+        </div>
       }
     >
       {items.length ? (

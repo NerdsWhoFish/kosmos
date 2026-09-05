@@ -44,6 +44,7 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 40. Let write-enabled workflows idempotently synchronize managed documents and their complete attachment sets by stable source key, using standard Markdown links while preserving legacy embeds.
 - [x] 41. Keep large document images within the reading surface, cap images embedded in table cells, and render GitHub-flavored Markdown tables in a keyboard-scrollable responsive region.
 - [x] 42. Let deployments omit the public uptime probe and its availability alert together, then disable both in production.
+- [ ] 43. Let users upload a PDF, position signature, date, name, and text fields, create an expiring link for one recipient, revoke pending requests, and download a completed PDF with consent and signing evidence.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
@@ -60,3 +61,6 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] Run frontend unit, build, accessibility, and responsive browser verification for item 41 across phone, tablet, laptop, and desktop viewports.
 - [x] Release v0.3.6 and deploy item 41 to production with Quill's GoReleaser-then-Docker artifact flow through pinned Spacelift module 0.7.0.
 - [x] Publish Kosmos environment module 0.8.0, pin production to it, and deploy item 42 through Spacelift.
+- [x] Verify item 43 with backend unit, race, vet, API-contract, security, concurrency, and PDF rendering tests.
+- [x] Verify item 43 with frontend unit, accessibility, production-build, and responsive signing workflows on phone, tablet, laptop, and desktop.
+- [ ] Release item 43 through Quill, deploy the pinned image through Spacelift, and verify the complete signing workflow in production before accepting the release.

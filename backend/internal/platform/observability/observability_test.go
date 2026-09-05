@@ -7,11 +7,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -34,6 +38,31 @@ func TestSetupPropagatesTraceContextAndBaggage(t *testing.T) {
 	otel.GetTextMapPropagator().Inject(ctx, outgoing)
 	if outgoing.Get("traceparent") != traceparent || outgoing.Get("baggage") != "workflow=sync" {
 		t.Fatalf("outbound propagation = %v", outgoing)
+	}
+}
+
+func TestHTTPTraceDoesNotExportSigningIdentityOrToken(t *testing.T) {
+	collector := tracetest.NewInMemoryExporter()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSyncer(collector))
+	defer provider.Shutdown(context.Background())
+	var logs bytes.Buffer
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/signing/{id}", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler := otelhttp.NewHandler(RequestLogger(slog.New(slog.NewJSONHandler(&logs, nil)), mux), "test", otelhttp.WithTracerProvider(provider))
+	r := httptest.NewRequest("GET", "http://localhost/api/v1/signing/private-request-id?secret=private-token", nil)
+	r.Header.Set("X-Kosmos-Signing-Token", "private-token")
+	handler.ServeHTTP(httptest.NewRecorder(), r)
+	spans, err := json.Marshal(collector.GetSpans())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"private-request-id", "private-token"} {
+		if strings.Contains(string(spans), value) || strings.Contains(logs.String(), value) {
+			t.Fatalf("telemetry leaked %s", value)
+		}
+	}
+	if !strings.Contains(string(spans), "/api/v1/signing/{id}") {
+		t.Fatal("route template missing from trace")
 	}
 }
 

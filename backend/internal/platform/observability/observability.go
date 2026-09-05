@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -90,7 +91,11 @@ func RequestLogger(logger *slog.Logger, next http.Handler) http.Handler {
 		if request.Pattern != "" {
 			span := trace.SpanFromContext(request.Context())
 			span.SetName(request.Pattern)
-			span.SetAttributes(semconv.HTTPRoute(request.Pattern))
+			_, route, hasMethod := strings.Cut(request.Pattern, " ")
+			if !hasMethod {
+				route = request.Pattern
+			}
+			span.SetAttributes(semconv.HTTPRoute(request.Pattern), semconv.URLPath(route))
 		}
 		if request.Pattern == "GET /api/v1/health" {
 			return
