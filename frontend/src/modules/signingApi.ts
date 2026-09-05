@@ -12,6 +12,16 @@ export type SigningField = {
   required: boolean;
 };
 
+export type SigningSession = {
+  ipAddress: string;
+  userAgent: string;
+  city?: string;
+  region?: string;
+  country?: string;
+  capturedAt: string;
+  source: "cloudflare" | "direct";
+};
+
 export type SigningRequest = {
   id: string;
   title: string;
@@ -30,6 +40,7 @@ export type SigningRequest = {
   flattened?: boolean;
   uploadedSHA256?: string;
   signedSHA256?: string;
+  session?: SigningSession;
 };
 
 export const consentText =

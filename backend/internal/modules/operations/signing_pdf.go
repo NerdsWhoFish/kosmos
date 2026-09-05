@@ -31,6 +31,7 @@ type SigningCertificate struct {
 	UploadedSHA256 string
 	SignedAt       time.Time
 	Consent        string
+	Session        *SigningSession
 }
 
 var signingPDFInit sync.Once
@@ -295,16 +296,18 @@ func renderSigningPDF(data []byte, fields []SigningField, values map[string]stri
 			return nil, errors.New("signature fields could not be rendered")
 		}
 	}
-	record, err := signingCertificateContent(certificate)
+	records, err := signingCertificatePages(certificate)
 	if err != nil {
 		return nil, err
 	}
-	if err := ctx.InsertBlankPages(types.IntSet{len(pages): true}, &types.Dim{Width: 612, Height: 792}, false); err != nil {
-		return nil, errors.New("signing record page could not be added")
-	}
-	ctx.PageCount = len(pages) + 1
-	if err := applySigningPDFContent(ctx, ctx.PageCount, SigningPage{Width: 612, Height: 792}, record, false); err != nil {
-		return nil, errors.New("signing record could not be rendered")
+	for _, record := range records {
+		if err := ctx.InsertBlankPages(types.IntSet{ctx.PageCount: true}, &types.Dim{Width: 612, Height: 792}, false); err != nil {
+			return nil, errors.New("signing record page could not be added")
+		}
+		ctx.PageCount++
+		if err := applySigningPDFContent(ctx, ctx.PageCount, SigningPage{Width: 612, Height: 792}, record, false); err != nil {
+			return nil, errors.New("signing record could not be rendered")
+		}
 	}
 	var output bytes.Buffer
 	if err := api.WriteContext(ctx, &output); err != nil {
@@ -404,11 +407,9 @@ func signingPDFFont(name string) (types.Dict, error) {
 	}, nil
 }
 
-func signingCertificateContent(certificate SigningCertificate) ([]byte, error) {
+func signingCertificatePages(certificate SigningCertificate) ([][]byte, error) {
 	lines := []string{
-		"Signing record",
 		"Document: " + certificate.DocumentTitle,
-		"Signing request: " + certificate.ID,
 		"Signer name (as supplied): " + certificate.SignerName,
 		"Signer email (as supplied): " + certificate.SignerEmail,
 		"Signed at (UTC): " + certificate.SignedAt.UTC().Format(time.RFC3339),
@@ -422,46 +423,148 @@ func signingCertificateContent(certificate SigningCertificate) ([]byte, error) {
 			certificate.UploadedSHA256,
 		)
 	}
+	if session := certificate.Session; session != nil {
+		location := make([]string, 0, 3)
+		for _, value := range []string{session.City, session.Region, session.Country} {
+			if value != "" {
+				location = append(location, value)
+			}
+		}
+		approximateLocation, userAgent := strings.Join(location, ", "), session.UserAgent
+		if approximateLocation == "" {
+			approximateLocation = "Unknown"
+		}
+		if userAgent == "" {
+			userAgent = "Unknown"
+		}
+		lines = append(lines,
+			"Completion session evidence",
+			"IP address: "+signingCertificateMetadata(session.IPAddress),
+			"Approximate location: "+signingCertificateMetadata(approximateLocation),
+			"Session captured at (UTC): "+session.CapturedAt.UTC().Format(time.RFC3339),
+			"Evidence source: "+signingCertificateMetadata(session.Source),
+			"Browser-reported User-Agent: "+signingCertificateMetadata(userAgent),
+			"Location is approximate and may reflect a VPN or proxy.",
+			"Connection and browser details are not proof of identity.",
+			`Unsupported metadata characters use \uXXXX or \UXXXXXXXX escapes; literal backslashes are doubled.`,
+		)
+	}
 	lines = append(lines,
 		"Electronic signing consent:",
 		certificate.Consent,
 		"Completed through a signing link. Identity and email are self-reported.",
 		"This record is an electronic signature audit record, not a PKI digital signature.",
 	)
+	if len(certificate.ID) > 64 {
+		return nil, errors.New("signing request ID is too long")
+	}
+	if err := validateSigningText(certificate.ID); err != nil {
+		return nil, err
+	}
+	requestID, _ := charmap.Windows1252.NewEncoder().String("Signing request: " + certificate.ID)
+	var requestLines []string
+	for requestID != "" {
+		end, err := signingCertificateLineEnd(requestID)
+		if err != nil {
+			return nil, err
+		}
+		requestLines = append(requestLines, requestID[:end])
+		requestID = requestID[end:]
+	}
+	var records [][]byte
 	var output bytes.Buffer
-	y := 744.0
-	for i, line := range lines {
-		if len(line) > 2048 {
+	y := 0.0
+	startPage := func() {
+		output.Reset()
+		title := "Signing record"
+		if len(records) > 0 {
+			title += " (continued)"
+		}
+		writeSigningText(&output, title, "KosmosText", 20, 48, 744)
+		y = 714
+		for _, line := range requestLines {
+			writeSigningText(&output, line, "KosmosText", 10, 48, y)
+			y -= 15
+		}
+		y -= 15
+	}
+	finishPage := func() {
+		writeSigningText(&output, fmt.Sprintf("Signing record page %d", len(records)+1), "KosmosText", 9, 48, 32)
+		records = append(records, bytes.Clone(output.Bytes()))
+	}
+	startPage()
+	for _, line := range lines {
+		if len(line) > 8192 {
 			return nil, errors.New("signing record text is too long")
 		}
 		if err := validateSigningText(line); err != nil {
 			return nil, err
 		}
-		size := 10.0
-		if i == 0 {
-			size = 20
-		}
 		encoded, _ := charmap.Windows1252.NewEncoder().String(line)
 		for len(encoded) > 0 {
-			end := len(encoded)
-			for end > 0 {
-				width, err := font.TextWidthFloat(encoded[:end], "Helvetica", size)
-				if err != nil {
-					return nil, errors.New("signing record text could not be measured")
+			if y < 48 {
+				finishPage()
+				if len(records) >= 12 {
+					return nil, errors.New("signing record exceeds processing limits")
 				}
-				if width <= 516 {
-					break
-				}
-				end--
+				startPage()
 			}
-			if y < 48 || end == 0 {
-				return nil, errors.New("signing record does not fit on its page")
+			end, err := signingCertificateLineEnd(encoded)
+			if err != nil {
+				return nil, err
 			}
-			writeSigningText(&output, encoded[:end], "KosmosText", size, 48, y)
+			writeSigningText(&output, encoded[:end], "KosmosText", 10, 48, y)
 			encoded = encoded[end:]
-			y -= size * 1.5
+			y -= 15
 		}
 		y -= 9
 	}
-	return output.Bytes(), nil
+	finishPage()
+	return records, nil
+}
+
+func signingCertificateMetadata(value string) string {
+	var output strings.Builder
+	for _, r := range value {
+		_, supported := charmap.Windows1252.EncodeRune(r)
+		switch {
+		case r == '\\':
+			output.WriteString(`\\`)
+		case !supported || unicode.IsControl(r):
+			if r <= 0xffff {
+				fmt.Fprintf(&output, `\u%04X`, r)
+			} else {
+				fmt.Fprintf(&output, `\U%08X`, r)
+			}
+		default:
+			output.WriteRune(r)
+		}
+	}
+	return output.String()
+}
+
+func signingCertificateLineEnd(encoded string) (int, error) {
+	width := 0.0
+	end, lastSpace := 0, 0
+	for end < len(encoded) {
+		characterWidth, err := font.TextWidthFloat(encoded[end:end+1], "Helvetica", 10)
+		if err != nil {
+			return 0, errors.New("signing record text could not be measured")
+		}
+		if width+characterWidth > 516 {
+			break
+		}
+		width += characterWidth
+		end++
+		if encoded[end-1] == ' ' {
+			lastSpace = end
+		}
+	}
+	if end == 0 {
+		return 0, errors.New("signing record text could not fit its page")
+	}
+	if end < len(encoded) && lastSpace > 0 {
+		end = lastSpace
+	}
+	return end, nil
 }

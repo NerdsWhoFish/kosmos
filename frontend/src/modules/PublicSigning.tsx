@@ -322,10 +322,14 @@ export function PublicSigning() {
                           Typing your signature creates an electronic signature.
                           Date fields are filled when you finish.
                         </p>
+                        <p id="signing-session-disclosure" className="signing-hint">
+                          Your IP address, browser details, and approximate location will be recorded with your signature and shared with the sender.
+                        </p>
                         <label className="signing-checkbox signing-consent">
                           <input
                             required
                             type="checkbox"
+                            aria-describedby="signing-session-disclosure"
                             checked={consent}
                             onChange={(event) =>
                               setConsent(event.target.checked)

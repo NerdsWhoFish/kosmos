@@ -2,6 +2,7 @@ package operations
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"image/png"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/types"
+	"golang.org/x/text/encoding/charmap"
 )
 
 func signingPDFTestDocument(pageExtra, catalogExtra string, pageCount int) []byte {
@@ -328,5 +331,142 @@ func TestSigningFieldLayoutUsesPhysicalDimensions(t *testing.T) {
 	field.Width = .2
 	if err := validateSigningFields([]SigningField{field}, []SigningPage{{Width: 72, Height: 72}}, true); err == nil {
 		t.Fatal("field smaller than readable width accepted on a small page")
+	}
+}
+
+func TestSigningPDFPaginatesUnicodeSessionEvidence(t *testing.T) {
+	certificate := signingPDFTestCertificate()
+	certificate.UploadedSHA256 = strings.Repeat("b", 64)
+	certificate.Session = &SigningSession{
+		IPAddress: "2001:db8::1", UserAgent: strings.Repeat("界", 170) + "ab",
+		City: strings.Repeat("界", 42) + "ab", Region: strings.Repeat("🌍", 32), Country: "JP",
+		CapturedAt: time.Date(2026, 9, 5, 12, 29, 45, 0, time.FixedZone("test", 2*60*60)), Source: "cloudflare",
+	}
+	fields := []SigningField{{ID: "signature", Type: "signature", Page: 1, X: .1, Y: .5, Width: .45, Height: .08, Required: true}}
+	output, err := renderSigningPDF(signingPDFTestDocument("", "", 1), fields, map[string]string{"signature": "Joey Stout"}, certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := signingPDFConfiguration()
+	conf.ValidationMode = model.ValidationRelaxed
+	ctx, err := api.ReadAndValidate(bytes.NewReader(output), conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.PageCount < 3 {
+		t.Fatalf("maximum Unicode evidence did not paginate: %d pages", ctx.PageCount)
+	}
+	var allEvidence strings.Builder
+	var lastPageText string
+	for pageNr := 2; pageNr <= ctx.PageCount; pageNr++ {
+		page, _, _, err := ctx.PageDict(pageNr, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, err := ctx.PageContent(page, pageNr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var pageText strings.Builder
+		for _, match := range regexp.MustCompile(`<([0-9a-f]+)> Tj`).FindAllSubmatch(content, -1) {
+			encoded, err := hex.DecodeString(string(match[1]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text, err := charmap.Windows1252.NewDecoder().String(string(encoded))
+			if err != nil {
+				t.Fatal(err)
+			}
+			pageText.WriteString(text)
+			if !strings.HasPrefix(text, "Signing record") && !strings.HasPrefix(text, "Signing request:") {
+				allEvidence.WriteString(text)
+			}
+		}
+		lastPageText = pageText.String()
+		if !strings.Contains(lastPageText, "Signing request: "+certificate.ID) {
+			t.Fatalf("record page %d lost its request identifier", pageNr)
+		}
+		if pageNr > 2 && !strings.Contains(lastPageText, "Signing record (continued)") {
+			t.Fatalf("record page %d has no continuation title", pageNr)
+		}
+	}
+	for _, expected := range []string{
+		certificate.OriginalSHA256, certificate.UploadedSHA256,
+		"IP address: 2001:db8::1", "Session captured at (UTC): 2026-09-05T10:29:45Z", "Evidence source: cloudflare",
+		"Approximate location: " + strings.Repeat(`\u754C`, 42) + "ab, " + strings.Repeat(`\U0001F30D`, 32) + ", JP",
+		"Browser-reported User-Agent: " + strings.Repeat(`\u754C`, 170) + "ab",
+		certificate.Consent, "Connection and browser details are not proof of identity.",
+	} {
+		if !strings.Contains(allEvidence.String(), expected) {
+			t.Fatalf("paginated evidence omitted %q", expected)
+		}
+	}
+	if !strings.Contains(lastPageText, "not a PKI digital signature.") {
+		t.Fatal("last record page omitted final signature caveat")
+	}
+	if certificate.Session.UserAgent != strings.Repeat("界", 170)+"ab" || certificate.Session.Region != strings.Repeat("🌍", 32) {
+		t.Fatal("PDF escaped the stored session metadata in place")
+	}
+	t.Run("independent extraction stays inside page bounds", func(t *testing.T) {
+		tool, err := exec.LookPath("pdftotext")
+		if err != nil {
+			t.Skip("optional independent text bounds check requires pdftotext")
+		}
+		path := filepath.Join(t.TempDir(), "session-evidence.pdf")
+		if err := os.WriteFile(path, output, 0600); err != nil {
+			t.Fatal(err)
+		}
+		extracted, err := exec.Command(tool, "-bbox", path, "-").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Pages []struct {
+				Words []struct {
+					Text string  `xml:",chardata"`
+					XMin float64 `xml:"xMin,attr"`
+					YMin float64 `xml:"yMin,attr"`
+					XMax float64 `xml:"xMax,attr"`
+					YMax float64 `xml:"yMax,attr"`
+				} `xml:"word"`
+			} `xml:"body>doc>page"`
+		}
+		if err := xml.Unmarshal(extracted, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if len(doc.Pages) != ctx.PageCount {
+			t.Fatalf("independent extraction got %d pages, want %d", len(doc.Pages), ctx.PageCount)
+		}
+		for pageNr, page := range doc.Pages[1:] {
+			for _, word := range page.Words {
+				if word.XMin < 47.9 || word.XMax > 564.1 || word.YMin < 25 || word.YMax > 765 {
+					t.Fatalf("record page %d text outside its margins: %#v", pageNr+1, word)
+				}
+			}
+		}
+		var finalText strings.Builder
+		for _, word := range doc.Pages[len(doc.Pages)-1].Words {
+			finalText.WriteString(word.Text + " ")
+		}
+		if !strings.Contains(finalText.String(), "not a PKI digital signature.") {
+			t.Fatal("final caveat was not independently extractable")
+		}
+	})
+}
+
+func TestSigningCertificateMetadataEscapesReversibly(t *testing.T) {
+	if got := signingCertificateMetadata("São \\u754C 界 🌍"); got != `São \\u754C \u754C \U0001F30D` {
+		t.Fatalf("ambiguous metadata escaping: %q", got)
+	}
+	certificate := signingPDFTestCertificate()
+	certificate.Session = &SigningSession{IPAddress: "192.0.2.1", Source: "direct", CapturedAt: certificate.SignedAt}
+	pages, err := signingCertificatePages(certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Approximate location: Unknown", "Browser-reported User-Agent: Unknown", "Evidence source: direct"} {
+		if !bytes.Contains(bytes.Join(pages, nil), []byte(hex.EncodeToString([]byte(expected)))) {
+			t.Fatalf("unknown session metadata omitted %q", expected)
+		}
 	}
 }

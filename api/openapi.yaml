@@ -1801,7 +1801,7 @@ paths:
   /signing/{id}/complete:
     post:
       operationId: completeSigningRequest
-      description: Submit explicit consent and typed field values. Dates use the server's current UTC date and name fields use signerName, overriding supplied field values. Required fields must be nonblank and all values must fit their fields at a readable size. Checks the original PDF hash, renders fields and a signing record page, and atomically claims completion. Concurrent completions and later retries return the winning completed request while the link remains valid. A revoked or expired link cannot complete. Supports a 64 KiB JSON body.
+      description: Submit explicit consent and typed field values after disclosure of session-evidence collection. Dates use the server's current UTC date and name fields use signerName, overriding supplied field values. Required fields must be nonblank and all values must fit their fields at a readable size. Checks the original PDF hash, renders fields and a signing record, and atomically saves completion with its IP, browser, and available approximate location snapshot. Production session metadata comes from an authenticated ingress envelope, never the JSON body. Concurrent completions and later retries return the winning request and unchanged session evidence while the link remains valid. A revoked or expired link cannot complete. Supports a 64 KiB JSON body.
       security:
         - signingToken: []
       parameters:
@@ -1819,7 +1819,11 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: Required CSRF header is missing, or new completion session evidence is missing, invalid, or stale (signing_session_unverified). No new completed artifact is written.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1856,7 +1860,7 @@ components:
       name: completed
       in: query
       required: false
-      description: Set to true to download the completed PDF with its signing record page. Otherwise returns the prepared signing copy. Returns 409 if completion is requested before signing. Cannot be combined with uploaded=true.
+      description: Set to true to download the completed PDF with its signing record pages. Otherwise returns the prepared signing copy. Returns 409 if completion is requested before signing. Cannot be combined with uploaded=true.
       schema:
         type: boolean
         default: false
@@ -1936,7 +1940,7 @@ components:
               page:
                 $ref: '#/components/schemas/Page'
     SigningPDF:
-      description: Private PDF download, with Content-Disposition attachment and Cache-Control private, no-store. The completed artifact includes an electronic signing record, not a PKI digital signature.
+      description: Private PDF download, with Content-Disposition attachment and Cache-Control private, no-store. The completed artifact includes one or more electronic signing record pages with recorded session evidence when available, not a PKI digital signature.
       content:
         application/pdf:
           schema:
@@ -2328,7 +2332,7 @@ components:
         signedSHA256:
           type: string
           pattern: '^[a-f0-9]{64}$'
-          description: SHA-256 of the complete signed PDF including its signing record page.
+          description: SHA-256 of the complete signed PDF including all signing record pages.
         events:
           type: array
           items:
@@ -2344,6 +2348,42 @@ components:
         consent:
           type: string
           description: Exact electronic-signing consent recorded at completion.
+        session:
+          $ref: '#/components/schemas/SigningSession'
+    SigningSession:
+      type: object
+      additionalProperties: false
+      required: [ipAddress, userAgent, city, region, country, capturedAt, source]
+      description: Completion-time evidence saved once with the winning signed PDF. Absent on drafts and older completed requests. Visible to authenticated workspace users and holders of a valid completed signing link. IP, self-reported browser description, and approximate location do not verify identity.
+      properties:
+        ipAddress:
+          type: string
+          description: Canonical IP address from authenticated ingress metadata, or the socket peer in direct local operation.
+        userAgent:
+          type: string
+          maxLength: 512
+          description: Browser-supplied User-Agent, bounded to 512 UTF-8 bytes. May be empty.
+        city:
+          type: string
+          maxLength: 128
+          description: Approximate city from Cloudflare, bounded to 128 UTF-8 bytes. Empty when unavailable.
+        region:
+          type: string
+          maxLength: 128
+          description: Approximate region from Cloudflare, bounded to 128 UTF-8 bytes. Empty when unavailable.
+        country:
+          type: string
+          maxLength: 2
+          pattern: '^([A-Z]{2})?$'
+          description: Two-letter uppercase country code from Cloudflare, or empty when unavailable.
+        capturedAt:
+          type: string
+          format: date-time
+          description: Verified edge timestamp in UTC, or the server's capture time in direct local operation.
+        source:
+          type: string
+          enum: [cloudflare, direct]
+          description: Authenticated Cloudflare ingress or direct local socket metadata.
     SigningField:
       type: object
       additionalProperties: false

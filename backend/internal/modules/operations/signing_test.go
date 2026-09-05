@@ -243,6 +243,13 @@ func TestSigningCompletionHandlesAmbiguousCommit(t *testing.T) {
 			item, token := issueSigningFixture(t, mux, createSigningFixture(t, mux))
 			m.store = signingFaultStore{Store: m.store, signingStore: m.store.(signingStore), afterCommit: committed}
 			w := signingCall(t, mux, "POST", "/api/v1/signing/"+item.ID+"/complete", token, completeSigningBody())
+			var stored SigningRequest
+			if err := m.store.Get(context.Background(), m.publicScope, "signingRequests", item.ID, &stored); err != nil {
+				t.Fatal(err)
+			}
+			if (stored.Session != nil) != committed {
+				t.Fatal("session evidence did not follow the winning completion transaction")
+			}
 			if committed {
 				completed := decodeSigningResponse(t, w, 200)
 				pdf := signingCall(t, mux, "GET", "/api/v1/signing/"+item.ID+"/pdf?completed=true", token, nil)
@@ -290,6 +297,10 @@ func TestSigningTransitionHasOneWinner(t *testing.T) {
 					next := item
 					next.Status = state
 					next.Revision = 3
+					if state == "completed" {
+						next.Session = &SigningSession{IPAddress: "192.0.2.10", UserAgent: "Test Browser", City: "東京", Country: "JP", CapturedAt: time.Now().UTC(), Source: "cloudflare"}
+						next.SignedSHA256 = strings.Repeat("a", 64)
+					}
 					results <- store.(signingStore).ReplaceSigningRequest(ctx, scope, 2, "pending", next)
 				}(state)
 			}
@@ -307,6 +318,17 @@ func TestSigningTransitionHasOneWinner(t *testing.T) {
 			}
 			if won != 1 || conflicted != 1 {
 				t.Fatalf("winners %d, conflicts %d", won, conflicted)
+			}
+			var saved SigningRequest
+			if err := store.Get(ctx, scope, "signingRequests", item.ID, &saved); err != nil {
+				t.Fatal(err)
+			}
+			if saved.Status == "completed" {
+				if saved.Session == nil || saved.Session.City != "東京" || saved.SignedSHA256 != strings.Repeat("a", 64) {
+					t.Fatal("winning session evidence and PDF were not saved together")
+				}
+			} else if saved.Session != nil || saved.SignedSHA256 != "" {
+				t.Fatal("revoked request retained losing completion evidence")
 			}
 		})
 	}
