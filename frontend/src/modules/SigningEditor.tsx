@@ -225,8 +225,11 @@ export function SigningEditor({
                     editable={editable && !busy}
                     selected={field.id === selectedID}
                     pageSize={request.pages[field.page - 1]}
-                    focusOnMount={field.id === focusFieldID}
-                    onSelect={() => setSelectedID(field.id)}
+                    focusOnMount={field.id === focusFieldID && field.id === selectedID}
+                    onSelect={() => {
+                      setSelectedID(field.id);
+                      setFocusFieldID("");
+                    }}
                     onChange={update}
                   />
                 ))}
