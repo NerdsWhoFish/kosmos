@@ -24,6 +24,8 @@ const Documents = lazy(() =>
     default: module.Documents,
   })),
 );
+const Signing = lazy(() => import("../modules/Signing").then((module) => ({ default: module.Signing })));
+const PublicSigning = lazy(() => import("../modules/PublicSigning").then((module) => ({ default: module.PublicSigning })));
 const Opportunities = lazy(() =>
   import("../modules/Opportunities").then((module) => ({
     default: module.Opportunities,
@@ -71,6 +73,10 @@ export function App() {
   );
 
   useEffect(() => {
+    if (window.location.pathname === "/sign") {
+      setCheckingSession(false);
+      return;
+    }
     fetch("/api/v1/me")
       .then((response) => (response.ok ? response.json() : null))
       .then(async (current: User | null) => {
@@ -105,6 +111,7 @@ export function App() {
     setLocation(currentLocation());
   }
 
+  if (location.path === "/sign") return <Suspense fallback={<LoadingState label="Opening your document" />}><PublicSigning /></Suspense>;
   if (checkingSession)
     return (
       <div className="session-loading">
@@ -138,6 +145,8 @@ function Route({
   navigate: (path: string) => void;
 }) {
   const path = basePath(location.path);
+  if (location.path === "/documents/signing" || location.path.startsWith("/documents/signing/"))
+    return <Signing id={location.path.split("/")[3] ?? ""} navigate={navigate} />;
   if (path === "/")
     return (
       <Overview

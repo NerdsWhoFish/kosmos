@@ -28,6 +28,9 @@ describe('browser telemetry', () => {
     ['/unknown/customer%40example.com', '/:path'],
     ['/contacts/new', '/contacts/new'],
     ['/api/v1/contacts/new', '/api/v1/contacts/:id'],
+    ['/sign#private-request.secret-signing-token', '/sign'],
+    ['/api/v1/signing/private-request/complete', '/api/v1/signing/:id/complete'],
+    ['/api/v1/signing-requests/private-request/pdf?completed=true', '/api/v1/signing-requests/:id/pdf'],
   ])('normalizes %s into a bounded route', (input, expected) => {
     expect(telemetryURL(input)).toBe(`${location.origin}${expected}`)
   })

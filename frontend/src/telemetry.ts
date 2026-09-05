@@ -14,11 +14,11 @@ import { TracingInstrumentation } from '@grafana/faro-web-tracing'
 
 const resources = new Set([
   'accounts', 'contacts', 'contact-sources', 'opportunities', 'documents', 'costs',
-  'activities', 'reminders', 'attachments', 'notifications', 'members', 'credentials',
+  'activities', 'reminders', 'attachments', 'notifications', 'members', 'credentials', 'signing', 'signing-requests',
 ])
-const pages = new Set(['search', 'activity', 'communications', 'operations', 'settings', 'intake'])
+const pages = new Set(['search', 'activity', 'communications', 'operations', 'settings', 'intake', 'sign'])
 const endpoints = new Set(['search', 'summary', 'landing', 'config', 'modules', 'session', 'me'])
-const actions = new Set(['edit', 'delete', 'revisions', 'download', 'photo', 'sync', 'read'])
+const actions = new Set(['edit', 'delete', 'revisions', 'download', 'photo', 'sync', 'read', 'pdf', 'link', 'revoke', 'complete'])
 const eventNames = new Set([
   'click', 'navigation', 'view_changed', 'session_start', 'session_resume', 'session_extend',
   'route_change', 'faro.navigation', 'faro.performance.navigation', 'faro.performance.resource',

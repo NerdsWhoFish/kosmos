@@ -1530,8 +1530,307 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '502':
           description: Provider synchronization failed and Cloud Tasks should retry
+  /signing-requests:
+    get:
+      operationId: listSigningRequests
+      description: Organization signing requests ordered newest first by creation time.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          $ref: '#/components/responses/SigningRequestList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+    post:
+      operationId: createSigningRequest
+      description: Upload one immutable original PDF as a draft. Accepts up to 10 MiB and 50 pages. Requires an unencrypted flattened PDF without annotations, forms, actions, attachments, optional content, rotation metadata, nondefault cropping, or page scaling. Page dimensions must be 1 to 40 inches. Additional parser resource limits apply. Limited to 20 uploads per organization per minute.
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [title, file]
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 160
+                  description: Trimmed title using Windows-1252 characters without control characters.
+                file:
+                  type: string
+                  format: binary
+                  description: One PDF of at most 10485760 bytes.
+            encoding:
+              file:
+                contentType: application/pdf
+      responses:
+        '201':
+          $ref: '#/components/responses/SigningRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/SigningRateLimited'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+  /signing-requests/{id}:
+    parameters:
+      - $ref: '#/components/parameters/RecordID'
+    get:
+      operationId: getSigningRequest
+      responses:
+        '200':
+          $ref: '#/components/responses/SigningRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+    put:
+      operationId: editSigningRequest
+      description: Replace every field on a draft using its current revision. Fields become immutable when a signing link is created. Supports at most 100 fields and a 128 KiB JSON body.
+      parameters:
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, fields]
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+                fields:
+                  type: array
+                  maxItems: 100
+                  items:
+                    $ref: '#/components/schemas/SigningField'
+      responses:
+        '200':
+          $ref: '#/components/responses/SigningRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SigningConflict'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+  /signing-requests/{id}/link:
+    post:
+      operationId: createSigningLink
+      description: Lock a draft with at least one required signature field and return its signing link once. The recipient email is supplied by the sender and is not verified. Does not send email. Link possession grants access and links can be forwarded. A lost link requires a new request.
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision, signerName, signerEmail, expiresDays]
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+                signerName:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                  description: Trimmed Windows-1252 text without control characters.
+                signerEmail:
+                  type: string
+                  format: email
+                  maxLength: 254
+                  description: Bare email address, without display name.
+                expiresDays:
+                  type: integer
+                  minimum: 1
+                  maximum: 90
+      responses:
+        '200':
+          description: Locked request and one-time relative signing URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [request, signingUrl]
+                properties:
+                  request:
+                    $ref: '#/components/schemas/SigningRequest'
+                  signingUrl:
+                    type: string
+                    format: uri-reference
+                    description: 'Relative /sign URL with a fragment containing request-id.token. Resolve against the Kosmos origin and share the entire fragment. Never put the token in a query or path, logs, or telemetry.'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SigningConflict'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+  /signing-requests/{id}/revoke:
+    post:
+      operationId: revokeSigningRequest
+      description: Irreversibly revoke a draft or pending request using its current revision. Completed requests cannot be revoked.
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revision]
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          $ref: '#/components/responses/SigningRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SigningConflict'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+  /signing-requests/{id}/pdf:
+    get:
+      operationId: downloadSigningPDF
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CompletedPDF'
+      responses:
+        '200':
+          $ref: '#/components/responses/SigningPDF'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SigningConflict'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+  /signing/{id}:
+    get:
+      operationId: getPublicSigningRequest
+      description: Read a pending or completed request using its possession token. Completed requests remain accessible until link expiry. Authenticated workspace credentials do not replace this token.
+      security:
+        - signingToken: []
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SigningRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/SigningUnavailable'
+        '429':
+          $ref: '#/components/responses/SigningRateLimited'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+  /signing/{id}/pdf:
+    get:
+      operationId: downloadPublicSigningPDF
+      security:
+        - signingToken: []
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/CompletedPDF'
+      responses:
+        '200':
+          $ref: '#/components/responses/SigningPDF'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SigningConflict'
+        '410':
+          $ref: '#/components/responses/SigningUnavailable'
+        '429':
+          $ref: '#/components/responses/SigningRateLimited'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
+  /signing/{id}/complete:
+    post:
+      operationId: completeSigningRequest
+      description: Submit explicit consent and typed field values. Dates use the server's current UTC date and name fields use signerName, overriding supplied field values. Required fields must be nonblank and all values must fit their fields at a readable size. Checks the original PDF hash, renders fields and a signing record page, and atomically claims completion. Concurrent completions and later retries return the winning completed request while the link remains valid. A revoked or expired link cannot complete. Supports a 64 KiB JSON body.
+      security:
+        - signingToken: []
+      parameters:
+        - $ref: '#/components/parameters/RecordID'
+        - $ref: '#/components/parameters/SigningCSRF'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SigningCompletion'
+      responses:
+        '200':
+          $ref: '#/components/responses/SigningRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/SigningConflict'
+        '410':
+          $ref: '#/components/responses/SigningUnavailable'
+        '429':
+          $ref: '#/components/responses/SigningRateLimited'
+        '500':
+          $ref: '#/components/responses/SigningFailure'
 components:
   securitySchemes:
+    signingToken:
+      type: apiKey
+      in: header
+      name: X-Kosmos-Signing-Token
+      description: Exactly one header containing the 43-character base64url HMAC-SHA256 token from the signing URL fragment. Public signing requires this token independently of session cookies and workflow API credentials. The server verifies its HMAC before database access, then verifies its stored SHA-256 hash and request state. Integration-key rotation invalidates every existing signing link.
     sessionCookie:
       type: apiKey
       in: cookie
@@ -1547,6 +1846,22 @@ components:
       bearerFormat: JWT
       description: Google-signed OIDC token accepted by Cloud Run IAM.
   parameters:
+    CompletedPDF:
+      name: completed
+      in: query
+      required: false
+      description: Set to true to download the completed PDF with its signing record page. Otherwise returns the original upload. Returns 409 if completion is requested before signing.
+      schema:
+        type: boolean
+        default: false
+    SigningCSRF:
+      name: X-Kosmos-CSRF
+      in: header
+      required: true
+      description: Required alongside the signing token for public completion.
+      schema:
+        type: string
+        const: '1'
     Limit:
       name: limit
       in: query
@@ -1586,6 +1901,62 @@ components:
         type: string
         maxLength: 200
   responses:
+    SigningRequest:
+      description: Signing request without storage object paths, creator identity, or token hash. Responses use Cache-Control private, no-store and Referrer-Policy no-referrer.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SigningRequest'
+    SigningRequestList:
+      description: Organization signing requests, newest first
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [requests, page]
+            properties:
+              requests:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SigningRequest'
+              page:
+                $ref: '#/components/schemas/Page'
+    SigningPDF:
+      description: Private PDF download, with Content-Disposition attachment and Cache-Control private, no-store. The completed artifact includes an electronic signing record, not a PKI digital signature.
+      content:
+        application/pdf:
+          schema:
+            type: string
+            format: binary
+    SigningConflict:
+      description: Stale revision, incompatible state, or requested completed PDF unavailable. Reload the request before continuing.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    SigningUnavailable:
+      description: Correct token presented for an expired or revoked request. Ask the sender for a new request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    SigningRateLimited:
+      description: Shared quota exceeded. Uploads allow 20 per organization per minute; public reads, downloads, and completions share 120 per request per minute, and pending completions additionally allow 10 attempts per request per minute.
+      headers:
+        Retry-After:
+          description: Seconds until the quota can be retried.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    SigningFailure:
+      description: Signing storage or processing dependency failed. Retry after inspecting request state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     BadRequest:
       description: Request validation failed
       content:
@@ -1863,6 +2234,154 @@ components:
               page:
                 $ref: '#/components/schemas/Page'
   schemas:
+    SigningRequest:
+      type: object
+      required: [id, title, fileName, status, pages, fields, revision, signerName, signerEmail, createdAt, updatedAt, originalSHA256, events]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+        title:
+          type: string
+          maxLength: 160
+        fileName:
+          type: string
+        status:
+          type: string
+          enum: [draft, pending, completed, revoked]
+          description: Expiry is derived from expiresAt and does not change the stored status.
+        pages:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            required: [width, height]
+            properties:
+              width:
+                type: number
+                minimum: 72
+                maximum: 2880
+                description: Original page width in PDF points.
+              height:
+                type: number
+                minimum: 72
+                maximum: 2880
+                description: Original page height in PDF points.
+        fields:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/SigningField'
+        revision:
+          type: integer
+          minimum: 1
+        signerName:
+          type: string
+          maxLength: 120
+          description: Sender-supplied recipient name, retained after completion. Empty in drafts.
+        completedSignerName:
+          type: string
+          maxLength: 120
+          description: Self-reported name entered by the signer at completion.
+        signerEmail:
+          type: string
+          maxLength: 254
+          description: Sender-supplied email address, unverified. Empty in drafts.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        originalSHA256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        signedSHA256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: SHA-256 of the complete signed PDF including its signing record page.
+        events:
+          type: array
+          items:
+            type: object
+            required: [action, at]
+            properties:
+              action:
+                type: string
+                enum: [created, link_created, revoked, completed]
+              at:
+                type: string
+                format: date-time
+        consent:
+          type: string
+          description: Exact electronic-signing consent recorded at completion.
+    SigningField:
+      type: object
+      additionalProperties: false
+      required: [id, type, label, page, x, y, width, height, required]
+      description: Coordinates are fractions of the original page dimensions with a top-left origin. Fields must remain wholly inside their page and measure at least 20 PDF points wide and 15.6 points high. Link creation checks that the supplied recipient name and date values fit. Text uses Windows-1252 without control characters.
+      properties:
+        id:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]{1,64}$'
+          description: Unique within this request.
+        type:
+          type: string
+          enum: [signature, date, name, text]
+        label:
+          type: string
+          minLength: 1
+          maxLength: 80
+        page:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: One-based original PDF page number.
+        x:
+          type: number
+          minimum: 0
+          maximum: 1
+        y:
+          type: number
+          minimum: 0
+          maximum: 1
+        width:
+          type: number
+          minimum: 0.05
+          maximum: 1
+        height:
+          type: number
+          minimum: 0.015
+          maximum: 1
+        required:
+          type: boolean
+    SigningCompletion:
+      type: object
+      additionalProperties: false
+      required: [signerName, consent, values]
+      properties:
+        signerName:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Trimmed self-reported full name using Windows-1252 without control characters.
+        consent:
+          type: boolean
+          const: true
+          description: 'Explicit agreement: I agree to use electronic records and signatures, have reviewed this document, and intend my signature to be binding.'
+        values:
+          type: object
+          description: Map from field ID to trimmed value. Unknown field IDs are rejected. Date and name values are supplied by the server.
+          additionalProperties:
+            type: string
+            maxLength: 200
     Page:
       type: object
       required: [limit, nextCursor]

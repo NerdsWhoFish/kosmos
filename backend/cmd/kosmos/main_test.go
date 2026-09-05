@@ -58,8 +58,13 @@ func TestRequestIdentityDoesNotFallBackFromMalformedAuthorization(t *testing.T) 
 type openAPIContract struct {
 	Paths      map[string]openAPIPathItem `yaml:"paths"`
 	Components struct {
-		Responses map[string]openAPIResponse `yaml:"responses"`
-		Schemas   map[string]openAPISchema   `yaml:"schemas"`
+		Responses       map[string]openAPIResponse `yaml:"responses"`
+		Schemas         map[string]openAPISchema   `yaml:"schemas"`
+		SecuritySchemes map[string]struct {
+			Type string `yaml:"type"`
+			In   string `yaml:"in"`
+			Name string `yaml:"name"`
+		} `yaml:"securitySchemes"`
 	} `yaml:"components"`
 }
 
@@ -72,6 +77,7 @@ type openAPIPathItem struct {
 type openAPIOperation struct {
 	Parameters []openAPIReference         `yaml:"parameters"`
 	Responses  map[string]openAPIResponse `yaml:"responses"`
+	Security   []map[string][]string      `yaml:"security"`
 }
 
 type openAPIReference struct {
@@ -91,7 +97,7 @@ type openAPISchema struct {
 	Ref                  string                   `yaml:"$ref"`
 	Type                 string                   `yaml:"type"`
 	Const                any                      `yaml:"const"`
-	AdditionalProperties *bool                    `yaml:"additionalProperties"`
+	AdditionalProperties any                      `yaml:"additionalProperties"`
 	Required             []string                 `yaml:"required"`
 	Properties           map[string]openAPISchema `yaml:"properties"`
 	Items                *openAPISchema           `yaml:"items"`
@@ -268,6 +274,7 @@ func TestOpenAPIPaginatedListResponseSchemas(t *testing.T) {
 		"/opportunities":            {"opportunities", "Opportunity"},
 		"/pipeline-stages":          {"stages", "PipelineStage"},
 		"/reminders":                {"reminders", "Reminder"},
+		"/signing-requests":         {"requests", "SigningRequest"},
 		"/transactions":             {"transactions", "Transaction"},
 	}
 
@@ -346,7 +353,7 @@ func TestOpenAPIAsyncSyncResponses(t *testing.T) {
 		if schema.Type != "object" || !sameStrings(schema.Required, []string{"id", "status"}) {
 			t.Errorf("POST %s schema type/required = %q/%v", path, schema.Type, schema.Required)
 		}
-		if schema.AdditionalProperties == nil || *schema.AdditionalProperties {
+		if schema.AdditionalProperties != false {
 			t.Errorf("POST %s permits fields other than id and status", path)
 		}
 		if schema.Properties["id"].Type != "string" {
@@ -355,6 +362,45 @@ func TestOpenAPIAsyncSyncResponses(t *testing.T) {
 		status := schema.Properties["status"]
 		if status.Type != "string" || status.Const != "accepted" {
 			t.Errorf("POST %s status = type %q const %#v", path, status.Type, status.Const)
+		}
+	}
+}
+
+func TestOpenAPIPublicSigningSecurityAndPDFResponses(t *testing.T) {
+	contract := loadOpenAPIContract(t)
+	scheme := contract.Components.SecuritySchemes["signingToken"]
+	if scheme.Type != "apiKey" || scheme.In != "header" || scheme.Name != "X-Kosmos-Signing-Token" {
+		t.Fatalf("public signing security scheme = %#v", scheme)
+	}
+	for _, path := range []string{"/signing/{id}", "/signing/{id}/pdf", "/signing/{id}/complete"} {
+		operation := contract.Paths[path].Get
+		if strings.HasSuffix(path, "/complete") {
+			operation = contract.Paths[path].Post
+			if !hasParameter(operation.Parameters, "#/components/parameters/SigningCSRF") {
+				t.Errorf("public signing completion omits its required CSRF header")
+			}
+		}
+		if len(operation.Security) != 1 || len(operation.Security[0]) != 1 {
+			t.Errorf("%s must require only signingToken, got %#v", path, operation.Security)
+			continue
+		}
+		if _, exists := operation.Security[0]["signingToken"]; !exists {
+			t.Errorf("%s does not require signingToken", path)
+		}
+		for _, status := range []string{"404", "410", "429"} {
+			if _, exists := operation.Responses[status]; !exists {
+				t.Errorf("%s omits public signing response %s", path, status)
+			}
+		}
+	}
+	for _, path := range []string{"/signing-requests/{id}/pdf", "/signing/{id}/pdf"} {
+		operation := contract.Paths[path].Get
+		response := resolveResponse(t, contract, operation.Responses["200"])
+		if _, exists := response.Content["application/pdf"]; !exists {
+			t.Errorf("%s does not return application/pdf", path)
+		}
+		if !hasParameter(operation.Parameters, "#/components/parameters/CompletedPDF") {
+			t.Errorf("%s does not expose the completed artifact parameter", path)
 		}
 	}
 }

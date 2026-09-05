@@ -118,10 +118,11 @@ func (m *Module) MigrateGoogleConnectionSecrets(ctx context.Context, legacyKey [
 func (*Module) Name() string { return "operations" }
 
 func (*Module) Manifest() platformmodules.Manifest {
-	return platformmodules.Manifest{Name: "operations", Navigation: []platformmodules.Navigation{{Path: "/communications", Label: "Inbox", Icon: "inbox"}, {Path: "/operations", Label: "Operations", Icon: "operations"}, {Path: "/settings", Label: "Settings", Icon: "settings"}}, Permissions: []string{"communications.send", "integrations.manage", "members.manage", "records.export"}, Resources: []string{"members", "apiCredentials", "pipelineStages", "notifications", "emailTemplates", "mailMetadata", "transactions", "attachments", "audit", "cloudflareConnections", "sendAsMappings", "tillerWebhookConnections", "tillerProductMappings", "voiceContactsConnections", "googleContactMappings"}, EventTypes: []string{"lead.created", "email.received", "email.sent", "transaction.imported", "cloudflare.domain_linked", "tiller.purchase_imported", "google_contact.synced"}, BackgroundJobs: []string{"gmail.sync", "tiller.sync", "google-contact.sync"}, SearchProviders: []string{"mail", "transactions"}, DocumentLinkTargets: []string{"attachment"}}
+	return platformmodules.Manifest{Name: "operations", Navigation: []platformmodules.Navigation{{Path: "/communications", Label: "Inbox", Icon: "inbox"}, {Path: "/operations", Label: "Operations", Icon: "operations"}, {Path: "/settings", Label: "Settings", Icon: "settings"}}, Permissions: []string{"communications.send", "integrations.manage", "members.manage", "records.export"}, Resources: []string{"members", "apiCredentials", "pipelineStages", "notifications", "emailTemplates", "mailMetadata", "transactions", "attachments", "audit", "cloudflareConnections", "sendAsMappings", "tillerWebhookConnections", "tillerProductMappings", "voiceContactsConnections", "googleContactMappings", "signingRequests"}, EventTypes: []string{"lead.created", "email.received", "email.sent", "transaction.imported", "cloudflare.domain_linked", "tiller.purchase_imported", "google_contact.synced"}, BackgroundJobs: []string{"gmail.sync", "tiller.sync", "google-contact.sync"}, SearchProviders: []string{"mail", "transactions"}, DocumentLinkTargets: []string{"attachment"}}
 }
 
 func (m *Module) RegisterRoutes(mux *http.ServeMux) {
+	m.registerSigningRoutes(mux)
 	mux.HandleFunc("POST /api/v1/intake/contact", m.intakeContact)
 	mux.HandleFunc("GET /api/v1/members", m.members)
 	mux.HandleFunc("PATCH /api/v1/members/{id}", m.updateMember)
