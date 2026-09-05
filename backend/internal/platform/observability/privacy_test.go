@@ -81,6 +81,9 @@ func TestSetupRedactsSDKTelemetryAtOTLPExport(t *testing.T) {
 			attribute.String("url.path", "/api/v1/signing/private-request-id/complete"),
 			attribute.String("url.full", "https://kosmos.example/api/v1/signing/private-request-id/complete?token=private-token"),
 			attribute.String("client.address", "192.0.2.123"),
+			attribute.String("user_agent.original", "PrivateBrowser/42"),
+			attribute.String("http.request.header.x_kosmos_signer_evidence", "private-signer-envelope"),
+			attribute.String("http.request.header.x_kosmos_signer_signature", "private-signer-signature"),
 			attribute.String("rpc.service", "google.firestore.v1.Firestore"),
 			attribute.Int("custom.retry_count", 2),
 		),
@@ -134,7 +137,7 @@ func TestSetupRedactsSDKTelemetryAtOTLPExport(t *testing.T) {
 	if len(exported) != 4 {
 		t.Fatalf("exported %d spans, want parent and three outgoing SDK HTTP spans", len(exported))
 	}
-	for _, value := range []string{"private-request-id", "private-token", "private-fragment", "private-user", "private-password", "192.0.2.123", "nerds-who-fish", "original.pdf", "name=", "uploadType", "exception.message", "exception.stacktrace"} {
+	for _, value := range []string{"private-request-id", "private-token", "private-fragment", "private-user", "private-password", "192.0.2.123", "PrivateBrowser/42", "private-signer-envelope", "private-signer-signature", "nerds-who-fish", "original.pdf", "name=", "uploadType", "exception.message", "exception.stacktrace"} {
 		if strings.Contains(encoded.String(), value) {
 			t.Errorf("OTLP export leaked %q", value)
 		}

@@ -53,31 +53,32 @@ type SigningEvent struct {
 }
 
 type SigningRequest struct {
-	ID                  string         `json:"id" firestore:"id"`
-	Title               string         `json:"title" firestore:"title"`
-	FileName            string         `json:"fileName" firestore:"fileName"`
-	Status              string         `json:"status" firestore:"status"`
-	Pages               []SigningPage  `json:"pages" firestore:"pages"`
-	Fields              []SigningField `json:"fields" firestore:"fields"`
-	Revision            int            `json:"revision" firestore:"revision"`
-	SignerName          string         `json:"signerName" firestore:"signerName"`
-	CompletedSignerName string         `json:"completedSignerName,omitempty" firestore:"completedSignerName,omitempty"`
-	SignerEmail         string         `json:"signerEmail" firestore:"signerEmail"`
-	CreatedAt           time.Time      `json:"createdAt" firestore:"createdAt"`
-	UpdatedAt           time.Time      `json:"updatedAt" firestore:"updatedAt"`
-	ExpiresAt           *time.Time     `json:"expiresAt,omitempty" firestore:"expiresAt,omitempty"`
-	CompletedAt         *time.Time     `json:"completedAt,omitempty" firestore:"completedAt,omitempty"`
-	OriginalSHA256      string         `json:"originalSHA256" firestore:"originalSHA256"`
-	UploadedSHA256      string         `json:"uploadedSHA256,omitempty" firestore:"uploadedSHA256,omitempty"`
-	Flattened           bool           `json:"flattened,omitempty" firestore:"flattened,omitempty"`
-	SignedSHA256        string         `json:"signedSHA256,omitempty" firestore:"signedSHA256,omitempty"`
-	Events              []SigningEvent `json:"events" firestore:"events"`
-	Consent             string         `json:"consent,omitempty" firestore:"consent,omitempty"`
-	OriginalObject      string         `json:"-" firestore:"originalObject"`
-	UploadedObject      string         `json:"-" firestore:"uploadedObject,omitempty"`
-	SignedObject        string         `json:"-" firestore:"signedObject,omitempty"`
-	TokenHash           string         `json:"-" firestore:"tokenHash,omitempty"`
-	CreatedBy           string         `json:"-" firestore:"createdBy"`
+	ID                  string          `json:"id" firestore:"id"`
+	Title               string          `json:"title" firestore:"title"`
+	FileName            string          `json:"fileName" firestore:"fileName"`
+	Status              string          `json:"status" firestore:"status"`
+	Pages               []SigningPage   `json:"pages" firestore:"pages"`
+	Fields              []SigningField  `json:"fields" firestore:"fields"`
+	Revision            int             `json:"revision" firestore:"revision"`
+	SignerName          string          `json:"signerName" firestore:"signerName"`
+	CompletedSignerName string          `json:"completedSignerName,omitempty" firestore:"completedSignerName,omitempty"`
+	SignerEmail         string          `json:"signerEmail" firestore:"signerEmail"`
+	CreatedAt           time.Time       `json:"createdAt" firestore:"createdAt"`
+	UpdatedAt           time.Time       `json:"updatedAt" firestore:"updatedAt"`
+	ExpiresAt           *time.Time      `json:"expiresAt,omitempty" firestore:"expiresAt,omitempty"`
+	CompletedAt         *time.Time      `json:"completedAt,omitempty" firestore:"completedAt,omitempty"`
+	OriginalSHA256      string          `json:"originalSHA256" firestore:"originalSHA256"`
+	UploadedSHA256      string          `json:"uploadedSHA256,omitempty" firestore:"uploadedSHA256,omitempty"`
+	Flattened           bool            `json:"flattened,omitempty" firestore:"flattened,omitempty"`
+	SignedSHA256        string          `json:"signedSHA256,omitempty" firestore:"signedSHA256,omitempty"`
+	Events              []SigningEvent  `json:"events" firestore:"events"`
+	Consent             string          `json:"consent,omitempty" firestore:"consent,omitempty"`
+	Session             *SigningSession `json:"session,omitempty" firestore:"session,omitempty"`
+	OriginalObject      string          `json:"-" firestore:"originalObject"`
+	UploadedObject      string          `json:"-" firestore:"uploadedObject,omitempty"`
+	SignedObject        string          `json:"-" firestore:"signedObject,omitempty"`
+	TokenHash           string          `json:"-" firestore:"tokenHash,omitempty"`
+	CreatedBy           string          `json:"-" firestore:"createdBy"`
 }
 
 func (m *Module) registerSigningRoutes(mux *http.ServeMux) {
@@ -560,6 +561,12 @@ func (m *Module) completeSigningRequest(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	session, err := captureSigningSession(r, m.intakeSigningKey, m.verifySignedIntake, now)
+	if err != nil {
+		writeError(w, 403, "signing_session_unverified", "Signing session could not be verified. Reload the signing page and try again.")
+		return
+	}
+	item.Session = &session
 	source, err := m.blobs.Open(ctx, item.OriginalObject)
 	if err != nil {
 		signingFailure(w)
@@ -571,7 +578,7 @@ func (m *Module) completeSigningRequest(w http.ResponseWriter, r *http.Request) 
 		signingFailure(w)
 		return
 	}
-	certificate := SigningCertificate{ID: item.ID, DocumentTitle: item.Title, SignerName: input.SignerName, SignerEmail: item.SignerEmail, OriginalSHA256: item.OriginalSHA256, UploadedSHA256: item.UploadedSHA256, SignedAt: now, Consent: signingConsent}
+	certificate := SigningCertificate{ID: item.ID, DocumentTitle: item.Title, SignerName: input.SignerName, SignerEmail: item.SignerEmail, OriginalSHA256: item.OriginalSHA256, UploadedSHA256: item.UploadedSHA256, SignedAt: now, Consent: signingConsent, Session: &session}
 	output, err := renderSigningPDF(data, item.Fields, values, certificate)
 	if err != nil {
 		writeError(w, 400, "signing_render_failed", err.Error())
@@ -596,7 +603,8 @@ func (m *Module) completeSigningRequest(w http.ResponseWriter, r *http.Request) 
 		signingFailure(w)
 		return
 	}
-	err = store.ReplaceSigningRequest(ctx, m.publicScope, item.Revision, "pending", itemWithNextRevision(item))
+	completed := itemWithNextRevision(item)
+	err = store.ReplaceSigningRequest(ctx, m.publicScope, item.Revision, "pending", completed)
 	if err != nil {
 		// A timeout may follow a committed transaction. Never delete its winning PDF.
 		var current SigningRequest
@@ -618,7 +626,7 @@ func (m *Module) completeSigningRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	slog.InfoContext(ctx, "document signing completed")
-	writeJSON(w, 200, itemWithNextRevision(item))
+	writeJSON(w, 200, completed)
 }
 
 func (m *Module) cleanupSigningObject(ctx context.Context, scope, id, object string) {

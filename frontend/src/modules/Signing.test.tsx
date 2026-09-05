@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +20,7 @@ import {
   signingCredential,
   type SigningField,
   type SigningRequest,
+  type SigningSession,
 } from "./signingApi";
 
 vi.mock("../components/SigningPDF", () => ({
@@ -73,6 +75,12 @@ const pending: SigningRequest = {
   ],
 };
 const token = "a".repeat(64);
+const signingSession: SigningSession = {
+  ipAddress: "2001:db8::42",
+  userAgent: "Mozilla/5.0 Example Browser/1.0",
+  capturedAt: "2026-09-05T14:25:30Z",
+  source: "direct",
+};
 
 beforeEach(() => {
   window.history.replaceState({}, "", `/sign#request-1.${token}`);
@@ -87,6 +95,36 @@ afterEach(() => {
 });
 
 describe("signing setup", () => {
+  it.each([
+    { session: signingSession, location: "Unknown" },
+    { session: { ...signingSession, city: "Richmond", region: "Virginia", country: "US", source: "cloudflare" }, location: "Richmond, Virginia, US" },
+  ])("shows completed session evidence with location $location", async ({ session, location }) => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...draft, status: "completed", session })));
+    render(<Signing id="request-1" navigate={vi.fn()} />);
+    const card = await screen.findByRole("region", { name: "Signing session" });
+    expect(within(card).getByText("2001:db8::42")).toBeInTheDocument();
+    expect(within(card).getByText(location)).toBeInTheDocument();
+    expect(card.querySelector("time")).toHaveAttribute("datetime", signingSession.capturedAt);
+    expect(card).toHaveTextContent("Location is approximate and browser details are self-reported.");
+    expect(card).toHaveTextContent("This record is not proof of identity.");
+  });
+
+  it("renders raw browser details as inert text", async () => {
+    const browser = '<img data-attacker="true" src=x onerror="alert(1)">';
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...draft, status: "completed", session: { ...signingSession, userAgent: browser } })));
+    const { container } = render(<Signing id="request-1" navigate={vi.fn()} />);
+    fireEvent.click(await screen.findByText("Browser-reported details"));
+    expect(screen.getByText(browser)).toBeInTheDocument();
+    expect(container.querySelector("[data-attacker]")).toBeNull();
+  });
+
+  it("keeps older completed records readable without session evidence", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...draft, status: "completed" })));
+    render(<Signing id="request-1" navigate={vi.fn()} />);
+    expect(await screen.findByRole("heading", { name: "Signed, sealed, saved." })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Signing session" })).not.toBeInTheDocument();
+  });
+
   it("keeps the upload busy during preparation and preserves the draft when preparation fails", async () => {
     let rejectUpload!: (reason: Error) => void;
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -281,6 +319,15 @@ describe("signing setup", () => {
 });
 
 describe("customer signing", () => {
+  it("discloses recorded connection details before consent and describes them to screen readers", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(pending)));
+    render(<PublicSigning />);
+    const checkbox = await screen.findByRole("checkbox", { name: consentText });
+    expect(checkbox).toHaveAccessibleDescription("Your IP address, browser details, and approximate location will be recorded with your signature and shared with the sender.");
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Agree & finish signing" })).toBeDisabled();
+  });
+
   it("lets a customer review the prepared document without exposing the raw upload", async () => {
     const download = vi.spyOn(signingApi, "downloadPDF").mockResolvedValue();
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...pending, flattened: true })));

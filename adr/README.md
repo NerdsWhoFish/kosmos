@@ -20,3 +20,4 @@
 | [0016](0016-authenticate-intake-client-addresses-at-the-ingress-proxy.md) | Authenticate intake client addresses at the ingress proxy | Signed edge addresses and transactional Firestore quotas enforce public intake limits across Cloud Run instances. |
 | [0017](0017-embed-single-recipient-electronic-signing-in-kosmos.md) | Embed single recipient electronic signing in Kosmos | Immutable PDFs and expiring possession links support one signer without another service. |
 | [0018](0018-prepare-unsupported-signing-pdfs-as-static-page-images.md) | Prepare unsupported signing PDFs as static page images | Sandboxed PDFium prepares compatible signing copies while retaining the uploaded bytes and both hashes. |
+| [0019](0019-record-completion-session-evidence-from-authenticated-ingres.md) | Record completion session evidence from authenticated ingress metadata | Save bounded IP, browser, and approximate edge location once with the winning signed document. |

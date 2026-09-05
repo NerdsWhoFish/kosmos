@@ -74,11 +74,12 @@ func TestFlattenedSigningUploadRetainsSourceAndSignsPreparedCopy(t *testing.T) {
 
 func TestSigningCertificateIdentifiesUploadedAndReviewedDocuments(t *testing.T) {
 	certificate := signingPDFTestCertificate()
-	certificate.UploadedSHA256 = strings.Repeat("a", 64)
-	content, err := signingCertificateContent(certificate)
+	certificate.UploadedSHA256 = strings.Repeat("b", 64)
+	pages, err := signingCertificatePages(certificate)
 	if err != nil {
 		t.Fatal(err)
 	}
+	content := bytes.Join(pages, nil)
 	for _, hash := range []string{certificate.OriginalSHA256, certificate.UploadedSHA256} {
 		if !bytes.Contains(content, []byte(hex.EncodeToString([]byte(hash)))) {
 			t.Fatal("signing record omitted a document hash")

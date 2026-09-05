@@ -6,6 +6,7 @@ import { SigningPDF } from "../components/SigningPDF";
 import { shortDate } from "../api";
 import { boundedField, downloadPDF, fieldLabels, signingAPI, signingError as errorMessage, type SigningField, type SigningRequest } from "./signingApi";
 import { FieldOverlay, PageControls, Status } from "./SigningFields";
+import { SigningSessionDetails } from "./SigningSessionDetails";
 
 const endpoint = "/api/v1/signing-requests";
 
@@ -429,7 +430,7 @@ export function SigningEditor({
               </form>
             </>
           ) : (
-            <section className="signing-card">
+            <section className="signing-card signing-request-summary">
               <p className="eyebrow">Signing request</p>
               <h2>
                 {request.status === "completed"
@@ -552,6 +553,9 @@ export function SigningEditor({
                 </>
               )}
             </section>
+          )}
+          {request.status === "completed" && request.session && (
+            <SigningSessionDetails session={request.session} />
           )}
         </aside>
       </div>

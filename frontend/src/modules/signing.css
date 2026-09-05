@@ -437,6 +437,37 @@
 .signing-complete .primary-button {
   margin: 20px auto 0;
 }
+.signing-request-summary {
+  grid-column: 1 / -1;
+}
+.signing-session dl {
+  display: grid;
+  gap: 18px;
+  margin: 22px 0;
+}
+.signing-session dt {
+  color: var(--theme-muted);
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+.signing-session dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.signing-session summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-size: 14px;
+}
+.signing-session .signing-session-browser {
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--theme-background);
+}
 .public-signing button:disabled,
 .signing-card button:disabled {
   opacity: 0.5;

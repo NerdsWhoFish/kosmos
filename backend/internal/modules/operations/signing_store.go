@@ -21,6 +21,10 @@ func cloneSigningRequest(request SigningRequest) SigningRequest {
 	request.Pages = append([]SigningPage(nil), request.Pages...)
 	request.Fields = append([]SigningField{}, request.Fields...)
 	request.Events = append([]SigningEvent(nil), request.Events...)
+	if request.Session != nil {
+		session := *request.Session
+		request.Session = &session
+	}
 	return request
 }
 
