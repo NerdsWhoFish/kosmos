@@ -27,6 +27,7 @@ import remarkGfm from "remark-gfm";
 import {
   Account,
   api,
+  APIRequestError,
   Attachment,
   Contact,
   Cost,
@@ -40,9 +41,15 @@ import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
 import { WorkflowPage } from "../components/WorkflowPage";
 import { ResourceRoute } from "../routing";
+import { useAsyncLoad } from "../useAsyncLoad";
 
 type LinkOption = RecordLink & { label: string };
-type Draft = { title: string; body: string; links: RecordLink[] };
+type Draft = {
+  title: string;
+  body: string;
+  links: RecordLink[];
+  expectedRevision?: number;
+};
 
 const editorTheme = EditorView.theme(
   {
@@ -92,9 +99,10 @@ export function Documents({
 }) {
   const [items, setItems] = useState<Document[]>([]);
   const [draft, setDraft] = useState<Draft>({ title: "", body: "", links: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { loading, error, run } = useAsyncLoad();
   const [formError, setFormError] = useState("");
+  const [conflict, setConflict] = useState(false);
+  const [latest, setLatest] = useState<Document | null>(null);
   const [saving, setSaving] = useState(false);
   const [revisions, setRevisions] = useState<DocumentRevision[]>([]);
   const [linkOptions, setLinkOptions] = useState<LinkOption[]>([]);
@@ -105,15 +113,15 @@ export function Documents({
   const selected = items.find((item) => item.id === route.id);
 
   const load = useCallback(() => {
-    setLoading(true);
-    Promise.all([
-      api<{ documents: Document[] }>("/api/v1/documents"),
-      api<{ accounts: Account[] }>("/api/v1/accounts"),
-      api<{ contacts: Contact[] }>("/api/v1/contacts"),
-      api<{ opportunities: Opportunity[] }>("/api/v1/opportunities"),
-      api<{ costs: Cost[] }>("/api/v1/costs"),
-    ])
-      .then(([documents, accounts, contacts, opportunities, costs]) => {
+    void run(
+      () => Promise.all([
+        api<{ documents: Document[] }>("/api/v1/documents"),
+        api<{ accounts: Account[] }>("/api/v1/accounts"),
+        api<{ contacts: Contact[] }>("/api/v1/contacts"),
+        api<{ opportunities: Opportunity[] }>("/api/v1/opportunities"),
+        api<{ costs: Cost[] }>("/api/v1/costs"),
+      ]),
+      ([documents, accounts, contacts, opportunities, costs]) => {
         setItems(documents.documents);
         setLinkOptions([
           ...accounts.accounts.map((item) => ({
@@ -142,10 +150,9 @@ export function Documents({
             label: item.title,
           })),
         ]);
-      })
-      .catch((reason: Error) => setError(reason.message))
-      .finally(() => setLoading(false));
-  }, []);
+      },
+    );
+  }, [run]);
 
   useEffect(load, [load]);
   useEffect(() => {
@@ -175,6 +182,8 @@ export function Documents({
   }, [route.id]);
 
   useEffect(() => {
+    setConflict(false);
+    setLatest(null);
     if (route.action === "new") {
       setDraft({
         title: "",
@@ -187,6 +196,7 @@ export function Documents({
         title: selected.title,
         body: selected.body,
         links: selected.links ?? [],
+        expectedRevision: selected.revision,
       });
       setFormError("");
     }
@@ -224,12 +234,45 @@ export function Documents({
       );
       navigate(`/documents/${saved.id}`);
     } catch (reason) {
+      if (reason instanceof APIRequestError && reason.code === "document_conflict") {
+        setConflict(true);
+        setLatest(null);
+      }
       setFormError(
         reason instanceof Error ? reason.message : "Could not save document",
       );
     } finally {
       setSaving(false);
     }
+  }
+
+  async function reviewLatest() {
+    setSaving(true);
+    try {
+      const response = await api<{ documents: Document[] }>("/api/v1/documents");
+      const document = response.documents.find((item) => item.id === selected?.id);
+      if (!document) {
+        throw new Error("This document no longer exists. Your draft is still here so you can copy it.");
+      }
+      setLatest(document);
+    } catch (reason) {
+      setFormError(
+        reason instanceof Error ? reason.message : "Could not load the latest version. Try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function resolveConflict(keepDraft: boolean) {
+    if (!latest) return;
+    setDraft((current) => ({
+      ...(keepDraft ? current : { title: latest.title, body: latest.body, links: latest.links ?? [] }),
+      expectedRevision: latest.revision,
+    }));
+    setConflict(false);
+    setFormError("");
+    setLatest(null);
   }
 
   async function deleteDocument() {
@@ -316,6 +359,11 @@ export function Documents({
         )}
         saving={saving}
         error={formError}
+        conflict={conflict}
+        latest={latest}
+        attachments={attachments}
+        onReviewLatest={reviewLatest}
+        onResolveConflict={resolveConflict}
         onDraft={setDraft}
         onSave={save}
         onClose={() =>
@@ -525,6 +573,11 @@ function DocumentEditor({
   options,
   saving,
   error,
+  conflict,
+  latest,
+  attachments,
+  onReviewLatest,
+  onResolveConflict,
   onDraft,
   onSave,
   onClose,
@@ -534,6 +587,11 @@ function DocumentEditor({
   options: LinkOption[];
   saving: boolean;
   error: string;
+  conflict: boolean;
+  latest: Document | null;
+  attachments: Attachment[];
+  onReviewLatest: () => void;
+  onResolveConflict: (keepDraft: boolean) => void;
   onDraft: (draft: Draft) => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
   onClose: () => void;
@@ -570,7 +628,7 @@ function DocumentEditor({
               >
                 Cancel
               </button>
-              <button className="primary-button" disabled={saving}>
+              <button className="primary-button" disabled={saving || conflict}>
                 <Save size={16} />{" "}
                 {saving
                   ? "Saving..."
@@ -623,6 +681,38 @@ function DocumentEditor({
               <code>[Download file](guide.pdf)</code>.
             </small>
           </footer>
+          {conflict && (
+            <section className="panel document-conflict" aria-label="Resolve document conflict">
+              <p>Your draft is preserved. Review the latest saved version before saving again.</p>
+              {!latest ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={saving}
+                  onClick={onReviewLatest}
+                >
+                  {saving ? "Loading latest version..." : "Review latest version"}
+                </button>
+              ) : (
+                <>
+                  <h3>Saved revision {latest.revision}: {latest.title}</h3>
+                  <p>Linked records: {latest.links?.map((link) => linkLabel(link, options)).join(", ") || "None"}</p>
+                  <div className="markdown" role="region" aria-label="Latest saved document" tabIndex={0}>
+                    <EmbeddedMarkdown body={latest.body} attachments={attachments} />
+                  </div>
+                  <p>Keeping your edits replaces this version on your next save. Previous versions remain in history.</p>
+                  <div className="form-actions">
+                    <button type="button" className="secondary-button" onClick={() => onResolveConflict(false)}>
+                      Discard my draft and use latest
+                    </button>
+                    <button type="button" className="primary-button" onClick={() => onResolveConflict(true)}>
+                      Keep my edits
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
         </form>
       </div>
     </WorkflowPage>

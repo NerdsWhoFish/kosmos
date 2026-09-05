@@ -86,6 +86,29 @@ variable "integration_secret_version" {
   }
 }
 
+variable "intake_secret_value" {
+  description = "Dedicated client-address signing key shared with the ingress proxy. Supplied write-only and never persisted in state."
+  type        = string
+  sensitive   = true
+  ephemeral   = true
+
+  validation {
+    condition     = length(var.intake_secret_value) >= 32
+    error_message = "intake_secret_value must contain at least 32 characters."
+  }
+}
+
+variable "intake_secret_version" {
+  description = "Monotonic write-only version used to rotate the intake signing key."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.intake_secret_version >= 1 && floor(var.intake_secret_version) == var.intake_secret_version
+    error_message = "intake_secret_version must be a positive integer."
+  }
+}
+
 variable "service_name" {
   description = "Cloud Run service name."
   type        = string

@@ -22,10 +22,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status]
+                required: [status, version]
                 properties:
                   status:
                     const: ok
+                  version:
+                    type: string
   /config:
     get:
       operationId: getPublicConfig
@@ -37,11 +39,13 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [faroURL, faroAppName]
+                required: [faroURL, faroAppName, faroVersion]
                 properties:
                   faroURL:
                     type: string
                   faroAppName:
+                    type: string
+                  faroVersion:
                     type: string
   /me:
     get:
@@ -381,9 +385,13 @@ paths:
         '201':
           description: Lead received
         '202':
-          description: Duplicate or spam submission safely accepted
+          description: Inquiry retained for an existing contact, or spam submission ignored
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '429':
           description: Per-source rate limit exceeded
+        '503':
+          description: Rate limit storage unavailable
   /contacts/{id}:
     parameters:
       - $ref: '#/components/parameters/RecordID'
@@ -657,6 +665,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Document'
+        '409':
+          description: The expected revision is stale; reload the latest document before merging the draft
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -2466,6 +2476,10 @@ components:
     DocumentPatch:
       type: object
       properties:
+        expectedRevision:
+          type: integer
+          minimum: 1
+          description: Revision being edited. A stale value returns 409 without changing the document or its history.
         title:
           type: string
           maxLength: 200

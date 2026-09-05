@@ -17,12 +17,14 @@ locals {
     google_client_secret  = "${local.name_prefix}-google-client-secret"
     session_secret        = "${local.name_prefix}-session-secret"
     integration_secret    = "${local.name_prefix}-integration-secret"
+    intake_secret         = "${local.name_prefix}-intake-secret"
     otel_exporter_headers = "${local.name_prefix}-otel-exporter-headers"
   }
   web_secret_environment = merge(
     {
       KOSMOS_SESSION_SECRET     = "session_secret"
       KOSMOS_INTEGRATION_SECRET = "integration_secret"
+      KOSMOS_INTAKE_SECRET      = "intake_secret"
     },
     var.google_client_id == null ? {} : { GOOGLE_CLIENT_SECRET = "google_client_secret" },
     var.otel_exporter_otlp_endpoint == null ? {} : { OTEL_EXPORTER_OTLP_HEADERS = "otel_exporter_headers" },
@@ -149,6 +151,16 @@ resource "google_firestore_database" "kosmos" {
   delete_protection_state           = "DELETE_PROTECTION_ENABLED"
 
   depends_on = [google_project_service.required]
+}
+
+resource "google_firestore_field" "intake_expiry" {
+  project    = var.project_id
+  database   = google_firestore_database.kosmos.name
+  collection = "intakeRateLimits"
+  field      = "expiresAt"
+
+  ttl_config {}
+  index_config {}
 }
 
 resource "google_firestore_index" "pagination" {
@@ -343,6 +355,12 @@ resource "google_secret_manager_secret_version" "integration" {
   secret_data_wo_version = var.integration_secret_version
 }
 
+resource "google_secret_manager_secret_version" "intake" {
+  secret                 = google_secret_manager_secret.runtime["intake_secret"].id
+  secret_data_wo         = var.intake_secret_value
+  secret_data_wo_version = var.intake_secret_version
+}
+
 resource "google_secret_manager_secret_iam_member" "runtime" {
   for_each = google_secret_manager_secret.runtime
 
@@ -425,6 +443,7 @@ resource "google_cloud_run_v2_service" "kosmos" {
     google_secret_manager_secret_iam_member.runtime,
     google_secret_manager_secret_version.integration,
     google_storage_bucket_iam_member.runtime_attachments,
+    google_secret_manager_secret_version.intake,
   ]
 }
 

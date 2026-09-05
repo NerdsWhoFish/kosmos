@@ -325,7 +325,17 @@ export type ModuleManifest = {
 };
 export type AcceptedJob = { id: string; status: "accepted" };
 
-type APIError = { error?: string | { message?: string } };
+type APIError = { error?: string | { message?: string; code?: string } };
+export class APIRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code?: string,
+  ) {
+    super(message);
+    this.name = "APIRequestError";
+  }
+}
 export type PageMetadata = { limit?: number; nextCursor?: string };
 type PaginatedBody = Record<string, unknown> & { page: PageMetadata };
 
@@ -356,8 +366,10 @@ async function fetchJSON<T>(path: string, init: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   if (!response.ok) {
     let message = `Request failed with status ${response.status}`;
+    let code: string | undefined;
     try {
       const body = (await response.json()) as APIError;
+      if (typeof body.error === "object") code = body.error?.code;
       message =
         typeof body.error === "string"
           ? body.error
@@ -365,7 +377,7 @@ async function fetchJSON<T>(path: string, init: RequestInit): Promise<T> {
     } catch {
       message = response.status === 401 ? "Please sign in again." : message;
     }
-    throw new Error(message);
+    throw new APIRequestError(message, response.status, code);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

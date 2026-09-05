@@ -3,15 +3,14 @@ import { ArrowUpRight, Search } from 'lucide-react'
 import { api, SearchResult } from '../api'
 import { Page } from '../components/Page'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
+import { useAsyncLoad } from '../useAsyncLoad'
 
 export function SearchResults({ query, navigate }: { query: string; navigate: (path: string) => void }) {
   const [items, setItems] = useState<SearchResult[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const { loading, error, run } = useAsyncLoad()
   const load = useCallback(() => {
-    setLoading(true)
-    api<{ results: SearchResult[] }>(`/api/v1/search?q=${encodeURIComponent(query)}`).then((response) => setItems(response.results)).catch((reason: Error) => setError(reason.message)).finally(() => setLoading(false))
-  }, [query])
+    void run(() => api<{ results: SearchResult[] }>(`/api/v1/search?q=${encodeURIComponent(query)}`), (response) => setItems(response.results))
+  }, [query, run])
   useEffect(load, [load])
   if (loading) return <LoadingState label="Searching Kosmos" />
   if (error) return <ErrorState message={error} retry={load} />

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
-	"net/mail"
 	"strings"
 	"time"
 
@@ -114,34 +113,36 @@ func (p LiveGoogleProvider) RecentMail(ctx context.Context, token *oauth2.Token,
 	if err != nil {
 		return nil, err
 	}
-	listing, err := service.Users.Messages.List("me").LabelIds("INBOX").MaxResults(50).Do()
+	items := make([]MailMetadata, 0)
+	err = service.Users.Messages.List("me").LabelIds("INBOX").MaxResults(50).Pages(ctx, func(listing *gmail.ListMessagesResponse) error {
+		for _, summary := range listing.Messages {
+			message, err := service.Users.Messages.Get("me", summary.Id).Format("metadata").MetadataHeaders("From", "Subject").Context(ctx).Do()
+			if isGoogleNotFound(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			item := MailMetadata{ID: message.Id, ThreadID: message.ThreadId, Snippet: message.Snippet, ReceivedAt: time.UnixMilli(message.InternalDate).UTC(), CreatedAt: time.Now().UTC()}
+			if !item.ReceivedAt.After(since) {
+				continue
+			}
+			if message.Payload != nil {
+				for _, header := range message.Payload.Headers {
+					switch strings.ToLower(header.Name) {
+					case "from":
+						item.From = header.Value
+					case "subject":
+						item.Subject = header.Value
+					}
+				}
+			}
+			items = append(items, item)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	items := make([]MailMetadata, 0, len(listing.Messages))
-	for _, summary := range listing.Messages {
-		message, err := service.Users.Messages.Get("me", summary.Id).Format("metadata").MetadataHeaders("From", "Subject", "Date").Do()
-		if err != nil {
-			return nil, err
-		}
-		item := MailMetadata{ID: message.Id, ThreadID: message.ThreadId, Snippet: message.Snippet, CreatedAt: time.Now().UTC()}
-		for _, header := range message.Payload.Headers {
-			switch strings.ToLower(header.Name) {
-			case "from":
-				item.From = header.Value
-			case "subject":
-				item.Subject = header.Value
-			case "date":
-				item.ReceivedAt, _ = mail.ParseDate(header.Value)
-			}
-		}
-		if item.ReceivedAt.IsZero() {
-			item.ReceivedAt = time.UnixMilli(message.InternalDate).UTC()
-		}
-		if !item.ReceivedAt.After(since) {
-			continue
-		}
-		items = append(items, item)
 	}
 	return items, nil
 }

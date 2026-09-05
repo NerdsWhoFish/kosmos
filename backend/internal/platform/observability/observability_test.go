@@ -9,8 +9,33 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
+
+func TestSetupPropagatesTraceContextAndBaggage(t *testing.T) {
+	previous := otel.GetTextMapPropagator()
+	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	_, shutdown, err := Setup(context.Background(), slog.NewJSONHandler(&bytes.Buffer{}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shutdown(context.Background())
+	traceparent := "00-01000000000000000000000000000000-0200000000000000-01"
+	incoming := propagation.MapCarrier{"traceparent": traceparent, "baggage": "workflow=sync"}
+	ctx := otel.GetTextMapPropagator().Extract(context.Background(), incoming)
+	if !trace.SpanContextFromContext(ctx).IsRemote() || baggage.FromContext(ctx).Member("workflow").Value() != "sync" {
+		t.Fatal("inbound trace or baggage was not extracted")
+	}
+	outgoing := propagation.MapCarrier{}
+	otel.GetTextMapPropagator().Inject(ctx, outgoing)
+	if outgoing.Get("traceparent") != traceparent || outgoing.Get("baggage") != "workflow=sync" {
+		t.Fatalf("outbound propagation = %v", outgoing)
+	}
+}
 
 func TestSetupWithoutExporterUsesFallback(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")

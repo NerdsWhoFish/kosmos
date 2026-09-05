@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -19,12 +20,18 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-func Setup(ctx context.Context, fallback slog.Handler) (*slog.Logger, func(context.Context) error, error) {
+func Setup(ctx context.Context, fallback slog.Handler, versions ...string) (*slog.Logger, func(context.Context) error, error) {
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
 		return slog.New(fallback), func(context.Context) error { return nil }, nil
 	}
-	res, err := resource.New(ctx, resource.WithAttributes(
+	version := "dev"
+	if len(versions) > 0 && versions[0] != "" {
+		version = versions[0]
+	}
+	res, err := resource.New(ctx, resource.WithFromEnv(), resource.WithAttributes(
 		semconv.ServiceName("kosmos"),
+		semconv.ServiceVersion(version),
 		semconv.DeploymentEnvironmentName(os.Getenv("KOSMOS_ENV")),
 	))
 	if err != nil {
@@ -80,6 +87,11 @@ func RequestLogger(logger *slog.Logger, next http.Handler) http.Handler {
 		started := time.Now()
 		captured := &responseCapture{ResponseWriter: response}
 		next.ServeHTTP(captured, request)
+		if request.Pattern != "" {
+			span := trace.SpanFromContext(request.Context())
+			span.SetName(request.Pattern)
+			span.SetAttributes(semconv.HTTPRoute(request.Pattern))
+		}
 		if request.Pattern == "GET /api/v1/health" {
 			return
 		}

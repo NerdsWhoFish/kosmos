@@ -164,7 +164,11 @@ func (s *FirestoreStore) CreateAccountWithContact(ctx context.Context, scope str
 		if err := tx.Create(s.collection(scope, "accounts").Doc(accountID), account); err != nil {
 			return err
 		}
-		return tx.Create(s.collection(scope, "contacts").Doc(contactID), contact)
+		if err := tx.Create(s.collection(scope, "contacts").Doc(contactID), contact); err != nil {
+			return err
+		}
+		mutationID, mutation := contactMutationData(contact, "upsert")
+		return tx.Set(s.collection(scope, "contactMutationOutbox").Doc(mutationID), mutation)
 	})
 	if err != nil {
 		return Account{}, Contact{}, err
@@ -250,11 +254,13 @@ func (s *FirestoreStore) DeleteAccount(ctx context.Context, scope, id string) ([
 	}
 
 	deletedContacts := make([]Contact, 0)
+	deletedContactsByID := make(map[string]Contact)
 	contactIDs := make(map[string]struct{})
 	deleteRefs := make([]*firestore.DocumentRef, 0)
 	for _, contact := range contacts {
 		if contact.AccountID == id {
 			deletedContacts = append(deletedContacts, contact)
+			deletedContactsByID[contact.ID] = contact
 			contactIDs[contact.ID] = struct{}{}
 			deleteRefs = append(deleteRefs, s.collection(scope, "contacts").Doc(contact.ID))
 		}
@@ -329,6 +335,16 @@ func (s *FirestoreStore) DeleteAccount(ctx context.Context, scope, id string) ([
 		}
 	}
 	for _, ref := range deleteRefs {
+		if ref.Parent.ID == "contacts" {
+			if writeCount > batchLimit-2 {
+				if err := commit(); err != nil {
+					return nil, err
+				}
+			}
+			mutationID, mutation := contactMutationData(deletedContactsByID[ref.ID], "delete")
+			batch.Set(s.collection(scope, "contactMutationOutbox").Doc(mutationID), mutation)
+			writeCount++
+		}
 		batch.Delete(ref)
 		writeCount++
 		if writeCount == batchLimit {
@@ -490,33 +506,64 @@ func (s *FirestoreStore) GetContact(ctx context.Context, scope, id string) (Cont
 }
 
 func (s *FirestoreStore) CreateContact(ctx context.Context, scope string, item Contact) (Contact, error) {
-	return createRecord(ctx, s, scope, "contacts", item, func(item *Contact, id string, now time.Time) {
-		item.ID, item.CreatedAt, item.UpdatedAt = id, now, now
-	})
+	reference := s.collection(scope, "contacts").NewDoc()
+	now := time.Now().UTC()
+	item.ID, item.CreatedAt, item.UpdatedAt = reference.ID, now, now
+	mutationID, mutation := contactMutationData(item, "upsert")
+	batch := s.client.Batch()
+	batch.Create(reference, item)
+	batch.Set(s.collection(scope, "contactMutationOutbox").Doc(mutationID), mutation)
+	_, err := batch.Commit(ctx)
+	return item, err
 }
 
 func (s *FirestoreStore) UpdateContact(ctx context.Context, scope, id string, patch ContactPatch) (Contact, error) {
-	updates := make([]firestore.Update, 0, 6)
-	appendStringUpdate := func(path string, value *string) {
-		if value != nil {
-			updates = append(updates, firestore.Update{Path: path, Value: *value})
+	reference := s.collection(scope, "contacts").Doc(id)
+	var item Contact
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		snapshot, err := tx.Get(reference)
+		if status.Code(err) == codes.NotFound {
+			return errNotFound
 		}
-	}
-	appendStringUpdate("accountId", patch.AccountID)
-	appendStringUpdate("name", patch.Name)
-	appendStringUpdate("email", patch.Email)
-	appendStringUpdate("phone", patch.Phone)
-	appendStringUpdate("linkedinUrl", patch.LinkedInURL)
-	appendStringUpdate("source", patch.Source)
-	return updateRecord(ctx, s, scope, "contacts", id, updates, func(item *Contact, id string) { item.ID = id })
+		if err != nil {
+			return err
+		}
+		if err := snapshot.DataTo(&item); err != nil {
+			return err
+		}
+		item.ID = id
+		applyContactPatch(&item, patch)
+		item.UpdatedAt = time.Now().UTC()
+		if err := tx.Set(reference, item); err != nil {
+			return err
+		}
+		mutationID, mutation := contactMutationData(item, "upsert")
+		return tx.Set(s.collection(scope, "contactMutationOutbox").Doc(mutationID), mutation)
+	})
+	return item, err
 }
 
 func (s *FirestoreStore) DeleteContact(ctx context.Context, scope, id string) error {
-	_, err := s.collection(scope, "contacts").Doc(id).Delete(ctx, firestore.Exists)
-	if status.Code(err) == codes.NotFound || status.Code(err) == codes.FailedPrecondition {
-		return errNotFound
-	}
-	return err
+	reference := s.collection(scope, "contacts").Doc(id)
+	return s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		snapshot, err := tx.Get(reference)
+		if status.Code(err) == codes.NotFound {
+			return errNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var item Contact
+		if err := snapshot.DataTo(&item); err != nil {
+			return err
+		}
+		item.ID = id
+		if err := tx.Delete(reference); err != nil {
+			return err
+		}
+		mutationID, mutation := contactMutationData(item, "delete")
+		return tx.Set(s.collection(scope, "contactMutationOutbox").Doc(mutationID), mutation)
+	})
 }
 
 func (s *FirestoreStore) ListContactSources(ctx context.Context, scope string) ([]ContactSource, error) {
@@ -638,7 +685,7 @@ func (s *FirestoreStore) SyncManagedDocument(ctx context.Context, scope, sourceK
 			result = existing
 			return nil
 		}
-		revision := DocumentRevision{DocumentID: existing.ID, Title: existing.Title, Body: existing.Body, Links: existing.Links, Revision: existing.Revision, CreatedAt: now}
+		revision := documentSnapshot(existing, now)
 		if err := transaction.Create(s.collection(scope, "documentRevisions").NewDoc(), revision); err != nil {
 			return err
 		}
@@ -655,18 +702,34 @@ func (s *FirestoreStore) SyncManagedDocument(ctx context.Context, scope, sourceK
 }
 
 func (s *FirestoreStore) UpdateDocument(ctx context.Context, scope, id string, patch DocumentPatch) (Document, error) {
-	updates := make([]firestore.Update, 0, 2)
-	if patch.Title != nil {
-		updates = append(updates, firestore.Update{Path: "title", Value: *patch.Title})
-	}
-	if patch.Body != nil {
-		updates = append(updates, firestore.Update{Path: "body", Value: *patch.Body})
-	}
-	if patch.Links != nil {
-		updates = append(updates, firestore.Update{Path: "links", Value: *patch.Links})
-	}
-	updates = append(updates, firestore.Update{Path: "revision", Value: firestore.Increment(1)})
-	return updateRecord(ctx, s, scope, "documents", id, updates, func(item *Document, id string) { item.ID = id })
+	reference := s.collection(scope, "documents").Doc(id)
+	var result Document
+	err := s.client.RunTransaction(ctx, func(ctx context.Context, tx *firestore.Transaction) error {
+		snapshot, err := tx.Get(reference)
+		if status.Code(err) == codes.NotFound {
+			return errNotFound
+		}
+		if err != nil {
+			return err
+		}
+		var current Document
+		if err := snapshot.DataTo(&current); err != nil {
+			return err
+		}
+		current.ID = id
+		if patch.ExpectedRevision != nil && current.Revision != *patch.ExpectedRevision {
+			return ErrDocumentConflict
+		}
+		now := time.Now().UTC()
+		if err := tx.Create(s.collection(scope, "documentRevisions").NewDoc(), documentSnapshot(current, now)); err != nil {
+			return err
+		}
+		applyDocumentPatch(&current, patch)
+		current.UpdatedAt = now
+		result = current
+		return tx.Set(reference, current)
+	})
+	return result, err
 }
 
 func (s *FirestoreStore) DeleteDocument(ctx context.Context, scope, id string) error {

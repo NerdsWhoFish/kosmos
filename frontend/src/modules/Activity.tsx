@@ -11,6 +11,7 @@ import { Activity as ActivityRecord, api, Reminder, shortDate } from "../api";
 import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
 import { WorkflowPage } from "../components/WorkflowPage";
+import { useAsyncLoad } from "../useAsyncLoad";
 
 const reminderWindowMilliseconds = 7 * 24 * 60 * 60 * 1000;
 
@@ -23,21 +24,19 @@ export function Activity({
 }) {
   const [activities, setActivities] = useState<ActivityRecord[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { loading, error, setError, run } = useAsyncLoad();
   const load = useCallback(() => {
-    setLoading(true);
-    Promise.all([
-      api<{ activities: ActivityRecord[] }>("/api/v1/activities"),
-      api<{ reminders: Reminder[] }>("/api/v1/reminders"),
-    ])
-      .then(([activityResponse, reminderResponse]) => {
+    void run(
+      () => Promise.all([
+        api<{ activities: ActivityRecord[] }>("/api/v1/activities"),
+        api<{ reminders: Reminder[] }>("/api/v1/reminders"),
+      ]),
+      ([activityResponse, reminderResponse]) => {
         setActivities(activityResponse.activities);
         setReminders(reminderResponse.reminders);
-      })
-      .catch((reason: Error) => setError(reason.message))
-      .finally(() => setLoading(false));
-  }, []);
+      },
+    );
+  }, [run]);
   useEffect(load, [load]);
 
   async function complete(item: Reminder) {

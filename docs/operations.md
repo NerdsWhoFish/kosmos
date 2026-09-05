@@ -14,7 +14,9 @@ The shared Google Voice account is connected separately by an owner or administr
 
 ## Public contact form
 
-Submit JSON to `POST /api/v1/intake/contact` with `name`, `email`, and optional `company`, `phone`, `message`, and `source`. Include an empty `website` field as the honeypot. Kosmos validates size and email shape, deduplicates by email, records source attribution, and limits each client IP to five attempts per hour per Cloud Run instance. Cloudflare remains the global edge rate-limit boundary.
+Submit JSON to `POST /api/v1/intake/contact` with `name`, `email`, and optional `company`, `phone`, `message`, and `source`. Include an empty `website` field as the honeypot. Kosmos validates size and email shape, deduplicates contacts by email, and saves each inquiry as a linked activity, including messages from existing contacts.
+
+Production ingress must overwrite `X-Kosmos-Client-IP`, `X-Kosmos-Client-Time`, and `X-Kosmos-Client-Signature`. Sign `kosmos-intake-v1\n<unix-seconds>\n<canonical-IP>` with HMAC-SHA256 using the dedicated `KOSMOS_INTAKE_SECRET`, encoded as lowercase hex. The address uses canonical compressed IPv6 or IPv4, including unmapped IPv4-mapped addresses. The backend rejects missing, duplicate, or stale signatures outside a 60-second window and ignores caller forwarding headers. Shared Firestore quotas allow five attempts per IP per hour across all instances; database failures return 503. Expired `intakeRateLimits` documents are removed through `expiresAt` TTL.
 
 ## Gmail and Tiller
 
@@ -38,6 +40,10 @@ Manual Gmail, Google Contacts, and Tiller synchronization requests return HTTP 2
 
 List endpoints default to 50 records and accept `limit` values through 100 plus the opaque `cursor` returned by the previous response. The browser follows cursors automatically so every record remains reachable without a desktop-only or mobile-only paging workflow.
 
+Every contact mutation atomically records a durable synchronization intent, including deletion and account cascades. Dispatch failure leaves the intent pending. The worker removes it only after Google succeeds; scheduled and manual sync replay pending intents. Automatic recovery after exhausted queue retries waits for the next business-hours synchronization pass. Gmail traverses every inbox page without a search query and advances its checkpoint only after the complete pass succeeds.
+
+Interactive document updates commit the revision snapshot and new document together. Clients can send `expectedRevision`; a stale edit returns 409 without changing either. The browser preserves the draft and offers the latest saved version for reconciliation.
+
 ## Managed documents
 
 Use `PUT /api/v1/managed-documents/{sourceKey}` with a read-and-write API credential to publish one document from an external source. The source key accepts up to 128 letters, numbers, dots, underscores, or hyphens and deterministically identifies the Kosmos document. Send multipart form data with one `document` part containing `{"title":"...","body":"...","links":[]}` and zero or more repeated `files` parts.
@@ -50,7 +56,7 @@ Document source uses ordinary Markdown. Images use `![Description](assets/kosmos
 
 Attachments are private objects. Each upload is limited to 10 MB. Documents accept PDF, Markdown, plain text, JSON, CSS, SVG, JPEG, PNG, or WebP. Contact and account photos remain limited to JPEG, PNG, or WebP. Receipt records must link to a cost. Downloads require both an authenticated identity and an application-signed URL that expires after 15 minutes.
 
-Production buckets prevent public access, use uniform access control, retain object versions, and apply lifecycle cleanup. Firestore production enables point-in-time recovery. CSV exports for contacts and costs provide a portable copy before deletion or migration. Restore by selecting the desired Firestore recovery point and object generation, then verify organization ownership before serving traffic.
+Production buckets prevent public access, use uniform access control, retain object versions, and apply lifecycle cleanup. Firestore production enables point-in-time recovery. CSV exports for contacts and costs provide a portable copy before deletion or migration. Spreadsheet formula-like text receives a leading tab in the export; stored values remain unchanged. Restore by selecting the desired Firestore recovery point and object generation, then verify organization ownership before serving traffic.
 
 ## Deployment and observability
 

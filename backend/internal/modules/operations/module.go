@@ -21,7 +21,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/workspace"
@@ -52,6 +51,7 @@ type Workspace interface {
 	ListContacts(context.Context, string) ([]workspace.Contact, error)
 	GetContact(context.Context, string, string) (workspace.Contact, error)
 	CreateContact(context.Context, string, workspace.Contact) (workspace.Contact, error)
+	CreateActivity(context.Context, string, workspace.Activity) (workspace.Activity, error)
 	ListCosts(context.Context, string) ([]workspace.Cost, error)
 	CreateAccountEvent(context.Context, string, workspace.AccountEvent) (workspace.AccountEvent, error)
 	ListDocuments(context.Context, string) ([]workspace.Document, error)
@@ -59,20 +59,21 @@ type Workspace interface {
 }
 
 type Module struct {
-	store       Store
-	blobs       BlobStore
-	workspace   Workspace
-	identity    IdentityFunc
-	publicScope string
-	key         []byte
-	google      GoogleProvider
-	cloudflare  CloudflareProvider
-	jobs        JobQueue
-	limiter     *ipLimiter
+	store              Store
+	blobs              BlobStore
+	workspace          Workspace
+	identity           IdentityFunc
+	publicScope        string
+	key                []byte
+	google             GoogleProvider
+	cloudflare         CloudflareProvider
+	jobs               JobQueue
+	intakeSigningKey   []byte
+	verifySignedIntake bool
 }
 
 func NewModule(store Store, blobs BlobStore, workspaceStore Workspace, identity IdentityFunc, publicScope string, key []byte, google GoogleProvider, options ...ModuleOption) *Module {
-	module := &Module{store: store, blobs: blobs, workspace: workspaceStore, identity: identity, publicScope: publicScope, key: append([]byte(nil), key...), google: google, cloudflare: NewLiveCloudflareProvider(nil), limiter: newIPLimiter()}
+	module := &Module{store: store, blobs: blobs, workspace: workspaceStore, identity: identity, publicScope: publicScope, key: append([]byte(nil), key...), google: google, cloudflare: NewLiveCloudflareProvider(nil)}
 	for _, option := range options {
 		option(module)
 	}
@@ -991,7 +992,7 @@ func (m *Module) exportRecords(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = writer.Write([]string{"name", "account_id", "email", "phone", "source", "created_at"})
 		for _, item := range items {
-			_ = writer.Write([]string{item.Name, item.AccountID, item.Email, item.Phone, item.Source, item.CreatedAt.Format(time.RFC3339)})
+			_ = writer.Write([]string{spreadsheetText(item.Name), item.AccountID, spreadsheetText(item.Email), spreadsheetText(item.Phone), spreadsheetText(item.Source), item.CreatedAt.Format(time.RFC3339)})
 		}
 	case "costs":
 		items, err := m.workspace.ListCosts(r.Context(), scope)
@@ -1001,7 +1002,7 @@ func (m *Module) exportRecords(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = writer.Write([]string{"date", "vendor", "description", "amount", "category", "recurring", "tax_deductible"})
 		for _, item := range items {
-			_ = writer.Write([]string{item.IncurredOn, item.Vendor, item.Description, fmt.Sprintf("%.2f", float64(item.AmountCents)/100), item.Category, strconv.FormatBool(item.Recurring), strconv.FormatBool(item.TaxDeductible)})
+			_ = writer.Write([]string{spreadsheetText(item.IncurredOn), spreadsheetText(item.Vendor), spreadsheetText(item.Description), fmt.Sprintf("%.2f", float64(item.AmountCents)/100), spreadsheetText(item.Category), strconv.FormatBool(item.Recurring), strconv.FormatBool(item.TaxDeductible)})
 		}
 	default:
 		writeError(w, http.StatusNotFound, "export_not_found", "Choose contacts or costs")
@@ -1062,8 +1063,7 @@ func (m *Module) voiceLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Module) intakeContact(w http.ResponseWriter, r *http.Request) {
-	if !m.limiter.Allow(clientIP(r), time.Now()) {
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "Please wait before trying again")
+	if !m.allowPublicIntake(w, r) {
 		return
 	}
 	var request struct{ Name, Company, Email, Phone, Message, Source, Website string }
@@ -1091,6 +1091,9 @@ func (m *Module) intakeContact(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, contact := range contacts {
 		if strings.EqualFold(contact.Email, request.Email) {
+			if !m.recordInquiry(w, r, contact, request.Name, request.Company, request.Phone, request.Source, request.Message) {
+				return
+			}
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
@@ -1122,7 +1125,9 @@ func (m *Module) intakeContact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "lead_create_failed", "Could not save this request")
 		return
 	}
-	_ = m.notify(r.Context(), m.publicScope, "New lead", request.Name+" via "+source, "lead", "/contacts", "lead:"+contact.ID)
+	if !m.recordInquiry(w, r, contact, request.Name, request.Company, request.Phone, source, request.Message) {
+		return
+	}
 	_ = m.audit(r.Context(), m.publicScope, "public-contact-form", "lead.created", "contact", contact.ID, request.Name+" via "+source)
 	writeJSON(w, http.StatusCreated, map[string]string{"id": contact.ID, "status": "received"})
 }
@@ -1168,9 +1173,13 @@ func (m *Module) ensureMember(ctx context.Context, scope string, actor Identity)
 	if err := m.store.Get(ctx, scope, "members", id, &member); err == nil {
 		if member.Name != actor.Name {
 			member.Name, member.UpdatedAt = actor.Name, time.Now().UTC()
-			_ = m.store.Put(ctx, scope, "members", id, member)
+			if err := m.store.UpdateMemberName(ctx, scope, id, member.Name, member.UpdatedAt); err != nil {
+				return Member{}, err
+			}
 		}
 		return member, nil
+	} else if !errors.Is(err, errNotFound) {
+		return Member{}, err
 	}
 	now := time.Now().UTC()
 	var bootstrap struct {
@@ -1197,7 +1206,16 @@ func (m *Module) ensureMember(ctx context.Context, scope string, actor Identity)
 		role = "owner"
 	}
 	member = Member{ID: id, Email: strings.ToLower(actor.Email), Name: actor.Name, Role: role, Status: "active", CreatedAt: now, UpdatedAt: now}
-	return member, m.store.Put(ctx, scope, "members", id, member)
+	if err := m.store.Create(ctx, scope, "members", id, member); errors.Is(err, errAlreadyExists) {
+		var existing Member
+		if err := m.store.Get(ctx, scope, "members", id, &existing); err != nil {
+			return Member{}, err
+		}
+		return existing, nil
+	} else if err != nil {
+		return Member{}, err
+	}
+	return member, nil
 }
 
 func (m *Module) requireRole(w http.ResponseWriter, ctx context.Context, scope string, actor Identity, roles ...string) bool {
@@ -1261,6 +1279,7 @@ func (m *Module) manualJobID(r *http.Request, scope, connectionID, jobType strin
 }
 
 func (m *Module) syncEmailConnection(ctx context.Context, scope, connectionID, actor, jobID string) (int, error) {
+	syncStartedAt := time.Now().UTC()
 	token, connection, err := m.connectionTokenByID(ctx, scope, connectionID)
 	if err != nil {
 		return 0, err
@@ -1287,21 +1306,20 @@ func (m *Module) syncEmailConnection(ctx context.Context, scope, connectionID, a
 		if message.ContactID == "" {
 			continue
 		}
-		if err := m.store.Create(ctx, scope, "mailMetadata", message.ID, message); errors.Is(err, errAlreadyExists) {
-			continue
-		} else if err != nil {
-			return len(createdIDs), err
+		createErr := m.store.Create(ctx, scope, "mailMetadata", message.ID, message)
+		if createErr != nil && !errors.Is(createErr, errAlreadyExists) {
+			return len(createdIDs), createErr
 		}
 		if err := m.notify(ctx, scope, "New prospect email", message.Subject, "email", "/communications", "gmail:"+message.ID); err != nil {
 			return len(createdIDs), err
 		}
 		contact := contactsByID[message.ContactID]
 		m.recordAccountEvent(ctx, scope, workspace.AccountEvent{ID: deterministicID("email.received|" + message.ID + "|" + contact.AccountID), AccountID: contact.AccountID, Kind: "email", Action: "email.received", Title: "Email received from " + contact.Name, Summary: message.Subject, Actor: actor, EntityType: "gmail_message", EntityID: message.ID, OccurredAt: message.ReceivedAt})
-		createdIDs = append(createdIDs, message.ID)
+		if createErr == nil {
+			createdIDs = append(createdIDs, message.ID)
+		}
 	}
-	now := time.Now().UTC()
-	connection.LastMailSyncAt, connection.UpdatedAt = &now, now
-	if err := m.store.Put(ctx, scope, "googleConnections", connection.ID, connection); err != nil {
+	if err := m.store.AdvanceMailCheckpoint(ctx, scope, connection.ID, syncStartedAt); err != nil {
 		return len(createdIDs), err
 	}
 	if len(createdIDs) > 0 {
@@ -1622,36 +1640,4 @@ func nullableConnection(connection GoogleConnection, err error) any {
 		return nil
 	}
 	return connection
-}
-
-func clientIP(r *http.Request) string {
-	if value := strings.TrimSpace(strings.Split(r.Header.Get("CF-Connecting-IP"), ",")[0]); value != "" {
-		return value
-	}
-	return strings.Split(r.RemoteAddr, ":")[0]
-}
-
-type ipLimiter struct {
-	mu      sync.Mutex
-	windows map[string][]time.Time
-}
-
-func newIPLimiter() *ipLimiter { return &ipLimiter{windows: make(map[string][]time.Time)} }
-
-func (l *ipLimiter) Allow(ip string, now time.Time) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	cutoff := now.Add(-time.Hour)
-	recent := make([]time.Time, 0, 6)
-	for _, seen := range l.windows[ip] {
-		if seen.After(cutoff) {
-			recent = append(recent, seen)
-		}
-	}
-	if len(recent) >= 5 {
-		l.windows[ip] = recent
-		return false
-	}
-	l.windows[ip] = append(recent, now)
-	return true
 }

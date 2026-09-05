@@ -229,9 +229,10 @@ type OpportunityPatch struct {
 }
 
 type DocumentPatch struct {
-	Title *string       `json:"title"`
-	Body  *string       `json:"body"`
-	Links *[]RecordLink `json:"links"`
+	Title            *string       `json:"title"`
+	Body             *string       `json:"body"`
+	Links            *[]RecordLink `json:"links"`
+	ExpectedRevision *int          `json:"expectedRevision,omitempty"`
 }
 
 type ReminderPatch struct {

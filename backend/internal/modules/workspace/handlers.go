@@ -16,7 +16,8 @@ import (
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/pagination"
 )
 
-var errNotFound = errors.New("record not found")
+var ErrNotFound = errors.New("record not found")
+var errNotFound = ErrNotFound
 
 func (m Module) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/summary", m.summary)
@@ -828,6 +829,10 @@ func (m Module) updateDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_document", "Document body must be 100,000 characters or fewer")
 		return
 	}
+	if patch.ExpectedRevision != nil && *patch.ExpectedRevision < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_document", "Expected revision must be a positive number")
+		return
+	}
 	documents, err := m.store.ListDocuments(r.Context(), scope)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "document_save_failed", "Could not save document")
@@ -837,15 +842,14 @@ func (m Module) updateDocument(w http.ResponseWriter, r *http.Request) {
 	for _, current := range documents {
 		if current.ID == r.PathValue("id") {
 			existing = current
-			_, err = m.store.CreateDocumentRevision(r.Context(), scope, DocumentRevision{DocumentID: current.ID, Title: current.Title, Body: current.Body, Links: current.Links, Revision: current.Revision})
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "document_save_failed", "Could not save document history")
-				return
-			}
 			break
 		}
 	}
 	updated, err := m.store.UpdateDocument(r.Context(), scope, r.PathValue("id"), patch)
+	if errors.Is(err, ErrDocumentConflict) {
+		writeError(w, http.StatusConflict, "document_conflict", "This document changed since you opened it. Reload the latest version before saving")
+		return
+	}
 	if err == nil {
 		m.recordDocumentEvent(r, scope, updated, "document.updated", "Document updated")
 		for _, accountID := range linkedAccountIDs(existing) {

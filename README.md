@@ -22,6 +22,8 @@ The production login policy currently permits verified Google accounts at `nerds
 
 Every mutating browser request requires the `X-Kosmos-CSRF: 1` header in addition to the signed, HTTP-only session cookie. The versioned API contract lives at [api/openapi.yaml](api/openapi.yaml).
 
+Production web processes also require a dedicated `KOSMOS_INTAKE_SECRET` of at least 32 bytes. The ingress proxy signs its verified client address for public contact intake; direct-origin intake fails closed. The environment module accepts this key through the ephemeral `intake_secret_value` input and provisions shared Firestore quotas with TTL cleanup. Local development without this key uses the socket peer address.
+
 Owners and administrators can create named API credentials in Settings. The plaintext token is shown once and is sent as `Authorization: Bearer <token>`. Read-only credentials can inspect ordinary workspace APIs. Read-and-write credentials can mutate them, but credentials cannot manage members, other credentials, email, or provider integrations. Bearer-authenticated mutations do not use the browser CSRF header.
 
 Repository workflows can converge a published document and its complete file set with `PUT /api/v1/managed-documents/{sourceKey}`. Send a multipart `document` JSON part and repeated `files` parts. Relative standard Markdown paths such as `assets/kosmos/logo.svg` resolve to same-document attachments by basename in Kosmos, while remaining valid in the source repository. The complete request shape is in the OpenAPI contract.
@@ -31,6 +33,8 @@ Provider setup, the public contact-form contract, Tiller headers, backup behavio
 ## Observability
 
 The backend accepts standard `OTEL_EXPORTER_OTLP_*` environment variables and exports correlated logs and traces over OTLP HTTP when an endpoint is configured. Without an endpoint, telemetry remains local. Browser RUM and tracing use the public runtime configuration returned by `/api/v1/config` when `KOSMOS_FARO_URL` is present.
+
+W3C trace context and baggage propagate across HTTP and queued jobs. Releases identify their version in telemetry, health, and browser configuration. SIGTERM drains active requests for up to seven seconds, then flushes telemetry with a separate two-second timeout. Browser telemetry retains route templates, timings, status codes, and anonymous context while removing customer queries, record identifiers, and free-text payloads before transport.
 
 ## License
 

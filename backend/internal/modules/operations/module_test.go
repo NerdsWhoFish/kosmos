@@ -536,7 +536,7 @@ func TestContactIntakeDeduplicatesAndNotifies(t *testing.T) {
 	notifications := performJSON[struct {
 		Notifications []Notification `json:"notifications"`
 	}](t, mux, http.MethodGet, "/api/v1/notifications", "", http.StatusOK)
-	if len(notifications.Notifications) != 1 || notifications.Notifications[0].Kind != "lead" {
+	if len(notifications.Notifications) != 2 || notifications.Notifications[0].Kind != "lead" {
 		t.Fatalf("unexpected notifications: %#v", notifications.Notifications)
 	}
 }

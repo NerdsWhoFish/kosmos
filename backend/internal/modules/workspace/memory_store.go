@@ -14,6 +14,7 @@ import (
 )
 
 type memoryWorkspace struct {
+	contactMutations  map[string]ContactMutation
 	accounts          []Account
 	accountEvents     []AccountEvent
 	contacts          []Contact
@@ -74,6 +75,7 @@ func (s *MemoryStore) CreateAccountWithContact(_ context.Context, scope string, 
 	workspace := s.workspace(scope)
 	workspace.accounts = append([]Account{account}, workspace.accounts...)
 	workspace.contacts = append([]Contact{contact}, workspace.contacts...)
+	workspace.recordContactMutation(contact, "upsert")
 	return account, contact, nil
 }
 
@@ -117,6 +119,7 @@ func (s *MemoryStore) DeleteAccount(_ context.Context, scope, id string) ([]Cont
 	for _, contact := range workspace.contacts {
 		if contact.AccountID == id {
 			deletedContacts = append(deletedContacts, contact)
+			workspace.recordContactMutation(contact, "delete")
 			contactIDs[contact.ID] = struct{}{}
 			continue
 		}
@@ -395,6 +398,7 @@ func (s *MemoryStore) CreateContact(_ context.Context, scope string, item Contac
 	item.UpdatedAt = now
 	workspace := s.workspace(scope)
 	workspace.contacts = append([]Contact{item}, workspace.contacts...)
+	workspace.recordContactMutation(item, "upsert")
 	return item, nil
 }
 
@@ -408,6 +412,7 @@ func (s *MemoryStore) UpdateContact(_ context.Context, scope, id string, patch C
 		}
 		applyContactPatch(&workspace.contacts[index], patch)
 		workspace.contacts[index].UpdatedAt = time.Now().UTC()
+		workspace.recordContactMutation(workspace.contacts[index], "upsert")
 		return workspace.contacts[index], nil
 	}
 	return Contact{}, errNotFound
@@ -421,6 +426,7 @@ func (s *MemoryStore) DeleteContact(_ context.Context, scope, id string) error {
 		if workspace.contacts[index].ID != id {
 			continue
 		}
+		workspace.recordContactMutation(workspace.contacts[index], "delete")
 		workspace.contacts = append(workspace.contacts[:index], workspace.contacts[index+1:]...)
 		return nil
 	}
@@ -594,7 +600,9 @@ func (s *MemoryStore) SyncManagedDocument(_ context.Context, scope, sourceKey st
 		if err != nil {
 			return Document{}, false, err
 		}
-		current.documentRevisions = append([]DocumentRevision{{ID: revisionID, DocumentID: existing.ID, Title: existing.Title, Body: existing.Body, Links: existing.Links, Revision: existing.Revision, CreatedAt: now}}, current.documentRevisions...)
+		revision := documentSnapshot(existing, now)
+		revision.ID = revisionID
+		current.documentRevisions = append([]DocumentRevision{revision}, current.documentRevisions...)
 		existing.SourceKey = sourceKey
 		existing.Title = item.Title
 		existing.Body = item.Body
@@ -646,8 +654,19 @@ func (s *MemoryStore) UpdateDocument(_ context.Context, scope, id string, patch 
 		if workspace.documents[index].ID != id {
 			continue
 		}
+		if patch.ExpectedRevision != nil && workspace.documents[index].Revision != *patch.ExpectedRevision {
+			return Document{}, ErrDocumentConflict
+		}
+		revisionID, err := newID()
+		if err != nil {
+			return Document{}, err
+		}
+		now := time.Now().UTC()
+		revision := documentSnapshot(workspace.documents[index], now)
+		revision.ID = revisionID
+		workspace.documentRevisions = append(workspace.documentRevisions, revision)
 		applyDocumentPatch(&workspace.documents[index], patch)
-		workspace.documents[index].UpdatedAt = time.Now().UTC()
+		workspace.documents[index].UpdatedAt = now
 		return workspace.documents[index], nil
 	}
 	return Document{}, errNotFound
