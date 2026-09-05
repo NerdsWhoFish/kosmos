@@ -269,6 +269,13 @@
   outline-offset: 2px;
   z-index: 2;
 }
+.signing-field.editable {
+  user-select: none;
+}
+.signing-field.interacting {
+  z-index: 3;
+  box-shadow: 0 3px 12px #38207140;
+}
 .signing-field-move {
   background: transparent;
   color: inherit;
@@ -281,8 +288,11 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: move;
+  cursor: grab;
   touch-action: none;
+}
+.signing-field.interacting .signing-field-move {
+  cursor: grabbing;
 }
 .signing-field > span {
   display: block;
@@ -299,15 +309,51 @@
 }
 .signing-field-resize {
   position: absolute;
-  right: -7px;
-  bottom: -7px;
-  width: 18px;
-  height: 18px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 0;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0;
+  pointer-events: none;
+}
+.signing-field-resize span {
+  width: 12px;
+  height: 12px;
   background: #644ac9;
   border: 2px solid white;
   border-radius: 3px;
-  cursor: nwse-resize;
-  touch-action: none;
+  box-shadow: 0 0 0 1px #644ac9;
+}
+.signing-field-resize-nw {
+  left: -14px;
+  top: -14px;
+}
+.signing-field-resize-se {
+  right: -14px;
+  bottom: -14px;
+}
+.signing-field.selected .signing-field-resize,
+.signing-field:focus-within .signing-field-resize {
+  opacity: 1;
+  pointer-events: auto;
+}
+.signing-field-move:focus-visible,
+.signing-field-resize:focus-visible {
+  outline: 3px solid #382071;
+  outline-offset: 3px;
+}
+.signing-precise-position {
+  margin-bottom: 16px;
+}
+.signing-precise-position summary {
+  cursor: pointer;
+  padding: 10px 0;
+  font-size: 14px;
 }
 .signing-field-settings,
 .signing-signer-form fieldset {
@@ -537,12 +583,26 @@
   .signing-page-controls select {
     padding: 7px 3px;
   }
-  .signing-field-resize {
-    width: 22px;
-    height: 22px;
-  }
   .signing-section-heading .button-row {
     flex-wrap: wrap;
+  }
+}
+@media (pointer: coarse), (max-width: 600px) {
+  .signing-field-resize {
+    width: 44px;
+    height: 44px;
+  }
+  .signing-field-resize-nw {
+    left: -30px;
+    top: -30px;
+    padding-left: 16px;
+    padding-top: 16px;
+  }
+  .signing-field-resize-se {
+    right: -30px;
+    bottom: -30px;
+    padding-right: 16px;
+    padding-bottom: 16px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

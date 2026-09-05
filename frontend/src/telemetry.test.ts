@@ -64,6 +64,8 @@ describe('browser telemetry', () => {
       } })
       faro.api.pushEvent('faro.performance.resource', { name: url, httpHost: secret, duration: '32', responseStatus: '200' })
       faro.api.pushEvent('faro.navigation', { fromUrl: url, toUrl: window.location.href, duration: '18', text: secret })
+      faro.api.pushEvent('signing.preview.failure', { 'pdf.stage': 'text', 'pdf.failure': 'TypeError', message: secret })
+      faro.api.pushEvent('signing.preview.failure', { 'pdf.stage': secret, 'pdf.failure': secret, filename: secretID })
       faro.api.pushEvent(secret, { 'faro.action.user.name': secret, name: secret, form: secret })
       faro.api.pushEvent('click', {}, undefined, {
         customPayloadTransformer: (payload) => ({ ...payload, action: { name: secret, parentId: secretID } }),
@@ -93,6 +95,9 @@ describe('browser telemetry', () => {
       expect(exported).toContain('HTTP request')
       expect(exported).toContain('503')
       expect(exported).toContain('abc123')
+      expect(exported).toContain('signing.preview.failure')
+      expect(exported).toContain('pdf.stage')
+      expect(exported).toContain('pdf.failure')
       expect(transport.items.some((item) => item.type === TransportItemType.EXCEPTION)).toBe(true)
       expect(transport.items.some((item) => item.type === TransportItemType.TRACE)).toBe(true)
       expect(transport.items.some((item) => item.type === TransportItemType.MEASUREMENT)).toBe(true)
