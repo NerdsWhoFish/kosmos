@@ -7,6 +7,7 @@ import {
   FileText,
   Inbox,
   LayoutGrid,
+  LogOut,
   Search,
   Settings2,
   SlidersHorizontal,
@@ -130,8 +131,8 @@ export function Shell({
             >
               <Bell size={19} />
             </button>
-            <button className="account-button" onClick={logout}>
-              <UserAvatar user={user} />
+            <button className="account-button" aria-label="Sign out" title="Sign out" onClick={logout}>
+              <LogOut size={19} aria-hidden="true" />
               <span>Sign out</span>
             </button>
           </div>

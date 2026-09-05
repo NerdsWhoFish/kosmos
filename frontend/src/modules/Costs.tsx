@@ -12,6 +12,7 @@ import { Page } from "../components/Page";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
 import { WorkflowPage } from "../components/WorkflowPage";
 import { ResourceRoute } from "../routing";
+import { useAsyncLoad } from "../useAsyncLoad";
 
 export function Costs({
   embedded = false,
@@ -28,8 +29,7 @@ export function Costs({
 }) {
   const [items, setItems] = useState<Cost[]>(initialItems ?? []);
   const [recurring, setRecurring] = useState(false);
-  const [loading, setLoading] = useState(initialItems === undefined);
-  const [error, setError] = useState("");
+  const { loading, error, run, reset } = useAsyncLoad(initialItems === undefined);
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [receipts, setReceipts] = useState<Attachment[]>([]);
@@ -44,20 +44,19 @@ export function Costs({
       : null;
 
   const load = useCallback(() => {
-    setLoading(true);
-    api<{ costs: Cost[] }>("/api/v1/costs")
-      .then((response) => setItems(response.costs))
-      .catch((reason: Error) => setError(reason.message))
-      .finally(() => setLoading(false));
-  }, []);
+    void run(
+      () => api<{ costs: Cost[] }>("/api/v1/costs"),
+      (response) => setItems(response.costs),
+    );
+  }, [run]);
   useEffect(() => {
     if (initialItems !== undefined) {
       setItems(initialItems);
-      setLoading(false);
+      reset();
       return;
     }
     load();
-  }, [initialItems, load]);
+  }, [initialItems, load, reset]);
   useEffect(() => {
     api<{ attachments: Attachment[] }>("/api/v1/attachments")
       .then((response) =>

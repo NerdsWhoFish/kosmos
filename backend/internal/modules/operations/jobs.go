@@ -14,6 +14,7 @@ import (
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/cloudtasks/apiv2/cloudtaskspb"
+	"github.com/NerdsWhoFish/kosmos/backend/internal/modules/workspace"
 	"github.com/googleapis/gax-go/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -44,6 +45,7 @@ type Job struct {
 	ContactID    string `json:"contactId,omitempty"`
 	Action       string `json:"action,omitempty"`
 	Actor        string `json:"actor,omitempty"`
+	OutboxID     string `json:"outboxId,omitempty"`
 }
 
 type JobQueue interface {
@@ -237,7 +239,13 @@ func (m *Module) scheduleJobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_job_origin", "Worker origin is invalid")
 		return
 	}
-	queued := 0
+	queued, err := m.enqueuePendingContactMutations(ctx, m.publicScope, batchKey, targetURL)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "contact outbox dispatch failed")
+		writeError(w, http.StatusServiceUnavailable, "job_schedule_failed", "Could not schedule contact synchronization")
+		return
+	}
 	for _, connection := range connections {
 		jobs := []Job{{Type: JobTypeGmailSync, Scope: m.publicScope, ConnectionID: connection.ID, Actor: "system"}}
 		if connection.Tiller != nil {
@@ -289,6 +297,13 @@ func (m *Module) executeJob(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
 		return
 	}
+	if pending, err := m.contactJobPending(ctx, job); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "job_outbox_failed", "Could not load contact synchronization")
+		return
+	} else if !pending {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
+		return
+	}
 	var err error
 	switch job.Type {
 	case JobTypeGmailSync:
@@ -297,6 +312,9 @@ func (m *Module) executeJob(w http.ResponseWriter, r *http.Request) {
 		_, _, err = m.syncTillerConnection(ctx, job.Scope, job.ConnectionID, job.Actor, job.ID)
 	case JobTypeGoogleContactSync:
 		err = m.syncGoogleContact(ctx, job)
+	}
+	if errors.Is(err, workspace.ErrNotFound) && job.Type == JobTypeGoogleContactSync && job.Action == "upsert" {
+		err = nil
 	}
 	if errors.Is(err, errNotFound) {
 		slog.InfoContext(ctx, "background job skipped", "job.type", job.Type, "job.status", "connection_missing")
@@ -308,6 +326,10 @@ func (m *Module) executeJob(w http.ResponseWriter, r *http.Request) {
 		span.SetStatus(codes.Error, "execution failed")
 		slog.ErrorContext(ctx, "background job execution failed", "job.type", job.Type, "job.status", "failed")
 		writeError(w, http.StatusBadGateway, "job_execution_failed", "Integration sync failed")
+		return
+	}
+	if err := m.completeContactJob(ctx, job); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "job_outbox_failed", "Could not record contact synchronization")
 		return
 	}
 	execution := JobExecution{ID: job.ID, Type: job.Type, Status: "completed", CompletedAt: time.Now().UTC()}
@@ -328,7 +350,7 @@ func validJob(job Job) bool {
 	}
 	switch job.Type {
 	case JobTypeGmailSync, JobTypeTillerSync:
-		return job.ContactID == "" && job.Action == ""
+		return job.ContactID == "" && job.Action == "" && job.OutboxID == ""
 	case JobTypeGoogleContactSync:
 		return job.ContactID != "" && oneOf(job.Action, "upsert", "delete")
 	default:

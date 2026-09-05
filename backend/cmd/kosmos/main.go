@@ -8,8 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"cloud.google.com/go/storage"
@@ -23,14 +26,30 @@ import (
 	"golang.org/x/oauth2"
 )
 
+var version = "dev"
+
 func main() {
-	fallback := slog.NewJSONHandler(os.Stdout, nil)
-	logger, shutdownTelemetry, err := observability.Setup(context.Background(), fallback)
-	if err != nil {
-		slog.Error("telemetry setup failed", "error", err)
+	if err := run(); err != nil {
+		slog.Error("kosmos stopped", "error", err)
 		os.Exit(1)
 	}
-	defer shutdownTelemetry(context.Background())
+}
+
+func run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	fallback := slog.NewJSONHandler(os.Stdout, nil)
+	logger, shutdownTelemetry, err := observability.Setup(ctx, fallback, version)
+	if err != nil {
+		return fmt.Errorf("telemetry setup: %w", err)
+	}
+	defer func() {
+		flushContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(flushContext); err != nil {
+			logger.Error("telemetry shutdown failed", "error", err)
+		}
+	}()
 	slog.SetDefault(logger)
 
 	mux := http.NewServeMux()
@@ -45,8 +64,7 @@ func main() {
 	if projectID != "" {
 		firestoreClient, err := firestore.NewClient(context.Background(), projectID)
 		if err != nil {
-			logger.Error("workspace store setup failed", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("workspace store setup: %w", err)
 		}
 		defer firestoreClient.Close()
 		landingStore = landing.NewFirestoreStore(firestoreClient)
@@ -55,8 +73,7 @@ func main() {
 		if bucket := os.Getenv("KOSMOS_ATTACHMENTS_BUCKET"); bucket != "" {
 			storageClient, err := storage.NewClient(context.Background())
 			if err != nil {
-				logger.Error("attachment store setup failed", "error", err)
-				os.Exit(1)
+				return fmt.Errorf("attachment store setup: %w", err)
 			}
 			defer storageClient.Close()
 			blobStore = operations.NewGCSBlobStore(storageClient, bucket)
@@ -68,13 +85,11 @@ func main() {
 	}
 	role, err := processRole(os.Getenv("KOSMOS_PROCESS_ROLE"))
 	if err != nil {
-		logger.Error("process role setup failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("process role setup: %w", err)
 	}
 	jobQueue, closeJobQueue, err := newJobQueue(context.Background(), projectID, role)
 	if err != nil {
-		logger.Error("background job queue setup failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("background job queue setup: %w", err)
 	}
 	defer closeJobQueue()
 	var operationsModule *operations.Module
@@ -85,7 +100,17 @@ func main() {
 		return operationsModule.AuthenticateAPICredential(ctx, token)
 	})
 	integrationKey := integrationSecret()
-	operationsModule = operations.NewModule(operationsStore, blobStore, workspaceStore, identity, organizationID, integrationKey, operations.NewLiveGoogleProvider(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")), operations.WithJobQueue(jobQueue))
+	options := []operations.ModuleOption{operations.WithJobQueue(jobQueue)}
+	if role == "web" {
+		intakeKey := []byte(os.Getenv("KOSMOS_INTAKE_SECRET"))
+		if os.Getenv("KOSMOS_ENV") == "production" && len(intakeKey) < 32 {
+			return errors.New("KOSMOS_INTAKE_SECRET must contain at least 32 bytes in production")
+		}
+		if len(intakeKey) > 0 {
+			options = append(options, operations.WithIntakeSigningKey(intakeKey))
+		}
+	}
+	operationsModule = operations.NewModule(operationsStore, blobStore, workspaceStore, identity, organizationID, integrationKey, operations.NewLiveGoogleProvider(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")), options...)
 	if role == "web" {
 		migrated, err := operationsModule.MigrateGoogleConnectionSecrets(context.Background(), []byte(os.Getenv("KOSMOS_SESSION_SECRET")))
 		if err != nil {
@@ -171,13 +196,10 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	server := &http.Server{Addr: ":" + port, Handler: otelhttp.NewHandler(observability.RequestLogger(logger, securityHeaders(mux)), "kosmos.http")}
+	server := &http.Server{Addr: ":" + port, Handler: otelhttp.NewHandler(observability.RequestLogger(logger, securityHeaders(mux)), "kosmos.http"), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 
-	logger.Info("kosmos listening", "port", port)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Error("server stopped", "error", err)
-		os.Exit(1)
-	}
+	logger.Info("kosmos listening", "port", port, "version", version, "process.role", role)
+	return serve(ctx, server, 7*time.Second)
 }
 
 func requestIdentity(organizationID string, currentUser func(*http.Request) (auth.User, error), authenticateAPI func(context.Context, string) (operations.Identity, error)) operations.IdentityFunc {
@@ -262,13 +284,14 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": version})
 }
 
 func publicConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"faroURL":     os.Getenv("KOSMOS_FARO_URL"),
 		"faroAppName": "kosmos",
+		"faroVersion": version,
 	})
 }
 

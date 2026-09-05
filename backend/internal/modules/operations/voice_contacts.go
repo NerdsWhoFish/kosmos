@@ -96,6 +96,19 @@ func (m *Module) enqueueGoogleContactMutation(ctx context.Context, scope string,
 	if contact.ID == "" || !oneOf(action, "upsert", "delete") {
 		return errors.New("Google contact mutation is invalid")
 	}
+	if versionTime.IsZero() {
+		versionTime = time.Now().UTC()
+	}
+	intentContact := contact
+	intentContact.UpdatedAt = versionTime
+	mutation := workspace.NewContactMutation(intentContact, action)
+	outbox, ok := m.workspace.(workspace.ContactMutationStore)
+	if !ok {
+		return errors.New("workspace does not support durable contact synchronization")
+	}
+	if err := outbox.PutContactMutation(ctx, scope, mutation); err != nil {
+		return err
+	}
 	mapping := m.googleContactMapping(ctx, scope, contact.ID)
 	mapping.Status = "pending"
 	mapping.LastError = ""
@@ -104,9 +117,6 @@ func (m *Module) enqueueGoogleContactMutation(ctx context.Context, scope string,
 		return err
 	}
 	version := versionTime.UTC().Format(time.RFC3339Nano)
-	if version == "0001-01-01T00:00:00Z" {
-		version = time.Now().UTC().Format(time.RFC3339Nano)
-	}
 	job := Job{
 		ID:           deterministicID("google-contact|" + action + "|" + contact.ID + "|" + version),
 		Type:         JobTypeGoogleContactSync,
@@ -115,6 +125,7 @@ func (m *Module) enqueueGoogleContactMutation(ctx context.Context, scope string,
 		ContactID:    contact.ID,
 		Action:       action,
 		Actor:        actor,
+		OutboxID:     mutation.ID,
 	}
 	if err := m.enqueueJob(ctx, job); err != nil {
 		mapping := m.googleContactMapping(ctx, scope, contact.ID)
@@ -193,13 +204,18 @@ func (m *Module) syncVoiceContacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	version := time.Now().UTC()
+	queued, err := m.enqueuePendingContactMutations(r.Context(), scope, version.Format(time.RFC3339Nano))
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "google_contacts_sync_failed", "Could not retry pending Google Contacts synchronization")
+		return
+	}
 	for _, contact := range contacts {
 		if err := m.enqueueGoogleContactMutation(r.Context(), scope, contact, "upsert", actor.Email, version); err != nil {
 			writeError(w, http.StatusServiceUnavailable, "google_contacts_sync_failed", "Could not queue Google Contacts synchronization")
 			return
 		}
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "queued": len(contacts)})
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "queued": queued + len(contacts)})
 }
 
 func (m *Module) voiceContactsToken(ctx context.Context, scope string) (*oauth2.Token, VoiceContactsConnection, error) {

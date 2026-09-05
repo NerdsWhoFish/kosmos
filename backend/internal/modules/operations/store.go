@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"sync"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"github.com/NerdsWhoFish/kosmos/backend/internal/platform/firestorepage"
@@ -18,12 +19,15 @@ var errNotFound = errors.New("record not found")
 var errAlreadyExists = errors.New("record already exists")
 
 type Store interface {
+	AdvanceMailCheckpoint(context.Context, string, string, time.Time) error
 	List(context.Context, string, string, any) error
 	ListPage(context.Context, string, string, pagination.Request, pagination.Spec, any) (pagination.Metadata, error)
 	Get(context.Context, string, string, string, any) error
 	Put(context.Context, string, string, string, any) error
 	Create(context.Context, string, string, string, any) error
 	Delete(context.Context, string, string, string) error
+	UpdateMemberName(context.Context, string, string, string, time.Time) error
+	AllowRateLimit(context.Context, string, string, int, time.Duration, time.Time) (bool, time.Duration, error)
 }
 
 type MemoryStore struct {

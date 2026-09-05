@@ -9,7 +9,7 @@ async function bootstrap() {
     const response = await fetch('/api/v1/config')
     if (response.ok) {
       const config = await response.json()
-      initializeTelemetry(config.faroURL, config.faroAppName)
+      initializeTelemetry(config.faroURL, config.faroAppName, config.faroVersion)
     }
   } catch {
     // Telemetry must never prevent the workspace from loading.

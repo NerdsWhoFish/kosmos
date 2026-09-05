@@ -28,6 +28,7 @@ run "bootstrap_defaults" {
     project_id               = "kosmos-test"
     environment              = "test"
     integration_secret_value = "test-only-integration-secret-value"
+    intake_secret_value      = "test-only-intake-signing-secret-value"
   }
 
   assert {
@@ -56,7 +57,7 @@ run "bootstrap_defaults" {
   }
 
   assert {
-    condition     = length(output.secret_ids) == 4
+    condition     = length(output.secret_ids) == 5
     error_message = "all runtime secret containers must be managed by the environment module"
   }
 
@@ -114,6 +115,7 @@ run "production_service" {
     manage_grafana              = true
     grafana_faro_app_id         = "902"
     integration_secret_value    = "test-only-integration-secret-value"
+    intake_secret_value         = "test-only-intake-signing-secret-value"
     uptime_check_enabled        = false
   }
 
@@ -143,8 +145,8 @@ run "production_service" {
   }
 
   assert {
-    condition     = length([for env in google_cloud_run_v2_service.jobs[0].template[0].containers[0].env : env if env.name == "KOSMOS_SESSION_SECRET"]) == 0
-    error_message = "the private worker must not receive the web session-signing secret"
+    condition     = length([for env in google_cloud_run_v2_service.jobs[0].template[0].containers[0].env : env if contains(["KOSMOS_SESSION_SECRET", "KOSMOS_INTAKE_SECRET"], env.name)]) == 0
+    error_message = "the private worker must not receive web-only signing secrets"
   }
 
   assert {
