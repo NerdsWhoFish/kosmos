@@ -1,4 +1,10 @@
-import { useRef, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
 import { boundedField, type SigningField, type SigningRequest } from "./signingApi";
 
 export function Status({ request }: { request: SigningRequest }) {
@@ -72,6 +78,8 @@ export function FieldOverlay({
   value,
   onSelect,
   onChange,
+  pageSize,
+  focusOnMount,
 }: {
   field: SigningField;
   selected?: boolean;
@@ -79,50 +87,111 @@ export function FieldOverlay({
   value?: string;
   onSelect?: () => void;
   onChange?: (field: SigningField) => void;
+  pageSize?: { width: number; height: number };
+  focusOnMount?: boolean;
 }) {
+  const moveButton = useRef<HTMLButtonElement>(null);
+  const [interacting, setInteracting] = useState(false);
+  type Mode = "move" | "nw" | "se";
   const drag = useRef<{
+    pointerID: number;
     x: number;
     y: number;
     field: SigningField;
     width: number;
     height: number;
-    resize: boolean;
+    mode: Mode;
   } | null>(null);
-  function start(event: PointerEvent<HTMLButtonElement>, resize: boolean) {
-    if (!editable || event.button !== 0) return;
+
+  useEffect(() => {
+    if (focusOnMount) {
+      moveButton.current?.focus({ preventScroll: true });
+      moveButton.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    }
+  }, [focusOnMount]);
+
+  function transform(origin: SigningField, mode: Mode, dx: number, dy: number) {
+    if (mode === "move") {
+      return boundedField(
+        { ...origin, x: origin.x + dx, y: origin.y + dy },
+        pageSize,
+      );
+    }
+    const minimum = boundedField({ ...origin, width: 0, height: 0 }, pageSize);
+    if (mode === "se") {
+      return {
+        ...origin,
+        width: Math.max(minimum.width, Math.min(1 - origin.x, origin.width + dx)),
+        height: Math.max(minimum.height, Math.min(1 - origin.y, origin.height + dy)),
+      };
+    }
+    const right = origin.x + origin.width;
+    const bottom = origin.y + origin.height;
+    const x = Math.max(0, Math.min(right - minimum.width, origin.x + dx));
+    const y = Math.max(0, Math.min(bottom - minimum.height, origin.y + dy));
+    return { ...origin, x, y, width: right - x, height: bottom - y };
+  }
+  function start(event: PointerEvent<HTMLButtonElement>, mode: Mode) {
+    if (!editable || event.button !== 0 || drag.current) return;
+    event.preventDefault();
     event.stopPropagation();
     const bounds = event.currentTarget
       .closest(".signing-paper")
       ?.getBoundingClientRect();
-    if (!bounds) return;
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
     onSelect?.();
+    event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
     drag.current = {
+      pointerID: event.pointerId,
       x: event.clientX,
       y: event.clientY,
       field,
       width: bounds.width,
       height: bounds.height,
-      resize,
+      mode,
     };
+    setInteracting(true);
   }
   function move(event: PointerEvent<HTMLButtonElement>) {
     const origin = drag.current;
-    if (!origin) return;
+    if (!origin || event.pointerId !== origin.pointerID) return;
     const dx = (event.clientX - origin.x) / origin.width;
     const dy = (event.clientY - origin.y) / origin.height;
-    onChange?.(
-      boundedField({
-        ...origin.field,
-        ...(origin.resize
-          ? { width: origin.field.width + dx, height: origin.field.height + dy }
-          : { x: origin.field.x + dx, y: origin.field.y + dy }),
-      }),
-    );
+    onChange?.(transform(origin.field, origin.mode, dx, dy));
+  }
+  function finish(event: PointerEvent<HTMLButtonElement>, cancel = false) {
+    const origin = drag.current;
+    if (!origin || event.pointerId !== origin.pointerID) return;
+    if (cancel) onChange?.(origin.field);
+    else move(event);
+    drag.current = null;
+    setInteracting(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+  function lostCapture(event: PointerEvent<HTMLButtonElement>) {
+    if (drag.current?.pointerID !== event.pointerId) return;
+    drag.current = null;
+    setInteracting(false);
+  }
+  function keyboard(event: KeyboardEvent<HTMLButtonElement>, mode: Mode) {
+    const step = event.shiftKey ? 0.02 : 0.005;
+    const direction = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
+    }[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    onSelect?.();
+    onChange?.(transform(field, mode, direction[0], direction[1]));
   }
   return (
     <div
-      className={`signing-field signing-field-${field.type}${selected ? " selected" : ""}${editable ? " editable" : ""}`}
+      className={`signing-field signing-field-${field.type}${selected ? " selected" : ""}${editable ? " editable" : ""}${interacting ? " interacting" : ""}`}
       style={{
         left: `${field.x * 100}%`,
         top: `${field.y * 100}%`,
@@ -133,76 +202,43 @@ export function FieldOverlay({
       {editable ? (
         <>
           <button
+            ref={moveButton}
             type="button"
             className="signing-field-move"
             aria-label={`Select ${field.label}, page ${field.page}`}
             aria-pressed={selected}
+            title="Drag to move. Arrow keys adjust position; Shift moves further."
+            onFocus={onSelect}
             onClick={onSelect}
-            onPointerDown={(event) => start(event, false)}
+            onPointerDown={(event) => start(event, "move")}
             onPointerMove={move}
-            onPointerUp={() => {
-              drag.current = null;
-            }}
-            onPointerCancel={() => {
-              drag.current = null;
-            }}
-            onKeyDown={(event) => {
-              const step = event.shiftKey ? 0.02 : 0.005;
-              const directions: Record<string, [number, number]> = {
-                ArrowLeft: [-step, 0],
-                ArrowRight: [step, 0],
-                ArrowUp: [0, -step],
-                ArrowDown: [0, step],
-              };
-              const direction = directions[event.key];
-              if (direction) {
-                event.preventDefault();
-                onChange?.(
-                  boundedField({
-                    ...field,
-                    x: field.x + direction[0],
-                    y: field.y + direction[1],
-                  }),
-                );
-              }
-            }}
+            onPointerUp={(event) => finish(event)}
+            onPointerCancel={(event) => finish(event, true)}
+            onLostPointerCapture={lostCapture}
+            onKeyDown={(event) => keyboard(event, "move")}
           >
             {field.label}
             {field.required ? " *" : ""}
           </button>
-          <button
-            type="button"
-            className="signing-field-resize"
-            aria-label={`Resize ${field.label}`}
-            onPointerDown={(event) => start(event, true)}
-            onPointerMove={move}
-            onPointerUp={() => {
-              drag.current = null;
-            }}
-            onPointerCancel={() => {
-              drag.current = null;
-            }}
-            onClick={onSelect}
-            onKeyDown={(event) => {
-              const directions: Record<string, [number, number]> = {
-                ArrowLeft: [-0.005, 0],
-                ArrowRight: [0.005, 0],
-                ArrowUp: [0, -0.005],
-                ArrowDown: [0, 0.005],
-              };
-              const direction = directions[event.key];
-              if (direction) {
-                event.preventDefault();
-                onChange?.(
-                  boundedField({
-                    ...field,
-                    width: field.width + direction[0],
-                    height: field.height + direction[1],
-                  }),
-                );
-              }
-            }}
-          />
+          {(["nw", "se"] as const).map((corner) => (
+            <button
+              key={corner}
+              type="button"
+              className={`signing-field-resize signing-field-resize-${corner}`}
+              aria-label={`Resize ${field.label}${corner === "nw" ? " from top left" : ""}`}
+              title={`Drag the ${corner === "nw" ? "top left" : "bottom right"} corner to resize. Arrow keys also resize.`}
+              onFocus={onSelect}
+              onPointerDown={(event) => start(event, corner)}
+              onPointerMove={move}
+              onPointerUp={(event) => finish(event)}
+              onPointerCancel={(event) => finish(event, true)}
+              onLostPointerCapture={lostCapture}
+              onClick={onSelect}
+              onKeyDown={(event) => keyboard(event, corner)}
+            >
+              <span aria-hidden="true" />
+            </button>
+          ))}
         </>
       ) : (
         <span title={value || field.label}>{value || field.label}</span>

@@ -1,4 +1,5 @@
 import {
+  faro,
   getWebInstrumentations,
   initializeFaro,
   TransportItemType,
@@ -20,6 +21,7 @@ const pages = new Set(['search', 'activity', 'communications', 'operations', 'se
 const endpoints = new Set(['search', 'summary', 'landing', 'config', 'modules', 'session', 'me'])
 const actions = new Set(['edit', 'delete', 'revisions', 'download', 'photo', 'sync', 'read', 'pdf', 'link', 'revoke', 'complete'])
 const eventNames = new Set([
+  'signing.preview.failure',
   'click', 'navigation', 'view_changed', 'session_start', 'session_resume', 'session_extend',
   'route_change', 'faro.navigation', 'faro.performance.navigation', 'faro.performance.resource',
   'faro.tracing.fetch', 'faro.tracing.xml-http-request', 'faro.user.action', 'securitypolicyviolation',
@@ -43,6 +45,14 @@ const metricNames = new Set([
   'connection_duration', 'request_duration', 'waiting_duration', 'cache_duration',
 ])
 const errorTypes = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'EvalError', 'UnhandledRejection'])
+const pdfStages = new Set(['load', 'render', 'text'])
+const pdfFailureTypes = new Set(['Error', 'TypeError', 'RangeError', 'InvalidPDFException', 'MissingPDFException', 'UnexpectedResponseException', 'UnknownErrorException', 'AbortException', 'RenderingCancelledException', 'unknown'])
+
+export function reportPDFPreviewFailure(stage: 'load' | 'render' | 'text', error: unknown) {
+  const name = error && typeof error === 'object' && 'name' in error ? error.name : undefined
+  const reason = typeof name === 'string' && pdfFailureTypes.has(name) ? name : 'unknown'
+  faro?.api.pushEvent('signing.preview.failure', { 'pdf.stage': stage, 'pdf.failure': reason })
+}
 
 export function telemetryURL(value: string): string {
   try {
@@ -70,6 +80,8 @@ export function telemetryURL(value: string): string {
 }
 
 function safeAttribute(key: string, value: unknown): string | number | undefined {
+  if (key === 'pdf.stage' && typeof value === 'string' && pdfStages.has(value)) return value
+  if (key === 'pdf.failure' && typeof value === 'string' && pdfFailureTypes.has(value)) return value
   if (typeof value === 'string' && urlAttributes.has(key)) return telemetryURL(value)
   if (['http.method', 'http.request.method'].includes(key) && typeof value === 'string' && methods.has(value)) return value
   if (numericAttributes.has(key) && (typeof value === 'number' || typeof value === 'string') && /^\d+(\.\d+)?$/.test(String(value)) && Number.isFinite(Number(value))) return value

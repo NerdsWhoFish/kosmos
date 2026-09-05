@@ -20,6 +20,7 @@ export function SigningEditor({
   const [request, setRequest] = useState(initial);
   const [fields, setFields] = useState(initial.fields ?? []);
   const [selectedID, setSelectedID] = useState("");
+  const [focusFieldID, setFocusFieldID] = useState("");
   const [page, setPage] = useState(1);
   const [signerName, setSignerName] = useState(initial.signerName ?? "");
   const [signerEmail, setSignerEmail] = useState(initial.signerEmail ?? "");
@@ -70,10 +71,11 @@ export function SigningEditor({
       height: 0.05,
       required: true,
     };
-    setFields((current) => [...current, field]);
+    setFields((current) => [...current, boundedField(field, dimensions)]);
     setSelectedID(field.id);
+    setFocusFieldID(field.id);
     setNotice(
-      `${fieldLabels[type]} added to page ${page}. Drag it or use the position controls.`,
+      `${fieldLabels[type]} added to page ${page}. Drag it into place, then drag a corner to resize.`,
     );
   }
   async function action(run: () => Promise<void>) {
@@ -222,6 +224,8 @@ export function SigningEditor({
                     field={field}
                     editable={editable && !busy}
                     selected={field.id === selectedID}
+                    pageSize={request.pages[field.page - 1]}
+                    focusOnMount={field.id === focusFieldID}
                     onSelect={() => setSelectedID(field.id)}
                     onChange={update}
                   />
@@ -235,8 +239,9 @@ export function SigningEditor({
                 <p className="eyebrow">1. Place your fields</p>
                 <h2>Make room for a signature.</h2>
                 <p>
-                  Add a field to page {page}, then drag it into place. Arrow
-                  keys move a selected field; Shift moves it further.
+                  Add a field to page {page}, drag it into place, then drag a
+                  corner to resize. Arrow keys adjust a focused field or corner;
+                  hold Shift for bigger steps.
                 </p>
                 <div className="signing-field-types">
                   {(Object.keys(fieldLabels) as SigningField["type"][]).map(
@@ -308,34 +313,37 @@ export function SigningEditor({
                           ))}
                         </select>
                       </label>
-                      <div className="signing-position">
-                        {(["x", "y", "width", "height"] as const).map((key) => (
-                          <label key={key}>
-                            {
+                      <details className="signing-precise-position">
+                        <summary>Precise position</summary>
+                        <div className="signing-position">
+                          {(["x", "y", "width", "height"] as const).map((key) => (
+                            <label key={key}>
                               {
-                                x: "Left (%)",
-                                y: "Top (%)",
-                                width: "Width (%)",
-                                height: "Height (%)",
-                              }[key]
-                            }
-                            <input
-                              type="number"
-                              step="0.5"
-                              min={
-                                key === "width" ? 5 : key === "height" ? 1.5 : 0
+                                {
+                                  x: "Left (%)",
+                                  y: "Top (%)",
+                                  width: "Width (%)",
+                                  height: "Height (%)",
+                                }[key]
                               }
-                              max={100}
-                              value={Math.round(selected[key] * 10000) / 100}
-                              onChange={(event) => {
-                                const value = event.target.valueAsNumber;
-                                if (Number.isFinite(value))
-                                  update({ ...selected, [key]: value / 100 });
-                              }}
-                            />
-                          </label>
-                        ))}
-                      </div>
+                              <input
+                                type="number"
+                                step="0.5"
+                                min={
+                                  key === "width" ? 5 : key === "height" ? 1.5 : 0
+                                }
+                                max={100}
+                                value={Math.round(selected[key] * 10000) / 100}
+                                onChange={(event) => {
+                                  const value = event.target.valueAsNumber;
+                                  if (Number.isFinite(value))
+                                    update({ ...selected, [key]: value / 100 });
+                                }}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </details>
                       <label className="signing-checkbox">
                         <input
                           type="checkbox"

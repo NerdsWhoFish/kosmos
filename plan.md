@@ -46,7 +46,8 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 42. Let deployments omit the public uptime probe and its availability alert together, then disable both in production.
 - [x] 43. Let users upload a PDF, position signature, date, name, and text fields, create an expiring link for one recipient, revoke pending requests, and download a completed PDF with consent and signing evidence.
 - [x] 44. Automatically prepare supported PDF uploads as static signing copies when needed, disclose conversion, retain the uploaded bytes, and record both hashes in completion evidence.
-- [ ] 45. Disclose and record the signer's IP address, browser description, and available approximate edge location once with the completed document, preserving the winning evidence on retries.
+- [x] 45. Disclose and record the signer's IP address, browser description, and available approximate edge location once with the completed document, preserving the winning evidence on retries.
+- [ ] 46. Keep PDF preview readiness independent from optional text extraction, and make direct field dragging and resizing usable on touch and desktop.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
@@ -69,4 +70,6 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] Verify item 44 with PDF conversion, security, API-contract, frontend, accessibility, responsive browser, and production-build checks.
 - [x] Release and deploy item 44 through Quill and Spacelift, then verify a converted document through upload, preparation, signing, evidence, and authenticated original download in production.
 - [x] Verify item 45 with signed-ingress tamper/replay tests, immutable completion evidence, Unicode PDF rendering, frontend disclosure, and telemetry privacy checks.
-- [ ] Deploy the compatible ingress before the application for item 45, then verify production session metadata, completed PDF evidence, retry stability, and telemetry privacy.
+- [x] Deploy the compatible ingress before the application for item 45, then verify production session metadata, completed PDF evidence, retry stability, and telemetry privacy.
+- [x] Verify item 46 with render/text failure regressions, Safari stream-feature compatibility, mouse and touch gestures, zoomed coordinates, saved positions, accessibility, and the production build.
+- [ ] Release and deploy item 46 through Quill and Spacelift, then verify preview readiness and field manipulation in production.
