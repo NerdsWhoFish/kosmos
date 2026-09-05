@@ -36,9 +36,9 @@ Open Documents, choose Signing, upload a PDF, and place signature, date, name, o
 
 The recipient opens the link without a Kosmos account, reviews the PDF, fills the required fields, and explicitly agrees to electronic signing. Signature fields accept typed text. Date fields use the completion date in UTC and name fields use the signer's entered full name. Both parties can download the completed PDF with its signing record page. Rotating the integration key invalidates all signing links, including completed downloads. Workspace users retain authenticated access to original and completed documents after link expiry or key rotation.
 
-Uploads support unencrypted, flattened PDFs up to 10 MiB and 50 pages, with up to 100 fields. Forms, annotations, actions, attachments, optional content, rotation metadata, and nondefault cropping or scaling must be removed before upload. Signing text supports Windows-1252 Western European characters and must fit its field at a readable size.
+Uploads support unencrypted PDFs up to 10 MiB and 50 pages, with up to 100 fields. Already compatible PDFs remain unchanged. Kosmos automatically prepares other supported PDFs as static page images, preserving their visible form and annotation state while removing active content. Converted document bodies lose selectable text and accessibility structure, so review the prepared preview before creating a link. Encrypted PDFs, XFA, unsupported form states, and documents exceeding conversion limits are rejected. Signing text supports Windows-1252 Western European characters and must fit its field at a readable size.
 
-A signing link proves possession, can be forwarded, and does not verify the recipient's identity or email. The signing record contains consent, the supplied name and email, a UTC timestamp, and the original document hash; metadata also records the completed PDF hash. This feature provides electronic signatures without a PKI digital certificate or a claim of DocuSign compliance equivalence. See [ADR 0017](adr/0017-embed-single-recipient-electronic-signing-in-kosmos.md) for the tradeoffs and [operations](docs/operations.md#pdf-signing) for recovery.
+A signing link proves possession, can be forwarded, and does not verify the recipient's identity or email. The signing record contains consent, the supplied name and email, a UTC timestamp, and the prepared document hash. For converted uploads, Kosmos retains the uploaded bytes for authenticated download and records their hash separately in the evidence. Metadata also records the completed PDF hash. This feature provides electronic signatures without a PKI digital certificate or a claim of DocuSign compliance equivalence. See [ADR 0017](adr/0017-embed-single-recipient-electronic-signing-in-kosmos.md), [ADR 0018](adr/0018-prepare-unsupported-signing-pdfs-as-static-page-images.md), and [operations](docs/operations.md#pdf-signing) for tradeoffs and recovery.
 
 ## Observability
 
@@ -48,4 +48,4 @@ W3C trace context and baggage propagate across HTTP and queued jobs. Releases id
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Embedded PDF preparation components retain their own licenses in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt), included in release archives and container images.

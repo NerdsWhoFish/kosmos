@@ -51,7 +51,7 @@ func decodeSigningResponse(t *testing.T, response *httptest.ResponseRecorder, st
 	return request
 }
 
-func createSigningFixture(t *testing.T, mux http.Handler) SigningRequest {
+func signingUploadCall(t *testing.T, mux http.Handler, data []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -62,7 +62,7 @@ func createSigningFixture(t *testing.T, mux http.Handler) SigningRequest {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = part.Write(signingPDFTestDocument("", "", 1)); err != nil {
+	if _, err = part.Write(data); err != nil {
 		t.Fatal(err)
 	}
 	if err = writer.Close(); err != nil {
@@ -72,10 +72,22 @@ func createSigningFixture(t *testing.T, mux http.Handler) SigningRequest {
 	r.Header.Set("Content-Type", writer.FormDataContentType())
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
+	return w
+}
+
+func uploadSigningFixture(t *testing.T, mux http.Handler, data []byte) SigningRequest {
+	t.Helper()
+	w := signingUploadCall(t, mux, data)
 	item := decodeSigningResponse(t, w, 201)
 	if strings.Contains(w.Body.String(), "originalObject") || strings.Contains(w.Body.String(), "createdBy") {
 		t.Fatal("private storage metadata exposed")
 	}
+	return item
+}
+
+func createSigningFixture(t *testing.T, mux http.Handler) SigningRequest {
+	t.Helper()
+	item := uploadSigningFixture(t, mux, signingPDFTestDocument("", "", 1))
 	fields := []SigningField{
 		{ID: "signature", Type: "signature", Label: "Signature", Page: 1, X: 0.1, Y: 0.2, Width: 0.5, Height: 0.1, Required: true},
 		{ID: "date", Type: "date", Label: "Date", Page: 1, X: 0.1, Y: 0.4, Width: 0.5, Height: 0.1, Required: true},

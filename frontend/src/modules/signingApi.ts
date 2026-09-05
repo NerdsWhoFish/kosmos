@@ -27,6 +27,8 @@ export type SigningRequest = {
   expiresAt?: string;
   completedAt?: string;
   originalSHA256: string;
+  flattened?: boolean;
+  uploadedSHA256?: string;
   signedSHA256?: string;
 };
 

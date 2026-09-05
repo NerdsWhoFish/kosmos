@@ -45,6 +45,7 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 41. Keep large document images within the reading surface, cap images embedded in table cells, and render GitHub-flavored Markdown tables in a keyboard-scrollable responsive region.
 - [x] 42. Let deployments omit the public uptime probe and its availability alert together, then disable both in production.
 - [x] 43. Let users upload a PDF, position signature, date, name, and text fields, create an expiring link for one recipient, revoke pending requests, and download a completed PDF with consent and signing evidence.
+- [ ] 44. Automatically prepare supported PDF uploads as static signing copies when needed, disclose conversion, retain the uploaded bytes, and record both hashes in completion evidence.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.
@@ -64,3 +65,5 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] Verify item 43 with backend unit, race, vet, API-contract, security, concurrency, and PDF rendering tests.
 - [x] Verify item 43 with frontend unit, accessibility, production-build, and responsive signing workflows on phone, tablet, laptop, and desktop.
 - [x] Release item 43 through Quill, deploy the pinned image through Spacelift, and verify the complete signing workflow in production before accepting the release.
+- [x] Verify item 44 with PDF conversion, security, API-contract, frontend, accessibility, responsive browser, and production-build checks.
+- [ ] Release and deploy item 44 through Quill and Spacelift, then verify a converted document through upload, preparation, signing, evidence, and authenticated original download in production.
