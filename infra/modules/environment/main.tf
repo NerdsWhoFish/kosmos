@@ -51,10 +51,11 @@ locals {
     var.faro_url == null ? {} : { KOSMOS_FARO_URL = var.faro_url },
   )
   job_environment_variables = merge(local.base_environment_variables, {
-    KOSMOS_PROCESS_ROLE   = "jobs"
-    KOSMOS_TASKS_PROJECT  = var.project_id
-    KOSMOS_TASKS_LOCATION = var.region
-    KOSMOS_TASKS_QUEUE    = google_cloud_tasks_queue.jobs.name
+    KOSMOS_PROCESS_ROLE       = "jobs"
+    KOSMOS_ATTACHMENTS_BUCKET = local.attachments_bucket
+    KOSMOS_TASKS_PROJECT      = var.project_id
+    KOSMOS_TASKS_LOCATION     = var.region
+    KOSMOS_TASKS_QUEUE        = google_cloud_tasks_queue.jobs.name
   })
   pagination_indexes = {
     account_events = {
@@ -290,6 +291,28 @@ resource "google_storage_bucket_iam_member" "runtime_attachments" {
   member = "serviceAccount:${google_service_account.runtime.email}"
 }
 
+resource "google_project_iam_custom_role" "worker_signing_cleanup" {
+  project     = var.project_id
+  role_id     = "kosmos_${var.environment}_signing_cleanup"
+  title       = "Kosmos signing PDF cleanup"
+  description = "Delete signing PDF objects after their storage retention permits cleanup."
+  permissions = ["storage.objects.delete"]
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_storage_bucket_iam_member" "worker_signing_cleanup" {
+  bucket = google_storage_bucket.attachments.name
+  role   = google_project_iam_custom_role.worker_signing_cleanup.name
+  member = "serviceAccount:${google_service_account.worker.email}"
+
+  condition {
+    title       = "signing_documents_only"
+    description = "The cleanup worker only deletes signing documents for this organization."
+    expression  = "resource.type == \"storage.googleapis.com/Object\" && resource.name.startsWith(${jsonencode("projects/_/buckets/${google_storage_bucket.attachments.name}/objects/${var.organization_id}/signing/")})"
+  }
+}
+
 resource "google_iam_workload_identity_pool" "github" {
   project                   = var.project_id
   workload_identity_pool_id = "${local.name_prefix}-github"
@@ -503,6 +526,7 @@ resource "google_cloud_run_v2_service" "jobs" {
   depends_on = [
     google_project_iam_member.worker_firestore,
     google_project_iam_member.worker_tasks,
+    google_storage_bucket_iam_member.worker_signing_cleanup,
     google_service_account_iam_member.runtime_job_invoker,
     google_secret_manager_secret_iam_member.worker,
     google_secret_manager_secret_version.integration,

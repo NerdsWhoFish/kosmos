@@ -21,6 +21,14 @@ mock_provider "google" {
 
 mock_provider "grafana" {}
 
+override_resource {
+  target = google_service_account.worker
+  values = {
+    email = "kosmos-worker@kosmos-test.iam.gserviceaccount.com"
+    name  = "projects/kosmos-test/serviceAccounts/kosmos-worker@kosmos-test.iam.gserviceaccount.com"
+  }
+}
+
 run "bootstrap_defaults" {
   command = plan
 
@@ -145,6 +153,42 @@ run "production_service" {
   }
 
   assert {
+    condition     = contains([for env in google_cloud_run_v2_service.jobs[0].template[0].containers[0].env : env.value if env.name == "KOSMOS_ATTACHMENTS_BUCKET"], google_storage_bucket.attachments.name)
+    error_message = "durable cleanup jobs must use the real attachment bucket instead of an in-memory blob store"
+  }
+
+  assert {
+    condition     = google_project_iam_custom_role.worker_signing_cleanup.permissions == toset(["storage.objects.delete"])
+    error_message = "cleanup must only delete objects, without reading, listing, creating, or overriding retention"
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.worker_signing_cleanup.bucket == google_storage_bucket.attachments.name && google_storage_bucket_iam_member.worker_signing_cleanup.member == "serviceAccount:${google_service_account.worker.email}" && google_storage_bucket_iam_member.worker_signing_cleanup.role == google_project_iam_custom_role.worker_signing_cleanup.name
+    error_message = "the delete-only grant must belong to the dedicated worker and attachment bucket"
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.worker_signing_cleanup.condition[0].expression == "resource.type == \"storage.googleapis.com/Object\" && resource.name.startsWith(\"projects/_/buckets/kosmos-production-attachments/objects/nerds-who-fish/signing/\")"
+    error_message = "worker deletion must be restricted to this organization's signing object prefix"
+  }
+
+  assert {
+    condition     = tonumber(google_storage_bucket.attachments.retention_policy[0].retention_period) == 2592000 && google_storage_bucket.attachments.uniform_bucket_level_access && google_storage_bucket.attachments.public_access_prevention == "enforced" && !google_storage_bucket.attachments.force_destroy
+    error_message = "cleanup access must preserve 30-day retention, private bucket access, and deletion protection"
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in google_storage_bucket.attachments.lifecycle_rule :
+      one(rule.action).type != "Delete" || (
+        coalesce(one(rule.condition).days_since_noncurrent_time, 0) > 0 &&
+        coalesce(one(rule.condition).age, 0) == 0
+      )
+    ])
+    error_message = "active documents must remain indefinitely; every lifecycle deletion must require a noncurrent version and omit age-based expiration"
+  }
+
+  assert {
     condition     = length([for env in google_cloud_run_v2_service.jobs[0].template[0].containers[0].env : env if contains(["KOSMOS_SESSION_SECRET", "KOSMOS_INTAKE_SECRET"], env.name)]) == 0
     error_message = "the private worker must not receive web-only signing secrets"
   }
@@ -218,5 +262,34 @@ run "production_service" {
   assert {
     condition     = length(grafana_dashboard.kosmos) == 1 && length(grafana_rule_group.kosmos) == 1
     error_message = "production must manage the Kosmos Grafana dashboard and alert rule"
+  }
+}
+
+run "custom_signing_cleanup_scope" {
+  command = plan
+
+  variables {
+    project_id               = "kosmos-other"
+    environment              = "test"
+    image_digest             = "us-east1-docker.pkg.dev/kosmos-other/kosmos/kosmos@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    attachments_bucket_name  = "custom-private-documents"
+    organization_id          = "other-organization"
+    integration_secret_value = "test-only-integration-secret-value"
+    intake_secret_value      = "test-only-intake-signing-secret-value"
+  }
+
+  assert {
+    condition     = contains([for env in google_cloud_run_v2_service.jobs[0].template[0].containers[0].env : env.value if env.name == "KOSMOS_ATTACHMENTS_BUCKET"], "custom-private-documents")
+    error_message = "cleanup must follow a deployment's configured bucket instead of assuming the project default"
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.worker_signing_cleanup.condition[0].expression == "resource.type == \"storage.googleapis.com/Object\" && resource.name.startsWith(\"projects/_/buckets/custom-private-documents/objects/other-organization/signing/\")"
+    error_message = "cleanup IAM must follow the configured bucket and organization without exposing other document prefixes"
+  }
+
+  assert {
+    condition     = google_storage_bucket_iam_member.worker_signing_cleanup.member != google_storage_bucket_iam_member.runtime_attachments.member && google_storage_bucket_iam_member.worker_signing_cleanup.role != google_storage_bucket_iam_member.runtime_attachments.role
+    error_message = "worker cleanup must not reuse the web service's identity or broad object administrator role"
   }
 }
