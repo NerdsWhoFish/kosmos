@@ -121,6 +121,20 @@ func TestPublicConfigReturnsRuntimeFaroSettings(t *testing.T) {
 	}
 }
 
+func TestDurableMetadataRequiresDurableFiles(t *testing.T) {
+	for _, bucket := range []string{"", "  "} {
+		if err := validateStorageConfiguration("production-project", bucket); err == nil {
+			t.Fatal("missing bucket allowed durable cleanup to use in-memory storage")
+		}
+	}
+	if err := validateStorageConfiguration("production-project", "private-attachments"); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateStorageConfiguration("", ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProcessRole(t *testing.T) {
 	for input, want := range map[string]string{"": "web", "WEB": "web", " jobs ": "jobs"} {
 		got, err := processRole(input)

@@ -61,6 +61,9 @@ func run() error {
 	var operationsStore operations.Store = operations.NewMemoryStore()
 	var blobStore operations.BlobStore = operations.NewMemoryBlobStore()
 	projectID := os.Getenv("KOSMOS_GCP_PROJECT")
+	if err := validateStorageConfiguration(projectID, os.Getenv("KOSMOS_ATTACHMENTS_BUCKET")); err != nil {
+		return err
+	}
 	if projectID != "" {
 		firestoreClient, err := firestore.NewClient(context.Background(), projectID)
 		if err != nil {
@@ -223,6 +226,13 @@ func integrationSecret() []byte {
 		value = os.Getenv("KOSMOS_SESSION_SECRET")
 	}
 	return []byte(value)
+}
+
+func validateStorageConfiguration(projectID, bucket string) error {
+	if projectID != "" && strings.TrimSpace(bucket) == "" {
+		return errors.New("KOSMOS_ATTACHMENTS_BUCKET is required with KOSMOS_GCP_PROJECT; durable records cannot use in-memory file storage")
+	}
+	return nil
 }
 
 func processRole(value string) (string, error) {
