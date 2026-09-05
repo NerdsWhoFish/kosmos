@@ -28,6 +28,7 @@ import (
 const signingConsent = "I agree to use electronic records and signatures, have reviewed this document, and intend my signature to be binding."
 
 var signingIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+var signingUploadSlot = make(chan struct{}, 1)
 
 type SigningPage struct {
 	Width  float64 `json:"width" firestore:"width"`
@@ -67,10 +68,13 @@ type SigningRequest struct {
 	ExpiresAt           *time.Time     `json:"expiresAt,omitempty" firestore:"expiresAt,omitempty"`
 	CompletedAt         *time.Time     `json:"completedAt,omitempty" firestore:"completedAt,omitempty"`
 	OriginalSHA256      string         `json:"originalSHA256" firestore:"originalSHA256"`
+	UploadedSHA256      string         `json:"uploadedSHA256,omitempty" firestore:"uploadedSHA256,omitempty"`
+	Flattened           bool           `json:"flattened,omitempty" firestore:"flattened,omitempty"`
 	SignedSHA256        string         `json:"signedSHA256,omitempty" firestore:"signedSHA256,omitempty"`
 	Events              []SigningEvent `json:"events" firestore:"events"`
 	Consent             string         `json:"consent,omitempty" firestore:"consent,omitempty"`
 	OriginalObject      string         `json:"-" firestore:"originalObject"`
+	UploadedObject      string         `json:"-" firestore:"uploadedObject,omitempty"`
 	SignedObject        string         `json:"-" firestore:"signedObject,omitempty"`
 	TokenHash           string         `json:"-" firestore:"tokenHash,omitempty"`
 	CreatedBy           string         `json:"-" firestore:"createdBy"`
@@ -116,6 +120,14 @@ func (m *Module) createSigningRequest(w http.ResponseWriter, r *http.Request) {
 	if !m.allowSigningRate(w, r, scope, "upload", 20) {
 		return
 	}
+	select {
+	case signingUploadSlot <- struct{}{}:
+		defer func() { <-signingUploadSlot }()
+	default:
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusTooManyRequests, "signing_busy", "Another document is being prepared. Please try again shortly.")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+(64<<10))
 	if err := r.ParseMultipartForm(maxUploadSize + (64 << 10)); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pdf", "Upload one PDF no larger than 10 MB")
@@ -138,7 +150,7 @@ func (m *Module) createSigningRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_pdf", "Could not read PDF, or it exceeds 10 MB")
 		return
 	}
-	pages, err := inspectSigningPDF(data)
+	prepared, pages, flattened, err := prepareSigningPDF(ctx, data)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_pdf", err.Error())
 		return
@@ -153,18 +165,33 @@ func (m *Module) createSigningRequest(w http.ResponseWriter, r *http.Request) {
 		name = "document.pdf"
 	}
 	now := time.Now().UTC()
-	item := SigningRequest{ID: id, Title: title, FileName: name, Status: "draft", Pages: pages, Fields: []SigningField{}, Revision: 1, CreatedAt: now, UpdatedAt: now, OriginalSHA256: signingHash(data), OriginalObject: scope + "/signing/" + id + "/original.pdf", CreatedBy: actor.Email, Events: []SigningEvent{{Action: "created", At: now}}}
-	if err := m.blobs.Put(ctx, item.OriginalObject, "application/pdf", bytes.NewReader(data)); err != nil {
-		m.cleanupSigningObject(ctx, scope, item.ID, item.OriginalObject)
+	item := SigningRequest{ID: id, Title: title, FileName: name, Status: "draft", Pages: pages, Fields: []SigningField{}, Revision: 1, CreatedAt: now, UpdatedAt: now, OriginalSHA256: signingHash(prepared), UploadedSHA256: signingHash(data), Flattened: flattened, OriginalObject: scope + "/signing/" + id + "/original.pdf", CreatedBy: actor.Email, Events: []SigningEvent{{Action: "created", At: now}}}
+	objects := []string{item.OriginalObject}
+	cleanup := func() {
+		for _, object := range objects {
+			m.cleanupSigningObject(ctx, scope, item.ID, object)
+		}
+	}
+	if flattened {
+		item.UploadedObject = scope + "/signing/" + id + "/uploaded.pdf"
+		objects = append(objects, item.UploadedObject)
+		if err := m.blobs.Put(ctx, item.UploadedObject, "application/pdf", bytes.NewReader(data)); err != nil {
+			cleanup()
+			signingFailure(w)
+			return
+		}
+	}
+	if err := m.blobs.Put(ctx, item.OriginalObject, "application/pdf", bytes.NewReader(prepared)); err != nil {
+		cleanup()
 		signingFailure(w)
 		return
 	}
 	if err := m.store.Create(ctx, scope, "signingRequests", id, item); err != nil {
-		m.cleanupSigningObject(ctx, scope, item.ID, item.OriginalObject)
+		cleanup()
 		signingFailure(w)
 		return
 	}
-	slog.InfoContext(ctx, "signing request created")
+	slog.InfoContext(ctx, "signing request created", "signing.flattened", flattened)
 	writeJSON(w, http.StatusCreated, item)
 }
 
@@ -427,20 +454,34 @@ func (m *Module) signingPDF(w http.ResponseWriter, r *http.Request) {
 	}
 	item, ok := m.loadSigningRequest(w, r, scope)
 	if ok {
-		m.serveSigningPDF(w, r, item)
+		m.serveSigningPDF(w, r, item, r.URL.Query().Get("uploaded") == "true")
 	}
 }
 
 func (m *Module) publicSigningPDF(w http.ResponseWriter, r *http.Request) {
 	item, ok := m.publicSigningAccess(w, r)
 	if ok {
-		m.serveSigningPDF(w, r, item)
+		if r.URL.Query().Get("uploaded") == "true" {
+			writeError(w, 400, "invalid_pdf_version", "The uploaded source is available only to the sender")
+			return
+		}
+		m.serveSigningPDF(w, r, item, false)
 	}
 }
 
-func (m *Module) serveSigningPDF(w http.ResponseWriter, r *http.Request, item SigningRequest) {
+func (m *Module) serveSigningPDF(w http.ResponseWriter, r *http.Request, item SigningRequest, uploaded bool) {
 	object := item.OriginalObject
 	name := "document.pdf"
+	if uploaded {
+		if r.URL.Query().Get("completed") == "true" {
+			writeError(w, 400, "invalid_pdf_version", "Choose the uploaded or completed PDF")
+			return
+		}
+		if item.UploadedObject != "" {
+			object = item.UploadedObject
+		}
+		name = "uploaded-document.pdf"
+	}
 	if r.URL.Query().Get("completed") == "true" {
 		if item.Status != "completed" || item.SignedObject == "" {
 			writeError(w, 409, "signing_incomplete", "This document has not been signed yet")
@@ -530,7 +571,7 @@ func (m *Module) completeSigningRequest(w http.ResponseWriter, r *http.Request) 
 		signingFailure(w)
 		return
 	}
-	certificate := SigningCertificate{ID: item.ID, DocumentTitle: item.Title, SignerName: input.SignerName, SignerEmail: item.SignerEmail, OriginalSHA256: item.OriginalSHA256, SignedAt: now, Consent: signingConsent}
+	certificate := SigningCertificate{ID: item.ID, DocumentTitle: item.Title, SignerName: input.SignerName, SignerEmail: item.SignerEmail, OriginalSHA256: item.OriginalSHA256, UploadedSHA256: item.UploadedSHA256, SignedAt: now, Consent: signingConsent}
 	output, err := renderSigningPDF(data, item.Fields, values, certificate)
 	if err != nil {
 		writeError(w, 400, "signing_render_failed", err.Error())
@@ -585,7 +626,7 @@ func (m *Module) cleanupSigningObject(ctx context.Context, scope, id, object str
 	defer cancel()
 	var current SigningRequest
 	err := m.store.Get(ctx, scope, "signingRequests", id, &current)
-	if errors.Is(err, errNotFound) || (err == nil && current.OriginalObject != object && current.SignedObject != object) {
+	if errors.Is(err, errNotFound) || (err == nil && current.OriginalObject != object && current.UploadedObject != object && current.SignedObject != object) {
 		if err := m.blobs.Delete(ctx, object); err != nil && !errors.Is(err, errNotFound) {
 			slog.ErrorContext(ctx, "signing orphan cleanup failed")
 		}

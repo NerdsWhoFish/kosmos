@@ -64,7 +64,7 @@ export function SigningPDF({
       .catch(() => {
         if (!abort.signal.aborted)
           setError(
-            "The PDF could not be displayed. Retry or download the original to review it.",
+            "The PDF could not be displayed. Retry or download the document to review it.",
           );
       });
     return () => {

@@ -28,6 +28,7 @@ type SigningCertificate struct {
 	SignerName     string
 	SignerEmail    string
 	OriginalSHA256 string
+	UploadedSHA256 string
 	SignedAt       time.Time
 	Consent        string
 }
@@ -411,13 +412,22 @@ func signingCertificateContent(certificate SigningCertificate) ([]byte, error) {
 		"Signer name (as supplied): " + certificate.SignerName,
 		"Signer email (as supplied): " + certificate.SignerEmail,
 		"Signed at (UTC): " + certificate.SignedAt.UTC().Format(time.RFC3339),
-		"Original document SHA-256:",
+		"Document reviewed SHA-256:",
 		certificate.OriginalSHA256,
+	}
+	if certificate.UploadedSHA256 != "" && certificate.UploadedSHA256 != certificate.OriginalSHA256 {
+		lines = append(lines,
+			"A static copy was prepared from the uploaded PDF before signing.",
+			"Uploaded document SHA-256:",
+			certificate.UploadedSHA256,
+		)
+	}
+	lines = append(lines,
 		"Electronic signing consent:",
 		certificate.Consent,
 		"Completed through a signing link. Identity and email are self-reported.",
 		"This record is an electronic signature audit record, not a PKI digital signature.",
-	}
+	)
 	var output bytes.Buffer
 	y := 744.0
 	for i, line := range lines {

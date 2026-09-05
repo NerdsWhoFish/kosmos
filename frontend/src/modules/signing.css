@@ -141,6 +141,7 @@
   color: var(--theme-danger);
 }
 .signing-notice {
+  margin: 16px 0;
   border-left: 3px solid var(--theme-success);
   padding: 13px 16px;
   color: var(--theme-text);

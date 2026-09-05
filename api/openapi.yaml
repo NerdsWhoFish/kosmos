@@ -1550,7 +1550,7 @@ paths:
           $ref: '#/components/responses/SigningFailure'
     post:
       operationId: createSigningRequest
-      description: Upload one immutable original PDF as a draft. Accepts up to 10 MiB and 50 pages. Requires an unencrypted flattened PDF without annotations, forms, actions, attachments, optional content, rotation metadata, nondefault cropping, or page scaling. Page dimensions must be 1 to 40 inches. Additional parser resource limits apply. Limited to 20 uploads per organization per minute.
+      description: Upload one PDF as a draft. Accepts up to 10 MiB and 50 pages. Already compatible inputs remain byte-identical; other supported inputs are prepared as static page images using sandboxed PDFium at 200 DPI with JPEG quality 95. Conversion preserves visible forms and annotations but removes selectable body text and document accessibility structure. Rejects encryption, XFA, unsupported form states, and inputs exceeding parser or conversion limits. Conversion permits at most eight million pixels per page and 10 MiB output with bounded time and memory. One upload per process is admitted before buffering its body; a busy process returns 429 with Retry-After 1. Prepared page dimensions must be 1 to 40 inches. Limited to 20 uploads per organization per minute.
       parameters:
         - $ref: '#/components/parameters/CSRF'
       requestBody:
@@ -1739,9 +1739,12 @@ paths:
       parameters:
         - $ref: '#/components/parameters/RecordID'
         - $ref: '#/components/parameters/CompletedPDF'
+        - $ref: '#/components/parameters/UploadedPDF'
       responses:
         '200':
           $ref: '#/components/responses/SigningPDF'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1774,6 +1777,7 @@ paths:
   /signing/{id}/pdf:
     get:
       operationId: downloadPublicSigningPDF
+      description: Download the prepared signing copy or completed artifact. Raw uploaded bytes are private; uploaded=true is rejected with 400.
       security:
         - signingToken: []
       parameters:
@@ -1782,6 +1786,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/SigningPDF'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1850,7 +1856,15 @@ components:
       name: completed
       in: query
       required: false
-      description: Set to true to download the completed PDF with its signing record page. Otherwise returns the original upload. Returns 409 if completion is requested before signing.
+      description: Set to true to download the completed PDF with its signing record page. Otherwise returns the prepared signing copy. Returns 409 if completion is requested before signing. Cannot be combined with uploaded=true.
+      schema:
+        type: boolean
+        default: false
+    UploadedPDF:
+      name: uploaded
+      in: query
+      required: false
+      description: Set to true for an authenticated download of the raw uploaded PDF, including before automatic preparation. Cannot be combined with completed=true. Public signing downloads reject uploaded=true with 400.
       schema:
         type: boolean
         default: false
@@ -1941,7 +1955,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     SigningRateLimited:
-      description: Shared quota exceeded. Uploads allow 20 per organization per minute; public reads, downloads, and completions share 120 per request per minute, and pending completions additionally allow 10 attempts per request per minute.
+      description: Shared quota exceeded or this process is already handling an upload. Uploads allow 20 per organization per minute and one concurrent upload per process; a busy process returns Retry-After 1 before buffering the body. Public reads, downloads, and completions share 120 per request per minute, and pending completions additionally allow 10 attempts per request per minute.
       headers:
         Retry-After:
           description: Seconds until the quota can be retried.
@@ -2303,6 +2317,14 @@ components:
         originalSHA256:
           type: string
           pattern: '^[a-f0-9]{64}$'
+          description: SHA-256 of the immutable prepared PDF on which signing fields are placed. Equal to the upload hash when no preparation was needed.
+        uploadedSHA256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: SHA-256 of the raw uploaded bytes. Equal to originalSHA256 when preparation was unnecessary; absent on requests created before automatic preparation was introduced.
+        flattened:
+          type: boolean
+          description: True when the upload was converted to a static page-image PDF. Converted body text is not selectable.
         signedSHA256:
           type: string
           pattern: '^[a-f0-9]{64}$'

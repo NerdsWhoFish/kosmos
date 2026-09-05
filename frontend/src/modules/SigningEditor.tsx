@@ -156,8 +156,20 @@ export function SigningEditor({
             <Download size={16} />
             {request.status === "completed"
               ? "Download signed PDF"
-              : "Download original"}
+              : request.flattened ? "Download prepared PDF" : "Download original"}
           </button>
+          {request.flattened && (
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => action(async () => {
+                await downloadPDF(`${path}/pdf?uploaded=true`, `uploaded-${request.fileName}`);
+              })}
+            >
+              <Download size={16} />
+              Download uploaded PDF
+            </button>
+          )}
           {editable && (
             <button
               className="primary-button"
@@ -176,6 +188,16 @@ export function SigningEditor({
         </div>
       </div>
       {error && <ErrorState message={error} />}
+      {request.flattened && (
+        <section className="signing-notice" aria-label="Prepared PDF">
+          <strong>Review the prepared PDF before sharing.</strong>
+          <p>
+            Forms, comments, and layers were flattened into a fixed copy. Review every page
+            to confirm it looks right. Document text is no longer selectable. Your original
+            upload is retained and available through “Download uploaded PDF”.
+          </p>
+        </section>
+      )}
       {notice && (
         <p className="signing-notice" role="status">
           {notice}

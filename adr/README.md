@@ -19,3 +19,4 @@
 | [0015](0015-persist-contact-synchronization-intents-with-workspace-mutat.md) | Persist contact synchronization intents with workspace mutations | Atomic contact outbox entries preserve provider updates and deletions through dispatch failures. |
 | [0016](0016-authenticate-intake-client-addresses-at-the-ingress-proxy.md) | Authenticate intake client addresses at the ingress proxy | Signed edge addresses and transactional Firestore quotas enforce public intake limits across Cloud Run instances. |
 | [0017](0017-embed-single-recipient-electronic-signing-in-kosmos.md) | Embed single recipient electronic signing in Kosmos | Immutable PDFs and expiring possession links support one signer without another service. |
+| [0018](0018-prepare-unsupported-signing-pdfs-as-static-page-images.md) | Prepare unsupported signing PDFs as static page images | Sandboxed PDFium prepares compatible signing copies while retaining the uploaded bytes and both hashes. |

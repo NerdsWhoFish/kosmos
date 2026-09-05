@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -11,6 +12,7 @@ import { App } from "../app/App";
 import { Signing } from "./Signing";
 import { PublicSigning } from "./PublicSigning";
 import { FieldOverlay } from "./SigningFields";
+import * as signingApi from "./signingApi";
 import {
   boundedField,
   consentText,
@@ -80,10 +82,57 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
 });
 
 describe("signing setup", () => {
+  it("keeps the upload busy during preparation and preserves the draft when preparation fails", async () => {
+    let rejectUpload!: (reason: Error) => void;
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return new Promise<Response>((_resolve, reject) => { rejectUpload = reject; });
+      return Response.json({ requests: [] });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<Signing navigate={vi.fn()} />);
+    const fileInput = await screen.findByLabelText("PDF document (up to 10 MB, 50 pages)");
+    fireEvent.change(fileInput, { target: { files: [new File(["%PDF"], "forms.pdf", { type: "application/pdf" })] } });
+    fireEvent.change(screen.getByLabelText("Document title"), { target: { value: "Form agreement" } });
+    const form = screen.getByRole("button", { name: "Upload and place fields" }).closest("form")!;
+    fireEvent.submit(form);
+    expect(screen.getByRole("button", { name: "Preparing PDF…" })).toBeDisabled();
+    expect(form).toHaveAttribute("aria-busy", "true");
+    expect(fileInput).toBeDisabled();
+    expect(screen.getByLabelText("Document title")).toBeDisabled();
+    fireEvent.submit(form);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    await act(async () => rejectUpload(new Error("Preparation failed. Please try again.")));
+    expect(await screen.findByText("Preparation failed. Please try again.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Document title")).toHaveValue("Form agreement");
+    expect(screen.getByRole("button", { name: "Upload and place fields" })).toBeEnabled();
+    expect(fileInput).toBeEnabled();
+  });
+
+  it("explains a flattened copy and offers the retained upload only to the sender", async () => {
+    const download = vi.spyOn(signingApi, "downloadPDF").mockResolvedValue();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...draft, flattened: true, uploadedSHA256: "upload-hash" })));
+    render(<Signing id="request-1" navigate={vi.fn()} />);
+    expect(await screen.findByRole("region", { name: "Prepared PDF" })).toHaveTextContent("Document text is no longer selectable");
+    fireEvent.click(screen.getByRole("button", { name: "Download uploaded PDF" }));
+    await waitFor(() => expect(download).toHaveBeenCalledWith("/api/v1/signing-requests/request-1/pdf?uploaded=true", "uploaded-agreement.pdf"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Download prepared PDF" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Download prepared PDF" }));
+    await waitFor(() => expect(download).toHaveBeenCalledWith("/api/v1/signing-requests/request-1/pdf", "agreement.pdf"));
+  });
+
+  it("keeps ordinary PDFs free of preparation notices and duplicate downloads", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(draft)));
+    render(<Signing id="request-1" navigate={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Download original" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Prepared PDF" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download uploaded PDF" })).not.toBeInTheDocument();
+  });
+
   it("includes older signing requests by following collection pagination", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => Response.json(String(input).includes("cursor=older")
       ? { requests: [{ ...draft, id: "older-request", title: "Earlier agreement" }], page: { limit: 25 } }
@@ -232,6 +281,16 @@ describe("signing setup", () => {
 });
 
 describe("customer signing", () => {
+  it("lets a customer review the prepared document without exposing the raw upload", async () => {
+    const download = vi.spyOn(signingApi, "downloadPDF").mockResolvedValue();
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...pending, flattened: true })));
+    render(<PublicSigning />);
+    expect(await screen.findByText("This document was prepared as a fixed copy for signing. Review each page before you sign.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download uploaded PDF" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download document to review" }));
+    await waitFor(() => expect(download).toHaveBeenCalledWith("/api/v1/signing/request-1/pdf", "agreement.pdf", token));
+  });
+
   it.each([320, 768, 1440])(
     "requires all fields and explicit consent before submitting at width %s",
     async (width) => {

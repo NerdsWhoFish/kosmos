@@ -193,6 +193,11 @@ export function PublicSigning() {
               ) : (
                 <div className="signing-workbench">
                   <div className="signing-document-column">
+                    {available && request.flattened && (
+                      <p className="signing-notice">
+                        This document was prepared as a fixed copy for signing. Review each page before you sign.
+                      </p>
+                    )}
                     <PageControls
                       page={page}
                       count={pageCount}
@@ -244,7 +249,7 @@ export function PublicSigning() {
                         onClick={() => download(false)}
                       >
                         <Download size={16} />
-                        Download original to review
+                        Download document to review
                       </button>
                       <fieldset disabled={busy}>
                         <label>
@@ -346,7 +351,7 @@ export function PublicSigning() {
                       </button>
                       {!documentReady && (
                         <p className="signing-hint">
-                          Wait for the PDF to load or download the original
+                          Wait for the PDF to load or download the document
                           before signing.
                         </p>
                       )}

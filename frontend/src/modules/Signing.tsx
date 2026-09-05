@@ -102,13 +102,13 @@ export function Signing({
       )}
       {!id && (
         <>
-          <form className="signing-upload signing-card" onSubmit={upload}>
+          <form className="signing-upload signing-card" onSubmit={upload} aria-busy={busy}>
             <div className="signing-upload-heading">
               <UploadCloud size={28} />
               <div>
                 <h2>Start with your PDF</h2>
                 <p>
-                  The original stays intact. Your customer gets a finished copy.
+                  We automatically prepare PDFs for signing and keep your original upload.
                 </p>
               </div>
             </div>
@@ -116,6 +116,7 @@ export function Signing({
               Document title
               <input
                 maxLength={160}
+                disabled={busy}
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder="e.g. Website services agreement"
@@ -125,6 +126,7 @@ export function Signing({
               PDF document (up to 10 MB, 50 pages)
               <input
                 type="file"
+                disabled={busy}
                 accept="application/pdf,.pdf"
                 required
                 onChange={(event) => setFile(event.target.files?.[0])}
@@ -132,7 +134,7 @@ export function Signing({
             </label>
             <button className="primary-button" disabled={busy || !file}>
               <Plus size={17} />
-              {busy ? "Uploading PDF…" : "Upload and place fields"}
+              {busy ? "Preparing PDF…" : "Upload and place fields"}
             </button>
           </form>
           <div className="signing-section-heading">
