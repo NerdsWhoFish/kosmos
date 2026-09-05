@@ -31,6 +31,8 @@ describe('browser telemetry', () => {
     ['/sign#private-request.secret-signing-token', '/sign'],
     ['/api/v1/signing/private-request/complete', '/api/v1/signing/:id/complete'],
     ['/api/v1/signing-requests/private-request/pdf?completed=true', '/api/v1/signing-requests/:id/pdf'],
+    ['/api/v1/signing-requests/private-request/download-link', '/api/v1/signing-requests/:id/download-link'],
+    ['/sign#private-request.d1_private-nonce_private-mac', '/sign'],
   ])('normalizes %s into a bounded route', (input, expected) => {
     expect(telemetryURL(input)).toBe(`${location.origin}${expected}`)
   })

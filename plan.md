@@ -48,6 +48,8 @@ This checklist is the release source of truth. Check an item only after its back
 - [x] 44. Automatically prepare supported PDF uploads as static signing copies when needed, disclose conversion, retain the uploaded bytes, and record both hashes in completion evidence.
 - [x] 45. Disclose and record the signer's IP address, browser description, and available approximate edge location once with the completed document, preserving the winning evidence on retries.
 - [x] 46. Keep PDF preview readiness independent from optional text extraction, and make direct field dragging and resizing usable on touch and desktop.
+- [ ] 47. Expire signing links shortly after completion, issue fresh download-only links for completed documents, and delete draft, completed, or revoked documents after confirmation with durable retained-file cleanup.
+- [ ] 48. Let up to ten recipients sign immediately through individual links and assigned fields, preserving each signature and session snapshot in partial and final PDFs under concurrent submissions.
 - [x] Run backend unit, race, vet, API-contract, and integration tests.
 - [x] Run frontend unit, responsive phone/tablet/desktop, accessibility, and production-build tests.
 - [x] Re-run backend unit, race, vet, API-contract, and integration tests for items 20 through 27.

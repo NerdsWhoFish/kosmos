@@ -81,6 +81,10 @@ const signingSession: SigningSession = {
   capturedAt: "2026-09-05T14:25:30Z",
   source: "direct",
 };
+const participants = [
+  { id: "customer", name: "Ada Angler", email: "ada@example.com" },
+  { id: "staff", name: "Sam Staff", email: "sam@example.com" },
+];
 
 beforeEach(() => {
   window.history.replaceState({}, "", `/sign#request-1.${token}`);
@@ -88,6 +92,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   vi.restoreAllMocks();
@@ -95,6 +100,96 @@ afterEach(() => {
 });
 
 describe("signing setup", () => {
+  it("assigns fields to each signer, requires every signature, and issues separate links", async () => {
+    let current: SigningRequest = { ...draft, signers: participants };
+    const fetcher = vi.fn(async (path: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") current = { ...current, ...JSON.parse(String(init.body)), revision: 2 };
+      if (String(path).endsWith("/link")) {
+        current = { ...current, status: "pending", revision: 3 };
+        return Response.json({ request: current, signingLinks: participants.map((signer) => ({ signerId: signer.id, signingUrl: `/sign#request-1.${signer.id}token` })) });
+      }
+      return Response.json(current);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<Signing id="request-1" navigate={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Signature" }));
+    expect(screen.getByRole("button", { name: "Create signing links" })).toBeDisabled();
+    expect(screen.getByLabelText("Assigned signer")).toHaveValue("customer");
+    fireEvent.change(screen.getByLabelText("Place fields for"), { target: { value: "staff" } });
+    fireEvent.click(screen.getByRole("button", { name: "Signature" }));
+    expect(screen.getByLabelText("Assigned signer")).toHaveValue("staff");
+    expect(screen.getByRole("button", { name: "Create signing links" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Create signing links" }));
+    expect(await screen.findByLabelText("Signing link for Ada Angler")).toHaveValue(`${window.location.origin}/sign#request-1.customertoken`);
+    expect(screen.getByLabelText("Signing link for Sam Staff")).toHaveValue(`${window.location.origin}/sign#request-1.stafftoken`);
+    expect(current.fields.map((item) => item.signerId)).toEqual(["customer", "staff"]);
+    expect(current.signers).toEqual(participants);
+    expect(screen.getByText("0 of 2 signed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add signer" })).not.toBeInTheDocument();
+  });
+
+  it("does not remove a signer while fields are still assigned to them", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...draft, signers: participants, fields: [{ ...field, signerId: "customer" }] })));
+    render(<Signing id="request-1" navigate={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Remove signer 1" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Selected field"), { target: { value: field.id } });
+    fireEvent.change(screen.getByLabelText("Assigned signer"), { target: { value: "staff" } });
+    fireEvent.click(screen.getByRole("button", { name: "Remove signer 1" }));
+    expect(screen.getByLabelText("Signer 1 name")).toHaveValue("Sam Staff");
+    expect(screen.getByLabelText("Assigned signer")).toHaveValue("staff");
+  });
+  it("creates replacement download links using the current revision and selected lifetime", async () => {
+    let current: SigningRequest = { ...draft, status: "completed", revision: 5 };
+    const fetcher = vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        current = { ...current, revision: current.revision + 1, downloadExpiresAt: "2099-09-05T12:00:00Z" };
+        return Response.json({ request: current, downloadUrl: `/sign#request-1.download${current.revision}`, expiresAt: current.downloadExpiresAt });
+      }
+      return Response.json(current);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<Signing id="request-1" navigate={vi.fn()} />);
+    const create = await screen.findByRole("button", { name: "Create download link" });
+    expect(screen.getByLabelText("Download link expires in")).toHaveValue("60");
+    fireEvent.click(create);
+    expect(await screen.findByLabelText("Private download link")).toHaveValue(`${window.location.origin}/sign#request-1.download6`);
+    fireEvent.change(screen.getByLabelText("Download link expires in"), { target: { value: "1440" } });
+    fireEvent.click(create);
+    await waitFor(() => expect(screen.getByLabelText("Private download link")).toHaveValue(`${window.location.origin}/sign#request-1.download7`));
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST").map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { revision: 5, expiresMinutes: 60 }, { revision: 6, expiresMinutes: 1440 },
+    ]);
+    expect(screen.getByText(/A new download link replaces/)).toBeInTheDocument();
+  });
+
+  it.each(["draft", "completed", "revoked"] as const)("deletes a %s document only after inline confirmation", async (status) => {
+    const navigate = vi.fn();
+    const fetcher = vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => init?.method === "DELETE"
+      ? new Response(null, { status: 204 }) : Response.json({ ...draft, status, revision: 4 }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<Signing id="request-1" navigate={navigate} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete document" }));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const confirmation = screen.getByRole("group", { name: "Confirm document deletion" });
+    expect(confirmation).toHaveTextContent("invalidates all its links");
+    expect(confirmation).toHaveTextContent("Stored files are purged when retention allows");
+    fireEvent.click(screen.getByRole("button", { name: "Keep document" }));
+    expect(screen.queryByRole("group", { name: "Confirm document deletion" })).not.toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Delete document" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete document" }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/documents/signing"));
+    const deletion = fetcher.mock.calls.find(([, init]) => init?.method === "DELETE")!;
+    expect(JSON.parse(String(deletion[1]?.body))).toEqual({ revision: 4, confirmed: true });
+    expect(new Headers(deletion[1]?.headers).get("X-Kosmos-CSRF")).toBe("1");
+  });
+
+  it("requires revoking a pending request before showing deletion controls", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(pending)));
+    render(<Signing id="request-1" navigate={vi.fn()} />);
+    expect(await screen.findByText("Revoke the active signing link before deleting this document.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete document" })).not.toBeInTheDocument();
+  });
   it.each([
     { session: signingSession, location: "Unknown" },
     { session: { ...signingSession, city: "Richmond", region: "Virginia", country: "US", source: "cloudflare" }, location: "Richmond, Virginia, US" },
@@ -319,6 +414,69 @@ describe("signing setup", () => {
 });
 
 describe("customer signing", () => {
+  it("collects only this recipient's fields and shows their signed state before everyone finishes", async () => {
+    const request: SigningRequest = { ...pending, signers: participants, currentSignerId: "customer", fields: [{ ...field, signerId: "customer" }, { ...field, id: "staff-signature", label: "Staff signature", signerId: "staff" }] };
+    const fetcher = vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) => Response.json(init?.method === "POST"
+      ? { ...request, signers: [{ ...participants[0], signedAt: "2026-09-05T12:00:00Z" }, participants[1]], accessExpiresAt: "2099-09-05T12:15:00Z" }
+      : request));
+    vi.stubGlobal("fetch", fetcher);
+    const download = vi.spyOn(signingApi, "downloadPDF").mockResolvedValue();
+    render(<PublicSigning />);
+    fireEvent.change(await screen.findByPlaceholderText("Type your signature"), { target: { value: "Ada Angler" } });
+    expect(screen.getByLabelText(consentText)).toHaveAccessibleDescription("Your IP address, browser details, and approximate location will be recorded with your signature and shared with the sender and other signers.");
+    expect(screen.queryByText(/Staff signature/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(consentText));
+    fireEvent.click(screen.getByRole("button", { name: "Agree & finish signing" }));
+    expect(await screen.findByText("Waiting for Sam Staff to sign.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Agree & finish signing" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Download current signed copy" }));
+    await waitFor(() => expect(download).toHaveBeenCalledWith("/api/v1/signing/request-1/pdf?completed=true", "signed-agreement.pdf", token));
+    const submission = fetcher.mock.calls.find(([, init]) => init?.method === "POST")!;
+    expect(JSON.parse(String(submission[1]?.body)).values).toEqual({ "signature-1": "Ada Angler" });
+  });
+
+  it("allows an unsigned recipient to sign while another is complete", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...pending, signers: [{ ...participants[0], signedAt: "2026-09-05T12:00:00Z" }, participants[1]], currentSignerId: "staff", fields: [{ ...field, signerId: "staff" }] })));
+    render(<PublicSigning />);
+    expect(await screen.findByLabelText("Your full name")).toHaveValue("Sam Staff");
+    expect(screen.getByRole("button", { name: "Agree & finish signing" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "You’re all signed." })).not.toBeInTheDocument();
+  });
+  it("uses the token-specific deadline and removes the signed PDF at expiry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-05T12:00:00Z"));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...pending, status: "completed", accessExpiresAt: "2026-09-05T12:00:02Z", postSignExpiresAt: "2026-09-05T12:15:00Z" })));
+    render(<PublicSigning />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByRole("timer")).toHaveTextContent("0:02 remaining");
+    expect(screen.getByLabelText("Document preview")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download signed PDF" })).toBeEnabled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(screen.getByRole("heading", { name: "This download link has expired." })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Document preview")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download signed PDF" })).not.toBeInTheDocument();
+    expect(screen.getByText("Your signature is saved.")).toBeInTheDocument();
+  });
+
+  it.each(["focus", "visibilitychange"])("checks elapsed wall time when returning through %s", async (event) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-05T12:00:00Z"));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...pending, status: "completed", accessExpiresAt: "2026-09-05T12:15:00Z" })));
+    render(<PublicSigning />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    vi.setSystemTime(new Date("2026-09-05T12:16:00Z"));
+    await act(async () => { (event === "focus" ? window : document).dispatchEvent(new Event(event)); });
+    expect(screen.queryByLabelText("Document preview")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "This download link has expired." })).toBeInTheDocument();
+  });
+
+  it.each([404, 410])("offers a new-link recovery for inaccessible metadata (%s)", async (status) => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: { code: "signing_unavailable", message: "Unavailable" } }, { status })));
+    render(<PublicSigning />);
+    expect(await screen.findByRole("heading", { name: "This document link is no longer available." })).toBeInTheDocument();
+    expect(screen.getByText(/Ask the sender for a new link/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Document preview")).not.toBeInTheDocument();
+  });
   it("discloses recorded connection details before consent and describes them to screen readers", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json(pending)));
     render(<PublicSigning />);

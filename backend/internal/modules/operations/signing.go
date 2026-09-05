@@ -3,8 +3,10 @@ package operations
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -26,6 +28,7 @@ import (
 )
 
 const signingConsent = "I agree to use electronic records and signatures, have reviewed this document, and intend my signature to be binding."
+const signingPostSignWindow = 15 * time.Minute
 
 var signingIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 var signingUploadSlot = make(chan struct{}, 1)
@@ -37,6 +40,7 @@ type SigningPage struct {
 
 type SigningField struct {
 	ID       string  `json:"id" firestore:"id"`
+	SignerID string  `json:"signerId,omitempty" firestore:"signerId,omitempty"`
 	Type     string  `json:"type" firestore:"type"`
 	Label    string  `json:"label" firestore:"label"`
 	Page     int     `json:"page" firestore:"page"`
@@ -59,6 +63,8 @@ type SigningRequest struct {
 	Status              string          `json:"status" firestore:"status"`
 	Pages               []SigningPage   `json:"pages" firestore:"pages"`
 	Fields              []SigningField  `json:"fields" firestore:"fields"`
+	Signers             []SigningSigner `json:"signers,omitempty" firestore:"signers,omitempty"`
+	CurrentSignerID     string          `json:"currentSignerId,omitempty" firestore:"-"`
 	Revision            int             `json:"revision" firestore:"revision"`
 	SignerName          string          `json:"signerName" firestore:"signerName"`
 	CompletedSignerName string          `json:"completedSignerName,omitempty" firestore:"completedSignerName,omitempty"`
@@ -66,6 +72,9 @@ type SigningRequest struct {
 	CreatedAt           time.Time       `json:"createdAt" firestore:"createdAt"`
 	UpdatedAt           time.Time       `json:"updatedAt" firestore:"updatedAt"`
 	ExpiresAt           *time.Time      `json:"expiresAt,omitempty" firestore:"expiresAt,omitempty"`
+	PostSignExpiresAt   *time.Time      `json:"postSignExpiresAt,omitempty" firestore:"postSignExpiresAt,omitempty"`
+	DownloadExpiresAt   *time.Time      `json:"downloadExpiresAt,omitempty" firestore:"downloadExpiresAt,omitempty"`
+	AccessExpiresAt     *time.Time      `json:"accessExpiresAt,omitempty" firestore:"-"`
 	CompletedAt         *time.Time      `json:"completedAt,omitempty" firestore:"completedAt,omitempty"`
 	OriginalSHA256      string          `json:"originalSHA256" firestore:"originalSHA256"`
 	UploadedSHA256      string          `json:"uploadedSHA256,omitempty" firestore:"uploadedSHA256,omitempty"`
@@ -78,6 +87,7 @@ type SigningRequest struct {
 	UploadedObject      string          `json:"-" firestore:"uploadedObject,omitempty"`
 	SignedObject        string          `json:"-" firestore:"signedObject,omitempty"`
 	TokenHash           string          `json:"-" firestore:"tokenHash,omitempty"`
+	DownloadTokenHash   string          `json:"-" firestore:"downloadTokenHash,omitempty"`
 	CreatedBy           string          `json:"-" firestore:"createdBy"`
 }
 
@@ -86,7 +96,9 @@ func (m *Module) registerSigningRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/signing-requests", m.createSigningRequest)
 	mux.HandleFunc("GET /api/v1/signing-requests/{id}", m.getSigningRequest)
 	mux.HandleFunc("PUT /api/v1/signing-requests/{id}", m.editSigningRequest)
+	mux.HandleFunc("DELETE /api/v1/signing-requests/{id}", m.deleteSigningRequest)
 	mux.HandleFunc("POST /api/v1/signing-requests/{id}/link", m.createSigningLink)
+	mux.HandleFunc("POST /api/v1/signing-requests/{id}/download-link", m.createSigningDownloadLink)
 	mux.HandleFunc("POST /api/v1/signing-requests/{id}/revoke", m.revokeSigningRequest)
 	mux.HandleFunc("GET /api/v1/signing-requests/{id}/pdf", m.signingPDF)
 	mux.HandleFunc("GET /api/v1/signing/{id}", m.publicSigningRequest)
@@ -271,8 +283,9 @@ func (m *Module) editSigningRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Revision int            `json:"revision"`
-		Fields   []SigningField `json:"fields"`
+		Revision int                   `json:"revision"`
+		Fields   []SigningField        `json:"fields"`
+		Signers  *[]SigningSignerInput `json:"signers"`
 	}
 	if !decodeJSON(w, r, &input, 128<<10) {
 		return
@@ -282,6 +295,18 @@ func (m *Module) editSigningRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateSigningFields(input.Fields, item.Pages, false); err != nil {
+		writeError(w, 400, "invalid_fields", err.Error())
+		return
+	}
+	if input.Signers != nil {
+		signers, err := prepareSigningSigners(*input.Signers)
+		if err != nil {
+			writeError(w, 400, "invalid_signers", err.Error())
+			return
+		}
+		item.Signers = signers
+	}
+	if err := validateSigningAssignments(input.Fields, item.Signers, false); err != nil {
 		writeError(w, 400, "invalid_fields", err.Error())
 		return
 	}
@@ -301,16 +326,29 @@ func (m *Module) createSigningLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Revision    int    `json:"revision"`
-		SignerName  string `json:"signerName"`
-		SignerEmail string `json:"signerEmail"`
-		ExpiresDays int    `json:"expiresDays"`
+		Revision    int                   `json:"revision"`
+		SignerName  string                `json:"signerName"`
+		SignerEmail string                `json:"signerEmail"`
+		ExpiresDays int                   `json:"expiresDays"`
+		Signers     *[]SigningSignerInput `json:"signers"`
 	}
 	if !decodeJSON(w, r, &input, 4096) {
 		return
 	}
 	if item.Status != "draft" || input.Revision != item.Revision {
 		signingConflict(w)
+		return
+	}
+	if input.Signers != nil {
+		signers, err := prepareSigningSigners(*input.Signers)
+		if err != nil {
+			writeError(w, 400, "invalid_signers", err.Error())
+			return
+		}
+		item.Signers = signers
+	}
+	if len(item.Signers) > 0 {
+		m.createParallelSigningLinks(w, r, scope, item, input.ExpiresDays)
 		return
 	}
 	input.SignerName = strings.TrimSpace(input.SignerName)
@@ -369,6 +407,115 @@ func (m *Module) revokeSigningRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (m *Module) createSigningDownloadLink(w http.ResponseWriter, r *http.Request) {
+	signingHeaders(w)
+	scope, _, ok := m.authorize(w, r)
+	if !ok {
+		return
+	}
+	item, ok := m.loadSigningRequest(w, r, scope)
+	if !ok {
+		return
+	}
+	var input struct {
+		Revision       int  `json:"revision"`
+		ExpiresMinutes *int `json:"expiresMinutes"`
+	}
+	if !decodeJSON(w, r, &input, 1024) {
+		return
+	}
+	if item.Status != "completed" || item.SignedObject == "" || item.CompletedAt == nil || input.Revision != item.Revision {
+		signingConflict(w)
+		return
+	}
+	minutes := 60
+	if input.ExpiresMinutes != nil {
+		minutes = *input.ExpiresMinutes
+	}
+	if minutes < 1 || minutes > 10080 {
+		writeError(w, 400, "invalid_expiry", "Choose a download link expiry from 1 to 10080 minutes")
+		return
+	}
+	if !m.allowSigningRate(w, r, scope, "download-link:"+item.ID, 20) {
+		return
+	}
+	if len(m.key) < 32 {
+		signingFailure(w)
+		return
+	}
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		signingFailure(w)
+		return
+	}
+	token := m.signingDownloadToken(scope, item.ID, base64.RawURLEncoding.EncodeToString(nonce))
+	expires := time.Now().UTC().Add(time.Duration(minutes) * time.Minute)
+	item.DownloadTokenHash, item.DownloadExpiresAt = signingHash([]byte(token)), &expires
+	next := itemWithNextRevision(item)
+	store, ok := m.store.(signingStore)
+	if !ok {
+		signingFailure(w)
+		return
+	}
+	if err := store.ReplaceSigningRequest(r.Context(), scope, item.Revision, "completed", next); err != nil {
+		var current SigningRequest
+		readErr := m.store.Get(r.Context(), scope, "signingRequests", item.ID, &current)
+		if readErr != nil || current.Status != "completed" || current.DownloadTokenHash != next.DownloadTokenHash {
+			if errors.Is(err, errSigningConflict) || errors.Is(err, errNotFound) {
+				signingConflict(w)
+			} else {
+				signingFailure(w)
+			}
+			return
+		}
+		next = cloneSigningRequest(current)
+	}
+	writeJSON(w, 200, map[string]any{"request": next, "downloadUrl": "/sign#" + item.ID + "." + token, "expiresAt": expires})
+}
+
+func (m *Module) deleteSigningRequest(w http.ResponseWriter, r *http.Request) {
+	signingHeaders(w)
+	scope, _, ok := m.authorize(w, r)
+	if !ok {
+		return
+	}
+	if !signingIDPattern.MatchString(r.PathValue("id")) {
+		writeError(w, 404, "signing_not_found", "Signing request not found")
+		return
+	}
+	var input struct {
+		Revision  int  `json:"revision"`
+		Confirmed bool `json:"confirmed"`
+	}
+	if !decodeJSON(w, r, &input, 1024) {
+		return
+	}
+	if !input.Confirmed || input.Revision < 1 {
+		writeError(w, 400, "signing_delete_confirmation_required", "Confirm deletion and include the current revision")
+		return
+	}
+	store, ok := m.store.(signingStore)
+	if !ok {
+		signingFailure(w)
+		return
+	}
+	err := store.DeleteSigningRequest(r.Context(), scope, r.PathValue("id"), input.Revision)
+	if errors.Is(err, errNotFound) {
+		writeError(w, 404, "signing_not_found", "Signing request not found")
+		return
+	}
+	if errors.Is(err, errSigningConflict) {
+		signingConflict(w)
+		return
+	}
+	if err != nil {
+		signingFailure(w)
+		return
+	}
+	slog.InfoContext(r.Context(), "signing request deleted")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func itemWithNextRevision(item SigningRequest) SigningRequest {
 	item.Revision++
 	item.UpdatedAt = time.Now().UTC()
@@ -397,33 +544,58 @@ func (m *Module) saveSigningRequest(w http.ResponseWriter, r *http.Request, scop
 func (m *Module) publicSigningAccess(w http.ResponseWriter, r *http.Request) (SigningRequest, bool) {
 	signingHeaders(w)
 	token := r.Header.Get("X-Kosmos-Signing-Token")
-	if len(token) != 43 || len(r.Header.Values("X-Kosmos-Signing-Token")) != 1 {
+	download := len(token) == 69 && strings.HasPrefix(token, "d1_")
+	signerID := signingTokenRecipient(token)
+	if len(r.Header.Values("X-Kosmos-Signing-Token")) != 1 || !signingIDPattern.MatchString(r.PathValue("id")) || !m.validSigningAccessToken(m.publicScope, r.PathValue("id"), token, download) {
 		writeError(w, 404, "signing_not_found", "This signing link is invalid")
 		return SigningRequest{}, false
 	}
-	if len(m.key) < 32 || subtle.ConstantTimeCompare([]byte(token), []byte(m.signingToken(m.publicScope, r.PathValue("id")))) != 1 {
-		writeError(w, 404, "signing_not_found", "This signing link is invalid")
+	if download && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeError(w, 403, "signing_download_only", "This link only allows downloading the signed document")
 		return SigningRequest{}, false
 	}
 	item, ok := m.loadSigningRequest(w, r, m.publicScope)
 	if !ok {
 		return item, false
 	}
-	if subtle.ConstantTimeCompare([]byte(item.TokenHash), []byte(signingHash([]byte(token)))) != 1 {
+	hash := item.TokenHash
+	expires := item.ExpiresAt
+	if signerID != "" {
+		signer := signingSignerByID(item.Signers, signerID)
+		if signer == nil {
+			writeError(w, 404, "signing_not_found", "This signing link is invalid")
+			return item, false
+		}
+		hash = signer.TokenHash
+		if signer.SignedAt != nil {
+			expires = signingSignerExpiry(*signer)
+		}
+		item.CurrentSignerID = signerID
+	} else if len(item.Signers) > 0 && !download {
+		writeError(w, 404, "signing_not_found", "This signing link is invalid")
+		return item, false
+	} else if item.Status == "completed" {
+		expires = signingPostSignExpiry(item)
+	}
+	if download {
+		hash, expires = item.DownloadTokenHash, item.DownloadExpiresAt
+	}
+	if subtle.ConstantTimeCompare([]byte(hash), []byte(signingHash([]byte(token)))) != 1 {
 		writeError(w, 404, "signing_not_found", "This signing link is invalid")
 		return item, false
 	}
-	if item.Status == "revoked" || item.ExpiresAt == nil || !item.ExpiresAt.After(time.Now()) {
-		writeError(w, 410, "signing_unavailable", "This signing link has expired or been revoked. Ask the sender for a new request.")
+	if item.Status == "revoked" || expires == nil || !expires.After(time.Now()) {
+		writeError(w, 410, "signing_unavailable", "This link has expired or been revoked. Ask the sender for a new link.")
 		return item, false
 	}
-	if !oneOf(item.Status, "pending", "completed") {
+	if !oneOf(item.Status, "pending", "completed") || (download && item.Status != "completed") {
 		writeError(w, 404, "signing_not_found", "This signing link is invalid")
 		return item, false
 	}
 	if !m.allowSigningRate(w, r, m.publicScope, "request:"+item.ID, 120) {
 		return item, false
 	}
+	item.AccessExpiresAt = expires
 	return item, true
 }
 
@@ -444,7 +616,7 @@ func (m *Module) allowSigningRate(w http.ResponseWriter, r *http.Request, scope,
 func (m *Module) publicSigningRequest(w http.ResponseWriter, r *http.Request) {
 	item, ok := m.publicSigningAccess(w, r)
 	if ok {
-		writeJSON(w, 200, item)
+		writeJSON(w, 200, publicSigningView(item))
 	}
 }
 
@@ -466,6 +638,17 @@ func (m *Module) publicSigningPDF(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "invalid_pdf_version", "The uploaded source is available only to the sender")
 			return
 		}
+		if len(r.Header.Get("X-Kosmos-Signing-Token")) == 69 && strings.HasPrefix(r.Header.Get("X-Kosmos-Signing-Token"), "d1_") && r.URL.Query().Get("completed") != "true" {
+			writeError(w, 400, "invalid_pdf_version", "This link only allows downloading the completed PDF")
+			return
+		}
+		if len(item.Signers) > 0 && item.CurrentSignerID != "" && r.URL.Query().Get("completed") == "true" {
+			signer := signingSignerByID(item.Signers, item.CurrentSignerID)
+			if signer == nil || signer.SignedAt == nil {
+				writeError(w, 403, "signing_incomplete", "Sign your fields before downloading the signed copy")
+				return
+			}
+		}
 		m.serveSigningPDF(w, r, item, false)
 	}
 }
@@ -484,11 +667,14 @@ func (m *Module) serveSigningPDF(w http.ResponseWriter, r *http.Request, item Si
 		name = "uploaded-document.pdf"
 	}
 	if r.URL.Query().Get("completed") == "true" {
-		if item.Status != "completed" || item.SignedObject == "" {
+		if item.SignedObject == "" || (item.Status != "completed" && !(len(item.Signers) > 0 && oneOf(item.Status, "pending", "revoked"))) {
 			writeError(w, 409, "signing_incomplete", "This document has not been signed yet")
 			return
 		}
 		object, name = item.SignedObject, "signed-document.pdf"
+		if item.Status != "completed" {
+			name = "partially-signed-document.pdf"
+		}
 	}
 	source, err := m.blobs.Open(r.Context(), object)
 	if err != nil {
@@ -515,6 +701,10 @@ func (m *Module) completeSigningRequest(w http.ResponseWriter, r *http.Request) 
 	}
 	if r.Header.Get("X-Kosmos-CSRF") != "1" {
 		writeError(w, 403, "csrf_required", "Signing must be submitted from the signing page")
+		return
+	}
+	if len(item.Signers) > 0 {
+		m.completeParallelSigningRequest(w, r, item)
 		return
 	}
 	var input struct {
@@ -596,6 +786,8 @@ func (m *Module) completeSigningRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	item.Status, item.CompletedSignerName, item.CompletedAt, item.SignedSHA256, item.Consent = "completed", input.SignerName, &now, signingHash(output), signingConsent
+	item.PostSignExpiresAt = signingPostSignExpiry(item)
+	item.AccessExpiresAt = item.PostSignExpiresAt
 	item.Events = append(item.Events, SigningEvent{Action: "completed", At: now})
 	store, ok := m.store.(signingStore)
 	if !ok {
@@ -611,9 +803,11 @@ func (m *Module) completeSigningRequest(w http.ResponseWriter, r *http.Request) 
 		readErr := m.store.Get(ctx, m.publicScope, "signingRequests", item.ID, &current)
 		if readErr == nil {
 			if current.SignedObject != item.SignedObject {
-				_ = m.blobs.Delete(ctx, item.SignedObject)
+				m.cleanupSigningObject(ctx, m.publicScope, item.ID, item.SignedObject)
 			}
 			if current.Status == "completed" {
+				current = cloneSigningRequest(current)
+				current.AccessExpiresAt = current.PostSignExpiresAt
 				writeJSON(w, 200, current)
 				return
 			}
@@ -632,19 +826,58 @@ func (m *Module) completeSigningRequest(w http.ResponseWriter, r *http.Request) 
 func (m *Module) cleanupSigningObject(ctx context.Context, scope, id, object string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	var current SigningRequest
-	err := m.store.Get(ctx, scope, "signingRequests", id, &current)
-	if errors.Is(err, errNotFound) || (err == nil && current.OriginalObject != object && current.UploadedObject != object && current.SignedObject != object) {
-		if err := m.blobs.Delete(ctx, object); err != nil && !errors.Is(err, errNotFound) {
-			slog.ErrorContext(ctx, "signing orphan cleanup failed")
-		}
-	} else if err != nil {
-		slog.ErrorContext(ctx, "signing orphan ownership check failed")
+	if err := m.queueSigningOrphan(ctx, scope, id, object); err != nil {
+		slog.ErrorContext(ctx, "signing orphan cleanup could not be queued")
 	}
+}
+
+func signingOwnsObject(item SigningRequest, object string) bool {
+	if item.OriginalObject == object || item.UploadedObject == object || item.SignedObject == object {
+		return true
+	}
+	for _, signer := range item.Signers {
+		if signer.SignedObject == object {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Module) signingToken(scope, id string) string {
 	return sign(m.key, "kosmos-signing-v1|"+scope+"|"+id)
+}
+
+func signingPostSignExpiry(item SigningRequest) *time.Time {
+	if len(item.Signers) > 0 || item.Status != "completed" || item.CompletedAt == nil {
+		return nil
+	}
+	expires := item.CompletedAt.Add(signingPostSignWindow)
+	return &expires
+}
+
+func (m *Module) signingDownloadToken(scope, id, nonce string) string {
+	return "d1_" + nonce + "_" + sign(m.key, "kosmos-signing-download-v1|"+scope+"|"+id+"|"+nonce)
+}
+
+func (m *Module) validSigningAccessToken(scope, id, token string, download bool) bool {
+	if len(m.key) < 32 {
+		return false
+	}
+	if download {
+		if len(token) != 69 || token[25] != '_' {
+			return false
+		}
+		nonce := token[3:25]
+		decoded, err := base64.RawURLEncoding.DecodeString(nonce)
+		if err != nil || len(decoded) != 16 || base64.RawURLEncoding.EncodeToString(decoded) != nonce {
+			return false
+		}
+		return subtle.ConstantTimeCompare([]byte(token), []byte(m.signingDownloadToken(scope, id, nonce))) == 1
+	}
+	if signerID := signingTokenRecipient(token); signerID != "" {
+		return subtle.ConstantTimeCompare([]byte(token), []byte(m.signingRecipientToken(scope, id, signerID))) == 1
+	}
+	return len(token) == 43 && subtle.ConstantTimeCompare([]byte(token), []byte(m.signingToken(scope, id))) == 1
 }
 
 func signingHash(data []byte) string {

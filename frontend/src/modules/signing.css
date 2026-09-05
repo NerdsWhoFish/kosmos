@@ -269,6 +269,10 @@
   outline-offset: 2px;
   z-index: 2;
 }
+.signing-field[data-signer-color="0"] { background: #ece2ffe6; border-color: #644ac9; color: #382071; }
+.signing-field[data-signer-color="1"] { background: #d5f5ffe6; border-color: #036a96; color: #034260; }
+.signing-field[data-signer-color="2"] { background: #dbffe2e6; border-color: #14710a; color: #12530c; }
+.signing-field[data-signer-color="3"] { background: #fff0d8e6; border-color: #a34d14; color: #703004; }
 .signing-field.editable {
   user-select: none;
 }
@@ -513,6 +517,48 @@
   padding: 12px;
   border-radius: 8px;
   background: var(--theme-background);
+}
+.signing-download-deadline {
+  overflow-wrap: anywhere;
+}
+.signing-recipient {
+  padding: 12px 0;
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--theme-border);
+  min-width: 0;
+}
+.signing-recipient legend {
+  color: var(--theme-text);
+  font-weight: 700;
+  padding-right: 8px;
+}
+.signing-recipient-progress {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+.signing-recipient-progress li {
+  display: grid;
+  gap: 6px;
+  padding: 16px 0;
+  border-top: 1px solid var(--theme-border);
+  overflow-wrap: anywhere;
+}
+.signing-recipient-progress li > span {
+  font-size: 13px;
+}
+.signing-progress {
+  font-weight: 700;
+  color: var(--theme-success);
+}
+.signing-download-deadline strong {
+  display: block;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.signing-delete-card {
+  grid-column: 1 / -1;
 }
 .public-signing button:disabled,
 .signing-card button:disabled {

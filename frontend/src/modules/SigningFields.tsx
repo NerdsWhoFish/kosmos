@@ -80,6 +80,7 @@ export function FieldOverlay({
   onChange,
   pageSize,
   focusOnMount,
+  signerIndex,
 }: {
   field: SigningField;
   selected?: boolean;
@@ -89,6 +90,7 @@ export function FieldOverlay({
   onChange?: (field: SigningField) => void;
   pageSize?: { width: number; height: number };
   focusOnMount?: boolean;
+  signerIndex?: number;
 }) {
   const moveButton = useRef<HTMLButtonElement>(null);
   const [interacting, setInteracting] = useState(false);
@@ -192,6 +194,7 @@ export function FieldOverlay({
   return (
     <div
       className={`signing-field signing-field-${field.type}${selected ? " selected" : ""}${editable ? " editable" : ""}${interacting ? " interacting" : ""}`}
+      data-signer-color={signerIndex === undefined ? undefined : signerIndex % 4}
       style={{
         left: `${field.x * 100}%`,
         top: `${field.y * 100}%`,

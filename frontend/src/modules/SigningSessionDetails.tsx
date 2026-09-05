@@ -1,6 +1,8 @@
+import { useId } from "react";
 import type { SigningSession } from "./signingApi";
 
 export function SigningSessionDetails({ session }: { session: SigningSession }) {
+  const titleId = useId();
   const location = [session.city, session.region, session.country]
     .filter((part) => part?.trim())
     .join(", ");
@@ -10,9 +12,9 @@ export function SigningSessionDetails({ session }: { session: SigningSession }) 
   }).format(new Date(session.capturedAt));
 
   return (
-    <section className="signing-card signing-session" aria-labelledby="signing-session-title">
+    <section className="signing-card signing-session" aria-labelledby={titleId}>
       <p className="eyebrow">Signing record</p>
-      <h2 id="signing-session-title">Signing session</h2>
+      <h2 id={titleId}>Signing session</h2>
       <dl>
         <div><dt>IP address</dt><dd>{session.ipAddress || "Unknown"}</dd></div>
         <div><dt>Approximate location</dt><dd>{location || "Unknown"}</dd></div>

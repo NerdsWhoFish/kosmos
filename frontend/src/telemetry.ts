@@ -19,7 +19,7 @@ const resources = new Set([
 ])
 const pages = new Set(['search', 'activity', 'communications', 'operations', 'settings', 'intake', 'sign'])
 const endpoints = new Set(['search', 'summary', 'landing', 'config', 'modules', 'session', 'me'])
-const actions = new Set(['edit', 'delete', 'revisions', 'download', 'photo', 'sync', 'read', 'pdf', 'link', 'revoke', 'complete'])
+const actions = new Set(['edit', 'delete', 'revisions', 'download', 'download-link', 'photo', 'sync', 'read', 'pdf', 'link', 'revoke', 'complete'])
 const eventNames = new Set([
   'signing.preview.failure',
   'click', 'navigation', 'view_changed', 'session_start', 'session_resume', 'session_extend',

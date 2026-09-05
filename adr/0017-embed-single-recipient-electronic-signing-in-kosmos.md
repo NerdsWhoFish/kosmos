@@ -4,7 +4,9 @@ Date: 2026-09-05
 
 ## Status
 
-Accepted.
+Accepted. Single-recipient request model is superseded by [ADR-0021](0021-collect-parallel-signatures-with-recipient-scoped-capabiliti.md).
+
+ADR 0020 governs short link access and deletion. The immutable source PDF, token transport, source hashes, and explicit electronic-signing consent remain in force.
 
 ## Context and Problem Statement
 

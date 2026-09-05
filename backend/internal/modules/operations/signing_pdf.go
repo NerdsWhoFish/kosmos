@@ -32,6 +32,18 @@ type SigningCertificate struct {
 	SignedAt       time.Time
 	Consent        string
 	Session        *SigningSession
+	Status         string
+	Signers        []SigningCertificateSigner
+}
+
+type SigningCertificateSigner struct {
+	ID                  string
+	Name                string
+	Email               string
+	CompletedSignerName string
+	SignedAt            *time.Time
+	Consent             string
+	Session             *SigningSession
 }
 
 var signingPDFInit sync.Once
@@ -408,14 +420,43 @@ func signingPDFFont(name string) (types.Dict, error) {
 }
 
 func signingCertificatePages(certificate SigningCertificate) ([][]byte, error) {
-	lines := []string{
-		"Document: " + certificate.DocumentTitle,
-		"Signer name (as supplied): " + certificate.SignerName,
-		"Signer email (as supplied): " + certificate.SignerEmail,
-		"Signed at (UTC): " + certificate.SignedAt.UTC().Format(time.RFC3339),
-		"Document reviewed SHA-256:",
-		certificate.OriginalSHA256,
+	lines := []string{"Document: " + certificate.DocumentTitle}
+	statusLabel := ""
+	maxRecordPages := 12
+	if len(certificate.Signers) > 0 {
+		if len(certificate.Signers) > 10 || !oneOf(certificate.Status, "pending", "completed") {
+			return nil, errors.New("signing participants or document status are invalid")
+		}
+		awaiting := 0
+		seen := make(map[string]bool, len(certificate.Signers))
+		for _, signer := range certificate.Signers {
+			if !signingIDPattern.MatchString(signer.ID) || seen[signer.ID] {
+				return nil, errors.New("signing participants must have unique IDs")
+			}
+			seen[signer.ID] = true
+			if signer.SignedAt == nil {
+				awaiting++
+			} else if signer.SignedAt.IsZero() || strings.TrimSpace(signer.CompletedSignerName) == "" || strings.TrimSpace(signer.Consent) == "" {
+				return nil, errors.New("completed signing participant evidence is incomplete")
+			}
+		}
+		if (certificate.Status == "completed") != (awaiting == 0) {
+			return nil, errors.New("signing document status does not match participant completion")
+		}
+		statusLabel = "COMPLETED"
+		if awaiting > 0 {
+			statusLabel = fmt.Sprintf("PARTIALLY SIGNED - awaiting %d signer(s)", awaiting)
+			lines = append(lines, "This document is not fully signed. Signatures are still outstanding.")
+		}
+		maxRecordPages = 4 + 4*len(certificate.Signers)
+	} else {
+		lines = append(lines,
+			"Signer name (as supplied): "+certificate.SignerName,
+			"Signer email (as supplied): "+certificate.SignerEmail,
+			"Signed at (UTC): "+certificate.SignedAt.UTC().Format(time.RFC3339),
+		)
 	}
+	lines = append(lines, "Document reviewed SHA-256:", certificate.OriginalSHA256)
 	if certificate.UploadedSHA256 != "" && certificate.UploadedSHA256 != certificate.OriginalSHA256 {
 		lines = append(lines,
 			"A static copy was prepared from the uploaded PDF before signing.",
@@ -423,38 +464,34 @@ func signingCertificatePages(certificate SigningCertificate) ([][]byte, error) {
 			certificate.UploadedSHA256,
 		)
 	}
-	if session := certificate.Session; session != nil {
-		location := make([]string, 0, 3)
-		for _, value := range []string{session.City, session.Region, session.Country} {
-			if value != "" {
-				location = append(location, value)
+	if len(certificate.Signers) > 0 {
+		for index, signer := range certificate.Signers {
+			lines = append(lines,
+				fmt.Sprintf("Participant %d: %s", index+1, signer.ID),
+				"Intended signer name: "+signer.Name,
+				"Intended signer email: "+signer.Email,
+			)
+			if signer.SignedAt == nil {
+				lines = append(lines, "Status: Awaiting signature")
+				continue
 			}
+			lines = append(lines,
+				"Status: Signed",
+				"Signer name (as supplied): "+signer.CompletedSignerName,
+				"Signed at (UTC): "+signer.SignedAt.UTC().Format(time.RFC3339),
+			)
+			lines = append(lines, signingCertificateSessionLines(signer.Session)...)
+			lines = append(lines, "Electronic signing consent:", signer.Consent)
 		}
-		approximateLocation, userAgent := strings.Join(location, ", "), session.UserAgent
-		if approximateLocation == "" {
-			approximateLocation = "Unknown"
-		}
-		if userAgent == "" {
-			userAgent = "Unknown"
-		}
-		lines = append(lines,
-			"Completion session evidence",
-			"IP address: "+signingCertificateMetadata(session.IPAddress),
-			"Approximate location: "+signingCertificateMetadata(approximateLocation),
-			"Session captured at (UTC): "+session.CapturedAt.UTC().Format(time.RFC3339),
-			"Evidence source: "+signingCertificateMetadata(session.Source),
-			"Browser-reported User-Agent: "+signingCertificateMetadata(userAgent),
-			"Location is approximate and may reflect a VPN or proxy.",
-			"Connection and browser details are not proof of identity.",
-			`Unsupported metadata characters use \uXXXX or \UXXXXXXXX escapes; literal backslashes are doubled.`,
-		)
+	} else {
+		lines = append(lines, signingCertificateSessionLines(certificate.Session)...)
+		lines = append(lines, "Electronic signing consent:", certificate.Consent)
 	}
-	lines = append(lines,
-		"Electronic signing consent:",
-		certificate.Consent,
-		"Completed through a signing link. Identity and email are self-reported.",
-		"This record is an electronic signature audit record, not a PKI digital signature.",
-	)
+	completionNotice := "Completed through a signing link. Identity and email are self-reported."
+	if len(certificate.Signers) > 0 {
+		completionNotice = "Completed signatures were supplied through signing links. Identity and email are self-reported."
+	}
+	lines = append(lines, completionNotice, "This record is an electronic signature audit record, not a PKI digital signature.")
 	if len(certificate.ID) > 64 {
 		return nil, errors.New("signing request ID is too long")
 	}
@@ -482,6 +519,10 @@ func signingCertificatePages(certificate SigningCertificate) ([][]byte, error) {
 		}
 		writeSigningText(&output, title, "KosmosText", 20, 48, 744)
 		y = 714
+		if statusLabel != "" {
+			writeSigningText(&output, statusLabel, "KosmosText", 14, 48, y)
+			y -= 24
+		}
 		for _, line := range requestLines {
 			writeSigningText(&output, line, "KosmosText", 10, 48, y)
 			y -= 15
@@ -504,7 +545,7 @@ func signingCertificatePages(certificate SigningCertificate) ([][]byte, error) {
 		for len(encoded) > 0 {
 			if y < 48 {
 				finishPage()
-				if len(records) >= 12 {
+				if len(records) >= maxRecordPages {
 					return nil, errors.New("signing record exceeds processing limits")
 				}
 				startPage()
@@ -521,6 +562,36 @@ func signingCertificatePages(certificate SigningCertificate) ([][]byte, error) {
 	}
 	finishPage()
 	return records, nil
+}
+
+func signingCertificateSessionLines(session *SigningSession) []string {
+	if session != nil {
+		location := make([]string, 0, 3)
+		for _, value := range []string{session.City, session.Region, session.Country} {
+			if value != "" {
+				location = append(location, value)
+			}
+		}
+		approximateLocation, userAgent := strings.Join(location, ", "), session.UserAgent
+		if approximateLocation == "" {
+			approximateLocation = "Unknown"
+		}
+		if userAgent == "" {
+			userAgent = "Unknown"
+		}
+		return []string{
+			"Completion session evidence",
+			"IP address: " + signingCertificateMetadata(session.IPAddress),
+			"Approximate location: " + signingCertificateMetadata(approximateLocation),
+			"Session captured at (UTC): " + session.CapturedAt.UTC().Format(time.RFC3339),
+			"Evidence source: " + signingCertificateMetadata(session.Source),
+			"Browser-reported User-Agent: " + signingCertificateMetadata(userAgent),
+			"Location is approximate and may reflect a VPN or proxy.",
+			"Connection and browser details are not proof of identity.",
+			`Unsupported metadata characters use \uXXXX or \UXXXXXXXX escapes; literal backslashes are doubled.`,
+		}
+	}
+	return nil
 }
 
 func signingCertificateMetadata(value string) string {
