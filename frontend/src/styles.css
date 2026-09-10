@@ -1670,6 +1670,7 @@ select:focus-visible {
 }
 .error-state {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 13px;
   min-height: 100px;
@@ -1683,7 +1684,10 @@ select:focus-visible {
 .error-state span {
   display: grid;
   gap: 4px;
-  flex: 1;
+  flex: 1 1 180px;
+}
+.error-state strong {
+  color: var(--theme-text);
 }
 .error-state small {
   color: var(--theme-muted);

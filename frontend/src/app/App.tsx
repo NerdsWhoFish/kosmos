@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { api, ModuleManifest, User } from "../api";
 import { PublicLogin, Shell } from "../components/Shell";
 import { LoadingState } from "../components/States";
+import { PageErrorBoundary } from "../components/PageErrorBoundary";
 import { resourceRoute } from "../routing";
 
 const Activity = lazy(() =>
@@ -111,7 +112,14 @@ export function App() {
     setLocation(currentLocation());
   }
 
-  if (location.path === "/sign") return <Suspense fallback={<LoadingState label="Opening your document" />}><PublicSigning /></Suspense>;
+  if (location.path === "/sign")
+    return (
+      <PageErrorBoundary resetKey={location.path + location.search}>
+        <Suspense fallback={<LoadingState label="Opening your document" />}>
+          <PublicSigning />
+        </Suspense>
+      </PageErrorBoundary>
+    );
   if (checkingSession)
     return (
       <div className="session-loading">
@@ -128,9 +136,11 @@ export function App() {
       navigate={navigate}
       logout={logout}
     >
-      <Suspense fallback={<LoadingState />}>
-        <Route location={location} user={user} navigate={navigate} />
-      </Suspense>
+      <PageErrorBoundary resetKey={location.path + location.search}>
+        <Suspense fallback={<LoadingState />}>
+          <Route location={location} user={user} navigate={navigate} />
+        </Suspense>
+      </PageErrorBoundary>
     </Shell>
   );
 }
