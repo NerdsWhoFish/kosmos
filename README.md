@@ -16,6 +16,8 @@ Google login requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a random `
 
 The production login policy currently permits verified Google accounts at `nerdswhofish.com`, `theoutdoorprogrammer.com`, and `apollorion.com`. This check happens at the callback and on every authenticated request, so removing a domain also invalidates its existing sessions.
 
+Google integration connections require every requested permission. If a permission is declined, Kosmos rejects the connection before saving it and asks the administrator to reconnect from Settings with all requested permissions selected. An existing saved connection remains intact.
+
 ## Deployment
 
 `infra/modules/environment` is published to the Spacelift private registry as `kosmos-environment`. Environment roots consume `spacelift.stout.zone/theoutdoorprogrammer/kosmos-environment/google`, while keeping only project bootstrap, operator access, deployment inputs, and secret payloads outside the module.
