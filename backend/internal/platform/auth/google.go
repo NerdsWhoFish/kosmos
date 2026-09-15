@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -218,6 +219,13 @@ func (g *Google) callback(w http.ResponseWriter, r *http.Request) {
 		if !registered.allowDifferentAccount && current.Subject != claims.Subject {
 			http.Error(w, "Google connection must use your signed-in account", http.StatusForbidden)
 			return
+		}
+		grantedScopes, _ := token.Extra("scope").(string)
+		for _, required := range registered.scopes {
+			if !slices.Contains(strings.Fields(grantedScopes), required) {
+				http.Error(w, "Google did not grant all required permissions. Return to Settings, reconnect, and select every requested permission.", http.StatusForbidden)
+				return
+			}
 		}
 		connected := User{Subject: claims.Subject, Email: claims.Email, Name: claims.Name, Picture: claims.Picture}
 		if err := registered.handler(r.Context(), current, connected, token); err != nil {
