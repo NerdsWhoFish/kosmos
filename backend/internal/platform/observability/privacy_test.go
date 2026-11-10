@@ -17,6 +17,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	collectortrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
@@ -198,5 +200,63 @@ func TestPrivateTraceAttributesRejectMalformedURLsAndSensitiveVariants(t *testin
 	}
 	if !strings.Contains(string(encoded), "storage.googleapis.com") {
 		t.Fatal("server identity removed")
+	}
+}
+
+func TestFirestoreMissingDocumentIsNotAnErrorSpan(t *testing.T) {
+	const documentPath = `projects/example/databases/(default)/documents/orgs/private-org/jobExecutions/job-1`
+	missing := privateSpan{ReadOnlySpan: tracetest.SpanStub{
+		Name: "cloud.google.com/go/firestore.DocumentRef.Get",
+		Status: sdktrace.Status{
+			Code:        codes.Error,
+			Description: `"` + documentPath + `" not found`,
+		},
+		Events: []sdktrace.Event{{
+			Name: "exception",
+			Attributes: []attribute.KeyValue{
+				attribute.String("exception.type", "*status.Error"),
+				attribute.String("exception.message", `"`+documentPath+`" not found`),
+			},
+		}},
+	}.Snapshot()}
+	if status := missing.Status(); status.Code != codes.Unset || status.Description != "" {
+		t.Fatalf("missing document status = %#v", status)
+	}
+	if events := missing.Events(); len(events) != 0 {
+		t.Fatalf("missing document events = %#v", events)
+	}
+	encoded, err := json.Marshal(missing.Events())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "private-org") || strings.Contains(missing.Status().Description, "private-org") {
+		t.Fatal("missing document export leaked the document path")
+	}
+
+	denied := privateSpan{ReadOnlySpan: tracetest.SpanStub{
+		Name:   "cloud.google.com/go/firestore.DocumentRef.Get",
+		Status: sdktrace.Status{Code: codes.Error, Description: "permission denied"},
+		Events: []sdktrace.Event{{
+			Name: "exception",
+			Attributes: []attribute.KeyValue{
+				attribute.String("exception.type", "*status.Error"),
+				attribute.String("exception.message", "permission denied"),
+			},
+		}},
+	}.Snapshot()}
+	if status := denied.Status(); status.Code != codes.Error || status.Description != "" {
+		t.Fatalf("firestore failure status = %#v", status)
+	}
+	events := denied.Events()
+	if len(events) != 1 || events[0].Name != "exception" {
+		t.Fatalf("firestore failure events = %#v", events)
+	}
+
+	handler := privateSpan{ReadOnlySpan: tracetest.SpanStub{
+		Name:   "jobs.execute",
+		Status: sdktrace.Status{Code: codes.Error, Description: `"` + documentPath + `" not found`},
+	}.Snapshot()}
+	if status := handler.Status(); status.Code != codes.Error || status.Description != "" {
+		t.Fatalf("application error status = %#v", status)
 	}
 }
