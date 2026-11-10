@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -31,10 +32,16 @@ func (span privateSpan) Attributes() []attribute.KeyValue {
 
 func (span privateSpan) Events() []sdktrace.Event {
 	events := append([]sdktrace.Event(nil), span.ReadOnlySpan.Events()...)
+	missing := firestoreMissingDocument(span.ReadOnlySpan)
+	filtered := make([]sdktrace.Event, 0, len(events))
 	for i := range events {
+		if missing && events[i].Name == "exception" {
+			continue
+		}
 		events[i].Attributes = privateTraceAttributes(events[i].Attributes)
+		filtered = append(filtered, events[i])
 	}
-	return events
+	return filtered
 }
 
 func (span privateSpan) Links() []sdktrace.Link {
@@ -46,9 +53,24 @@ func (span privateSpan) Links() []sdktrace.Link {
 }
 
 func (span privateSpan) Status() sdktrace.Status {
+	if firestoreMissingDocument(span.ReadOnlySpan) {
+		return sdktrace.Status{Code: codes.Unset}
+	}
 	status := span.ReadOnlySpan.Status()
 	status.Description = ""
 	return status
+}
+
+// firestoreMissingDocument reports the NotFound that cloud.google.com/go/firestore
+// DocumentRef.Get synthesizes after a successful BatchGetDocuments RPC. Callers
+// use that result as ordinary control flow, and the status text is the document
+// path, so it must not be exported as an error span.
+func firestoreMissingDocument(span sdktrace.ReadOnlySpan) bool {
+	if span.Name() != "cloud.google.com/go/firestore.DocumentRef.Get" {
+		return false
+	}
+	description := span.Status().Description
+	return strings.HasPrefix(description, `"`) && strings.HasSuffix(description, `" not found`)
 }
 
 func privateTraceAttributes(attributes []attribute.KeyValue) []attribute.KeyValue {
