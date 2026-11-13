@@ -9,3 +9,9 @@ Create and populate a separate same-project Secret Manager container first. Set 
 Existing callers keep the module-managed header container at `latest`. The original container and grants remain for older revisions and rollback. Never replace its latest payload with another destination's credential. Payloads must stay outside OpenTofu configuration and state.
 
 This change preserves application logs, traces and global trace privacy sanitization. It does not add an application metrics provider, alter browser RUM or remove Grafana dashboards, rules or GCP alerts. Retire those resources only after verified replacements and an explicitly reviewed removal plan.
+
+## Existing alert routing
+
+Use `grafana_frontend_error_labels` to preserve existing investigation labels and severity, and `grafana_frontend_error_contact_point` when the frontend rule routes directly to an existing contact point. The defaults retain the module's ordinary labels and notification-policy routing. This module references the contact point by name and does not create or replace its webhook or credentials.
+
+Service and environment labels remain module-owned. The classic-condition JSON omits optional fields that Grafana also omits from the live rule, avoiding a normalization-only diff during unrelated deployments.

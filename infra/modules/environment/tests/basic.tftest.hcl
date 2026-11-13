@@ -21,6 +21,45 @@ mock_provider "google" {
 
 mock_provider "grafana" {}
 
+run "preserve_frontend_error_investigation_routing" {
+  command = plan
+  variables {
+    project_id               = "kosmos-test"
+    environment              = "test"
+    integration_secret_value = "test-only-integration-secret-value"
+    intake_secret_value      = "test-only-intake-signing-secret-value"
+    manage_grafana           = true
+    grafana_faro_app_id      = "902"
+    grafana_frontend_error_labels = {
+      autofix  = "true"
+      severity = "critical"
+    }
+    grafana_frontend_error_contact_point = "Grok Bot autofix v3"
+  }
+  assert {
+    condition = (
+      one(grafana_rule_group.kosmos[0].rule).labels == tomap({
+        environment = "test"
+        service     = "kosmos"
+        autofix     = "true"
+        severity    = "critical"
+      }) &&
+      one(one(grafana_rule_group.kosmos[0].rule).notification_settings).contact_point == "Grok Bot autofix v3"
+    )
+    error_message = "Explicit investigation labels and direct contact point must survive unrelated deployments."
+  }
+  assert {
+    condition = alltrue([
+      for data in one(grafana_rule_group.kosmos[0].rule).data :
+      jsondecode(data.model).conditions[0].reducer.type == "last" &&
+      !contains(keys(jsondecode(data.model).conditions[0].reducer), "params") &&
+      !contains(keys(jsondecode(data.model).conditions[0]), "type")
+      if data.ref_id == "B"
+    ])
+    error_message = "The classic condition must preserve the live model without reintroducing omitted optional fields."
+  }
+}
+
 run "external_otel_headers_preserve_shared_identity_and_rollback" {
   command = plan
   variables {
