@@ -306,10 +306,17 @@ resource "grafana_rule_group" "kosmos" {
       summary     = "Kosmos frontend error detected"
     }
 
-    labels = {
+    labels = merge({
       environment = var.environment
       service     = "kosmos"
       severity    = "error"
+    }, var.grafana_frontend_error_labels)
+
+    dynamic "notification_settings" {
+      for_each = var.grafana_frontend_error_contact_point == null ? [] : [var.grafana_frontend_error_contact_point]
+      content {
+        contact_point = notification_settings.value
+      }
     }
 
     data {
@@ -358,10 +365,8 @@ resource "grafana_rule_group" "kosmos" {
             params = ["A"]
           }
           reducer = {
-            params = []
-            type   = "last"
+            type = "last"
           }
-          type = "query"
         }]
         datasource = {
           type = "__expr__"

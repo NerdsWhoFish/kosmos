@@ -21,6 +21,98 @@ mock_provider "google" {
 
 mock_provider "grafana" {}
 
+run "preserve_frontend_error_investigation_routing" {
+  command = plan
+  variables {
+    project_id               = "kosmos-test"
+    environment              = "test"
+    integration_secret_value = "test-only-integration-secret-value"
+    intake_secret_value      = "test-only-intake-signing-secret-value"
+    manage_grafana           = true
+    grafana_faro_app_id      = "902"
+    grafana_frontend_error_labels = {
+      autofix  = "true"
+      severity = "critical"
+    }
+    grafana_frontend_error_contact_point = "Grok Bot autofix v3"
+  }
+  assert {
+    condition = (
+      one(grafana_rule_group.kosmos[0].rule).labels == tomap({
+        environment = "test"
+        service     = "kosmos"
+        autofix     = "true"
+        severity    = "critical"
+      }) &&
+      one(one(grafana_rule_group.kosmos[0].rule).notification_settings).contact_point == "Grok Bot autofix v3"
+    )
+    error_message = "Explicit investigation labels and direct contact point must survive unrelated deployments."
+  }
+  assert {
+    condition = alltrue([
+      for data in one(grafana_rule_group.kosmos[0].rule).data :
+      jsondecode(data.model).conditions[0].reducer.type == "last" &&
+      !contains(keys(jsondecode(data.model).conditions[0].reducer), "params") &&
+      !contains(keys(jsondecode(data.model).conditions[0]), "type")
+      if data.ref_id == "B"
+    ])
+    error_message = "The classic condition must preserve the live model without reintroducing omitted optional fields."
+  }
+}
+
+run "external_otel_headers_preserve_shared_identity_and_rollback" {
+  command = plan
+  variables {
+    project_id                  = "kosmos-test"
+    environment                 = "test"
+    image_digest                = "us-east1-docker.pkg.dev/kosmos-test/kosmos/kosmos@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    otel_exporter_otlp_endpoint = "https://otel.example.com"
+    integration_secret_value    = "test-only-integration-secret-value"
+    intake_secret_value         = "test-only-intake-signing-secret-value"
+    otel_exporter_headers_secrets = {
+      web  = { secret_id = "local-kosmos", version = "5" }
+      jobs = { secret_id = "local-kosmos", version = "5" }
+    }
+  }
+  assert {
+    condition = alltrue(flatten([
+      for service in [google_cloud_run_v2_service.kosmos[0], google_cloud_run_v2_service.jobs[0]] : [
+        for env in service.template[0].containers[0].env :
+        (
+          env.value_source[0].secret_key_ref[0].secret == "local-kosmos" &&
+          env.value_source[0].secret_key_ref[0].version == "5"
+        ) if env.name == "OTEL_EXPORTER_OTLP_HEADERS"
+      ]
+    ]))
+    error_message = "Both process roles must pin the same canonical-service credential."
+  }
+  assert {
+    condition = (
+      google_secret_manager_secret_iam_member.external_otel_headers["web"].member == "serviceAccount:${google_service_account.runtime.email}" &&
+      google_secret_manager_secret_iam_member.external_otel_headers["jobs"].member == "serviceAccount:${google_service_account.worker.email}" &&
+      alltrue([for grant in values(google_secret_manager_secret_iam_member.external_otel_headers) : grant.secret_id == "local-kosmos"]) &&
+      contains(keys(google_secret_manager_secret.runtime), "otel_exporter_headers") &&
+      contains(keys(google_secret_manager_secret_iam_member.worker), "OTEL_EXPORTER_OTLP_HEADERS")
+    )
+    error_message = "Grant only the specified secret to each runtime and preserve legacy access for rollback."
+  }
+}
+
+run "reject_partial_external_otel_cutover" {
+  command = plan
+  variables {
+    project_id                  = "kosmos-test"
+    environment                 = "test"
+    otel_exporter_otlp_endpoint = "https://otel.example.com"
+    integration_secret_value    = "test-only-integration-secret-value"
+    intake_secret_value         = "test-only-intake-signing-secret-value"
+    otel_exporter_headers_secrets = {
+      web = { secret_id = "local-kosmos", version = "1" }
+    }
+  }
+  expect_failures = [var.otel_exporter_headers_secrets]
+}
+
 override_resource {
   target = google_service_account.worker
   values = {

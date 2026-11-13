@@ -452,8 +452,8 @@ resource "google_cloud_run_v2_service" "kosmos" {
           name = env.key
           value_source {
             secret_key_ref {
-              secret  = google_secret_manager_secret.runtime[env.value].secret_id
-              version = "latest"
+              secret  = env.key == "OTEL_EXPORTER_OTLP_HEADERS" ? local.otel_header_references.web.secret_id : google_secret_manager_secret.runtime[env.value].secret_id
+              version = env.key == "OTEL_EXPORTER_OTLP_HEADERS" ? local.otel_header_references.web.version : "latest"
             }
           }
         }
@@ -464,6 +464,7 @@ resource "google_cloud_run_v2_service" "kosmos" {
   depends_on = [
     google_project_iam_member.runtime_firestore,
     google_secret_manager_secret_iam_member.runtime,
+    google_secret_manager_secret_iam_member.external_otel_headers,
     google_secret_manager_secret_version.integration,
     google_storage_bucket_iam_member.runtime_attachments,
     google_secret_manager_secret_version.intake,
@@ -514,8 +515,8 @@ resource "google_cloud_run_v2_service" "jobs" {
           name = env.key
           value_source {
             secret_key_ref {
-              secret  = google_secret_manager_secret.runtime[env.value].secret_id
-              version = "latest"
+              secret  = env.key == "OTEL_EXPORTER_OTLP_HEADERS" ? local.otel_header_references.jobs.secret_id : google_secret_manager_secret.runtime[env.value].secret_id
+              version = env.key == "OTEL_EXPORTER_OTLP_HEADERS" ? local.otel_header_references.jobs.version : "latest"
             }
           }
         }
@@ -529,6 +530,7 @@ resource "google_cloud_run_v2_service" "jobs" {
     google_storage_bucket_iam_member.worker_signing_cleanup,
     google_service_account_iam_member.runtime_job_invoker,
     google_secret_manager_secret_iam_member.worker,
+    google_secret_manager_secret_iam_member.external_otel_headers,
     google_secret_manager_secret_version.integration,
   ]
 }

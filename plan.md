@@ -2,6 +2,8 @@
 
 This checklist is the release source of truth. Check an item only after its backend, frontend, API contract, tests, responsive behavior, and production verification are complete where applicable.
 
+- [ ] Publish and promote an environment module supporting pinned external OTLP header secrets, then verify atomic endpoint and credential migration for web and jobs without changing their shared `kosmos` identity or existing privacy controls.
+
 - [x] 1. Let owners and administrators edit and delete organization-wide landing-zone shortcuts.
 - [x] 2. Let users delete an errant opportunity after explicit confirmation.
 - [x] 3. Add comfortable separation between an account's relationship panels and Knowledge section.
